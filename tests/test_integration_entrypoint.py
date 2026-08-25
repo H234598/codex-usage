@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import ast
 import builtins
+import hashlib
 import io
 import json
+import os
+import stat
 import sys
 import types
+from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 
@@ -43,6 +48,15 @@ def _environment(tmp_path: Path) -> dict[str, str]:
     state_home = tmp_path / "state"
     (data_home / "codex-usage" / "current").mkdir(parents=True, mode=0o700)
     (state_home / "codex-usage" / "integration").mkdir(parents=True, mode=0o700)
+    for path in (
+        data_home,
+        data_home / "codex-usage",
+        data_home / "codex-usage/current",
+        state_home,
+        state_home / "codex-usage",
+        state_home / "codex-usage/integration",
+    ):
+        path.chmod(0o700)
     return {"XDG_DATA_HOME": str(data_home), "XDG_STATE_HOME": str(state_home)}
 
 
@@ -66,6 +80,36 @@ def _expected_entrypoint(tmp_path: Path) -> Path:
     path.write_bytes(b"# synthetic entrypoint\n")
     path.chmod(0o600)
     return path
+
+
+def _verified_manifest(tmp_path: Path, entrypoint: Path | None = None):
+    """Task-3-only staged 0.6.536 manifest; real cutover belongs to Task 6."""
+    from codex_usage.integration_attestation import ActiveRelease, VerifiedActiveManifest
+    from codex_usage.private_io import FileIdentity
+
+    entrypoint = entrypoint or _expected_entrypoint(tmp_path)
+    active_bytes = b'{"release_id":"0.6.536-aaaaaaaaaaaaaaaa","version":"0.6.536"}'
+    identity = FileIdentity(1, 2, 0o700)
+    return VerifiedActiveManifest(
+        active_release=ActiveRelease(
+            version="0.6.536",
+            release_dir=entrypoint.parents[3],
+            launcher_path=entrypoint.parents[3] / "bin/codex-usage-integration",
+            entrypoint_path=entrypoint,
+            entrypoint_sha256="b" * 64,
+            wheel_sha256="c" * 64,
+            record_sha256="d" * 64,
+            launcher_sha256="e" * 64,
+            release_tree_sha256="f" * 64,
+        ),
+        release_id="0.6.536-aaaaaaaaaaaaaaaa",
+        source_manifest_sha256="1" * 64,
+        active_manifest_bytes=active_bytes,
+        active_manifest_sha256=hashlib.sha256(active_bytes).hexdigest(),
+        state_home_identity=identity,
+        integration_parent_identity=FileIdentity(1, 3, 0o700),
+        active_file_identity=FileIdentity(1, 4, 0o600),
+    )
 
 
 def test_execute_rejects_every_nonexact_argv_before_verifier_or_source(tmp_path):
@@ -151,20 +195,6 @@ def test_execute_verifies_before_and_after_then_publishes_once(tmp_path, monkeyp
     verifier_args: list[tuple[Path, Path, Path]] = []
     expected_entrypoint = _expected_entrypoint(tmp_path)
 
-    class HeldLock:
-        def __enter__(self):
-            events.append("lock")
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            events.append("unlock")
-            return False
-
-    monkeypatch.setattr(
-        integration_entrypoint,
-        "private_path_lock",
-        lambda *args, **kwargs: HeldLock(),
-    )
     monkeypatch.setattr(
         integration_entrypoint,
         "read_current_usage_records",
@@ -183,15 +213,18 @@ def test_execute_verifies_before_and_after_then_publishes_once(tmp_path, monkeyp
     )
     monkeypatch.setattr(
         integration_entrypoint,
-        "publish_schema2_cache",
-        lambda payload, *, cache_path: events.append("publish"),
+        "publish_evidence_generation",
+        lambda payload, **kwargs: events.append("publish"),
     )
 
     clock, clock_calls = _clock_counter()
 
-    def verifier(state_home: Path, data_home: Path, expected: Path) -> None:
+    verified = _verified_manifest(tmp_path, expected_entrypoint)
+
+    def verifier(state_home: Path, data_home: Path, expected: Path):
         events.append("verify")
         verifier_args.append((state_home, data_home, expected))
+        return verified
 
     result = integration_entrypoint.execute(
         ARGV,
@@ -201,11 +234,98 @@ def test_execute_verifies_before_and_after_then_publishes_once(tmp_path, monkeyp
         verifier=verifier,
     )
     assert result == integration_entrypoint.CommandResult(0, _payload(), b"")
-    assert events == ["lock", "verify", "read", "build", "serialize", "verify", "publish", "unlock"]
+    assert events == ["verify", "read", "build", "serialize", "verify", "publish"]
     assert len(clock_calls) == 1
     assert len(verifier_args) == 2
     assert verifier_args[0][2] is expected_entrypoint
     assert verifier_args[1][2] is expected_entrypoint
+
+
+def test_entrypoint_uses_release_then_current_exclusive_lock_set(tmp_path, monkeypatch):
+    """Would fail if entrypoint publication bypassed ordered two-lock transaction."""
+    from codex_usage import integration_entrypoint, integration_evidence, private_io
+    from codex_usage.private_io import FileIdentity
+
+    environ = _environment(tmp_path)
+    state_home = Path(environ["XDG_STATE_HOME"])
+    integration = state_home / "codex-usage/integration"
+    (integration / "generations").mkdir(mode=0o700)
+    active = integration / "active.json"
+    active.write_bytes(b"staged-active")
+    active.chmod(0o600)
+    expected_entrypoint = _expected_entrypoint(tmp_path)
+    staged = _verified_manifest(tmp_path, expected_entrypoint)
+    state_item = state_home.lstat()
+    integration_item = integration.lstat()
+    active_item = active.lstat()
+    staged = replace(
+        staged,
+        state_home_identity=FileIdentity(
+            state_item.st_dev, state_item.st_ino, stat.S_IMODE(state_item.st_mode)
+        ),
+        integration_parent_identity=FileIdentity(
+            integration_item.st_dev,
+            integration_item.st_ino,
+            stat.S_IMODE(integration_item.st_mode),
+        ),
+        active_file_identity=FileIdentity(
+            active_item.st_dev, active_item.st_ino, stat.S_IMODE(active_item.st_mode)
+        ),
+    )
+    lock_root = private_io._private_lock_root()
+    private_io.ensure_private_directory(lock_root, label="test lock root")
+    for target in (integration / "producer-install", integration / "current.json"):
+        lock_path = lock_root / integration_evidence._evidence_lock_name(target)
+        try:
+            fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        os.close(fd)
+
+    monkeypatch.setattr(integration_entrypoint, "read_current_usage_records", lambda _: ())
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "build_schema2_document",
+        lambda *args, **kwargs: {
+            "schema_version": 2,
+            "generated_at": "2026-08-15T10:05:00Z",
+            "accounts": [],
+        },
+    )
+    monkeypatch.setattr(
+        integration_evidence,
+        "_verify_active_manifest_for_publish",
+        lambda **kwargs: staged,
+    )
+    monkeypatch.setattr(integration_evidence, "gc_evidence_generations", lambda **kwargs: None)
+    real_lock_set = integration_evidence.evidence_lock_set
+    lock_calls: list[dict[str, object]] = []
+
+    @contextmanager
+    def observed_lock_set(**kwargs):
+        lock_calls.append(kwargs)
+        with real_lock_set(**kwargs):
+            yield
+
+    monkeypatch.setattr(integration_evidence, "evidence_lock_set", observed_lock_set)
+    result = integration_entrypoint.execute(
+        ARGV,
+        environ=environ,
+        clock=lambda: NOW,
+        expected_entrypoint_path=expected_entrypoint,
+        verifier=lambda *_: staged,
+    )
+    assert result.exit_code == 0
+    assert lock_calls == [
+        {
+            "state_home": state_home,
+            "release_mode": "exclusive",
+            "current_mode": "exclusive",
+            "timeout_seconds": 0,
+            "create": False,
+        }
+    ]
+    assert not (integration / "account-usage-v1.json").exists()
 
 
 @pytest.mark.parametrize(
@@ -270,11 +390,12 @@ def test_execute_normalizes_broad_failures_without_details(tmp_path, monkeypatch
 
 def test_execute_maps_busy_lock_to_retryable_error(tmp_path, monkeypatch):
     from codex_usage import integration_entrypoint
+    from codex_usage.integration_evidence import IntegrationBusy as EvidenceBusy
 
     monkeypatch.setattr(
         integration_entrypoint,
-        "private_path_lock",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("busy")),
+        "publish_evidence_generation",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(EvidenceBusy()),
     )
 
     result = integration_entrypoint.execute(
@@ -282,7 +403,7 @@ def test_execute_maps_busy_lock_to_retryable_error(tmp_path, monkeypatch):
         environ=_environment(tmp_path),
         clock=lambda: NOW,
         expected_entrypoint_path=_expected_entrypoint(tmp_path),
-        verifier=lambda *_: None,
+        verifier=lambda *_: _verified_manifest(tmp_path),
     )
 
     assert result == integration_entrypoint.CommandResult(
@@ -438,13 +559,18 @@ def test_execute_exports_tracker_evidence_from_bounded_history_series(tmp_path, 
         "read_current_usage_records",
         lambda _: (usage,),
     )
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "publish_evidence_generation",
+        lambda *args, **kwargs: None,
+    )
 
     result = integration_entrypoint.execute(
         ARGV,
         environ=environ,
         clock=lambda: now,
         expected_entrypoint_path=_expected_entrypoint(tmp_path),
-        verifier=lambda *_: None,
+        verifier=lambda *_: _verified_manifest(tmp_path),
     )
 
     assert result.exit_code == 0
@@ -487,8 +613,6 @@ def test_runtime_paths_use_only_the_two_absolute_xdg_roots(tmp_path):
         current_dir=data_home / "codex-usage" / "current",
         history_path=data_home / "codex-usage" / "usage-history.sqlite3",
         integration_dir=state_home / "codex-usage" / "integration",
-        cache_path=state_home / "codex-usage" / "integration" / "account-usage-v1.json",
-        release_lock_target=state_home / "codex-usage" / "integration" / "producer-install",
     )
 
 
@@ -508,8 +632,8 @@ def test_execute_does_not_publish_when_post_verifier_detects_drift(tmp_path, mon
     monkeypatch.setattr(integration_entrypoint, "serialize_schema2_document", lambda _: _payload())
     monkeypatch.setattr(
         integration_entrypoint,
-        "publish_schema2_cache",
-        lambda *args, **kwargs: pytest.fail("cache publish"),
+        "publish_evidence_generation",
+        lambda *args, **kwargs: pytest.fail("evidence publish"),
     )
     calls = 0
 
@@ -599,21 +723,18 @@ def test_default_verifier_maps_targeted_attestation_import_failure(monkeypatch):
 
 def test_default_verifier_maps_attestation_unavailable_without_details(monkeypatch):
     from codex_usage import integration_entrypoint
+    from codex_usage.private_io import IntegrationEvidenceUnavailable
 
     fake_attestation = types.ModuleType("codex_usage.integration_attestation")
 
-    class FakeAttestationUnavailable(Exception):
-        pass
+    def verify_active_manifest_at(**kwargs):
+        raise IntegrationEvidenceUnavailable()
 
-    def verify_active_release(**kwargs):
-        raise FakeAttestationUnavailable("synthetic attestation marker")
-
-    fake_attestation.IntegrationAttestationUnavailable = FakeAttestationUnavailable
-    fake_attestation.verify_active_release = verify_active_release
+    fake_attestation.verify_active_manifest_at = verify_active_manifest_at
     monkeypatch.setitem(sys.modules, "codex_usage.integration_attestation", fake_attestation)
 
     verifier = integration_entrypoint._default_verifier()
-    with pytest.raises(IntegrationUnavailable) as error:
+    with pytest.raises(IntegrationEvidenceUnavailable) as error:
         verifier(Path("/tmp/state"), Path("/tmp/data"), Path("/tmp/entrypoint"))
     assert str(error.value) == ""
     assert "synthetic" not in repr(error.value)
@@ -630,21 +751,6 @@ def test_execute_rejects_old_executing_entrypoint_after_active_swap_before_lock(
     new_entrypoint.parent.mkdir(parents=True, mode=0o700)
     new_entrypoint.write_bytes(b"# new synthetic entrypoint\n")
     events: list[str] = []
-
-    class HeldLock:
-        def __enter__(self):
-            events.append("lock")
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            events.append("unlock")
-            return False
-
-    monkeypatch.setattr(
-        integration_entrypoint,
-        "private_path_lock",
-        lambda *args, **kwargs: HeldLock(),
-    )
     monkeypatch.setattr(
         integration_entrypoint,
         "read_current_usage_records",
@@ -670,7 +776,7 @@ def test_execute_rejects_old_executing_entrypoint_after_active_swap_before_lock(
         b"",
         b"integration_snapshot_unavailable\n",
     )
-    assert events == ["lock", "verify", "unlock"]
+    assert events == ["verify"]
 
 
 def test_main_writes_success_payload_to_binary_stdout(monkeypatch):

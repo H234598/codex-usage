@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -8,15 +9,21 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .history import HistoryStore, usage_samples_from_usage
+from .integration_attestation import VerifiedActiveManifest
+from .integration_evidence import (
+    IntegrationBusy as EvidenceBusy,
+)
+from .integration_evidence import (
+    publish_evidence_generation,
+)
 from .integration_snapshot import (
     IntegrationSnapshotError,
     IntegrationUnavailable,
     build_schema2_document,
-    publish_schema2_cache,
     read_current_usage_records,
     serialize_schema2_document,
 )
-from .private_io import private_path_lock
+from .private_io import IntegrationEvidenceInvalid, IntegrationEvidenceUnavailable
 
 _EXPECTED_ARGV = ("integration-snapshot", "--schema", "2", "--format", "json")
 _ERROR_TOKENS = {
@@ -35,8 +42,6 @@ class RuntimePaths:
     current_dir: Path
     history_path: Path
     integration_dir: Path
-    cache_path: Path
-    release_lock_target: Path
 
 
 @dataclass(frozen=True)
@@ -62,8 +67,6 @@ def _runtime_paths(environ: Mapping[str, str]) -> RuntimePaths:
         current_dir=data_home / "codex-usage" / "current",
         history_path=data_home / "codex-usage" / "usage-history.sqlite3",
         integration_dir=integration_dir,
-        cache_path=integration_dir / "account-usage-v1.json",
-        release_lock_target=integration_dir / "producer-install",
     )
 
 
@@ -87,15 +90,12 @@ def _error_result(code: int) -> CommandResult:
     return CommandResult(code, b"", _ERROR_TOKENS[code])
 
 
-def _default_verifier() -> Callable[[Path, Path, Path], object]:
+def _default_verifier() -> Callable[[Path, Path, Path], VerifiedActiveManifest]:
     try:
-        from .integration_attestation import (
-            IntegrationAttestationUnavailable,
-            verify_active_release,
-        )
+        from .integration_attestation import verify_active_manifest_at
     except Exception:
 
-        def unavailable(_: Path, __: Path, ___: Path) -> None:
+        def unavailable(_: Path, __: Path, ___: Path) -> VerifiedActiveManifest:
             raise IntegrationUnavailable()
 
         return unavailable
@@ -104,15 +104,12 @@ def _default_verifier() -> Callable[[Path, Path, Path], object]:
         state_home: Path,
         data_home: Path,
         expected_entrypoint_path: Path,
-    ) -> object:
-        try:
-            return verify_active_release(
-                state_home=state_home,
-                data_home=data_home,
-                expected_entrypoint_path=expected_entrypoint_path,
-            )
-        except IntegrationAttestationUnavailable:
-            raise IntegrationUnavailable() from None
+    ) -> VerifiedActiveManifest:
+        return verify_active_manifest_at(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=expected_entrypoint_path,
+        )
 
     return verify
 
@@ -123,7 +120,7 @@ def execute(
     environ: Mapping[str, str],
     clock: Callable[[], datetime],
     expected_entrypoint_path: Path,
-    verifier: Callable[[Path, Path, Path], object],
+    verifier: Callable[[Path, Path, Path], VerifiedActiveManifest],
 ) -> CommandResult:
     try:
         normalized_argv = tuple(argv)
@@ -137,24 +134,31 @@ def execute(
         return _error_result(64)
     try:
         paths = _runtime_paths(environ)
-        with private_path_lock(
-            paths.release_lock_target,
-            timeout_seconds=0,
-            label="integration producer lock",
-        ):
-            verifier(paths.state_home, paths.data_home, expected_entrypoint_path)
-            generated_at = _require_aware_utc(clock())
-            usages = read_current_usage_records(paths.current_dir)
-            tracker_samples = _load_tracker_samples(paths.history_path, usages, generated_at)
-            document = build_schema2_document(
-                usages,
-                generated_at=generated_at,
-                tracker_samples=tracker_samples or None,
-            )
-            payload = serialize_schema2_document(document)
-            verifier(paths.state_home, paths.data_home, expected_entrypoint_path)
-            publish_schema2_cache(payload, cache_path=paths.cache_path)
+        first = verifier(paths.state_home, paths.data_home, expected_entrypoint_path)
+        generated_at = _require_aware_utc(clock())
+        usages = read_current_usage_records(paths.current_dir)
+        tracker_samples = _load_tracker_samples(paths.history_path, usages, generated_at)
+        document = build_schema2_document(
+            usages,
+            generated_at=generated_at,
+            tracker_samples=tracker_samples or None,
+        )
+        payload = serialize_schema2_document(document)
+        second = verifier(paths.state_home, paths.data_home, expected_entrypoint_path)
+        _require_matching_verified_manifests(first, second)
+        publish_evidence_generation(
+            payload,
+            state_home=paths.state_home,
+            data_home=paths.data_home,
+            verified_active_manifest=second,
+        )
         return CommandResult(0, payload, b"")
+    except EvidenceBusy:
+        return _error_result(75)
+    except IntegrationEvidenceUnavailable:
+        return _error_result(69)
+    except IntegrationEvidenceInvalid:
+        return _error_result(70)
     except IntegrationSnapshotError as exc:
         return _error_result(exc.exit_code)
     except TimeoutError:
@@ -163,6 +167,22 @@ def execute(
         return _error_result(70)
     except Exception:
         return _error_result(69)
+
+
+def _require_matching_verified_manifests(
+    first: object,
+    second: object,
+) -> None:
+    if (
+        type(first) is not VerifiedActiveManifest
+        or type(second) is not VerifiedActiveManifest
+        or first.active_manifest_sha256
+        != hashlib.sha256(first.active_manifest_bytes).hexdigest()
+        or second.active_manifest_sha256
+        != hashlib.sha256(second.active_manifest_bytes).hexdigest()
+        or first != second
+    ):
+        raise IntegrationEvidenceUnavailable()
 
 
 def _load_tracker_samples(

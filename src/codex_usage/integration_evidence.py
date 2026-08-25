@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import hashlib
 import json
 import math
 import os
 import pwd
 import re
+import secrets
 import stat
 import threading
 import time
@@ -18,6 +20,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from . import private_io
+from .integration_attestation import VerifiedActiveManifest, verify_active_manifest_at
 from .integration_snapshot import (
     IntegrationInvalidSource,
     _canonical_document_v2,
@@ -64,6 +67,10 @@ ALLOWED_WINDOW_SECONDS = _ALLOWED_WINDOW_SECONDS
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 _GENERATION_ID_RE = re.compile(r"[0-9a-f]{32}")
 _RELEASE_ID_RE = re.compile(r"0\.6\.536-[0-9a-f]{16}")
+_STAGING_RE = re.compile(r"\.tmp-([0-9a-f]{32})")
+_STAGING_FILE_RE = re.compile(
+    r"\.tmp-account-usage-v2(?:\.binding)?\.json-[0-9a-f]{32}"
+)
 
 
 @dataclass(frozen=True)
@@ -106,6 +113,62 @@ class _HeldEvidenceLocks:
 
 class IntegrationBusy(IntegrationEvidenceError):
     pass
+
+
+def _before_publish_active_reverify(
+    _state_home: Path,
+    _data_home: Path,
+    _verified_active_manifest: VerifiedActiveManifest,
+) -> None:
+    return None
+
+
+def _before_publish_staging() -> None:
+    return None
+
+
+def _before_publish_payload_recheck(
+    _parent_fd: int,
+    _name: str,
+    _held_fd: int,
+) -> None:
+    return None
+
+
+def _before_publish_binding_recheck(
+    _parent_fd: int,
+    _name: str,
+    _held_fd: int,
+) -> None:
+    return None
+
+
+def _before_publish_generation_recheck(
+    _generations_fd: int,
+    _generation_id: str,
+    _generation_fd: int,
+) -> None:
+    return None
+
+
+def _before_publish_pointer_parent_recheck(
+    _state_home: Path,
+    _integration_fd: int,
+) -> None:
+    return None
+
+
+def _verify_active_manifest_for_publish(
+    *,
+    state_home: Path,
+    data_home: Path,
+    expected_entrypoint_path: Path,
+) -> VerifiedActiveManifest:
+    return verify_active_manifest_at(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=expected_entrypoint_path,
+    )
 
 
 def _invalid_contract() -> None:
@@ -682,3 +745,534 @@ def evidence_lock_set(
         for _, fd in reversed(acquired):
             _release_lock(fd)
         os.close(root_fd)
+
+
+def _require_verified_manifest(value: object) -> VerifiedActiveManifest:
+    if type(value) is not VerifiedActiveManifest:
+        raise IntegrationEvidenceInvalid()
+    verified = cast(VerifiedActiveManifest, value)
+    if (
+        verified.active_release.version != "0.6.536"
+        or _RELEASE_ID_RE.fullmatch(verified.release_id) is None
+        or verified.active_manifest_sha256
+        != hashlib.sha256(verified.active_manifest_bytes).hexdigest()
+        or _DIGEST_RE.fullmatch(verified.source_manifest_sha256) is None
+    ):
+        raise IntegrationEvidenceInvalid()
+    return verified
+
+
+def _require_same_verified_manifest(
+    first: VerifiedActiveManifest,
+    second: VerifiedActiveManifest,
+) -> None:
+    _require_verified_manifest(first)
+    _require_verified_manifest(second)
+    if first != second:
+        raise IntegrationEvidenceUnavailable()
+
+
+def _open_evidence_parents(state_home: Path) -> tuple[int, int, int, int]:
+    state_fd = app_fd = integration_fd = generations_fd = -1
+    try:
+        state_fd = private_io.open_verified_state_home(state_home)
+        app_fd = private_io.open_private_dir_at(state_fd, "codex-usage")
+        integration_fd = private_io.open_private_dir_at(app_fd, "integration")
+        generations_fd = private_io.open_private_dir_at(integration_fd, "generations")
+        result = (state_fd, app_fd, integration_fd, generations_fd)
+        state_fd = app_fd = integration_fd = generations_fd = -1
+        return result
+    except ValueError as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    except OSError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    finally:
+        for fd in (generations_fd, integration_fd, app_fd, state_fd):
+            if fd >= 0:
+                os.close(fd)
+
+
+def _close_fds(*fds: int) -> None:
+    for fd in fds:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _named_identity(parent_fd: int, name: str, *, directory: bool) -> FileIdentity:
+    fd = -1
+    try:
+        if directory:
+            fd = private_io.open_private_dir_at(parent_fd, name)
+        else:
+            fd = os.open(
+                name,
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NONBLOCK", 0),
+                dir_fd=parent_fd,
+            )
+        return _fd_identity(fd)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _verify_named_file(
+    parent_fd: int,
+    name: str,
+    expected: bytes,
+    *,
+    maximum: int,
+    hook,
+) -> FileIdentity:
+    fd = -1
+    try:
+        fd = os.open(
+            name,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=parent_fd,
+        )
+        initial = os.fstat(fd)
+        identity = private_io._require_private_file_stat(
+            initial,
+            maximum=maximum,
+            mode=0o600,
+        )
+        payload = bytearray()
+        while len(payload) <= maximum:
+            chunk = os.read(fd, min(65_536, maximum + 1 - len(payload)))
+            if not chunk:
+                break
+            payload.extend(chunk)
+        hook(parent_fd, name, fd)
+        final = os.fstat(fd)
+        if (
+            bytes(payload) != expected
+            or private_io._require_private_file_stat(
+                final,
+                maximum=maximum,
+                mode=0o600,
+            )
+            != identity
+            or final.st_size != initial.st_size
+            or final.st_mtime_ns != initial.st_mtime_ns
+            or final.st_ctime_ns != initial.st_ctime_ns
+            or _named_identity(parent_fd, name, directory=False) != identity
+        ):
+            raise IntegrationEvidenceInvalid()
+        return identity
+    except IntegrationEvidenceError:
+        raise
+    except ValueError as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    except OSError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _safe_unlink_owned_file(parent_fd: int, name: str, identity: FileIdentity) -> None:
+    try:
+        if _named_identity(parent_fd, name, directory=False) == identity:
+            os.unlink(name, dir_fd=parent_fd)
+            os.fsync(parent_fd)
+    except (OSError, ValueError):
+        return
+
+
+def _write_staged_file(
+    staging_fd: int,
+    final_name: str,
+    payload: bytes,
+    *,
+    maximum: int,
+    hook,
+) -> None:
+    temporary_name = f".tmp-{final_name}-{secrets.token_hex(16)}"
+    identity = private_io.write_private_bytes_at(
+        staging_fd,
+        temporary_name,
+        payload,
+        mode=0o600,
+    )
+    renamed = False
+    try:
+        os.rename(
+            temporary_name,
+            final_name,
+            src_dir_fd=staging_fd,
+            dst_dir_fd=staging_fd,
+        )
+        renamed = True
+        os.fsync(staging_fd)
+        _verify_named_file(
+            staging_fd,
+            final_name,
+            payload,
+            maximum=maximum,
+            hook=hook,
+        )
+    except IntegrationEvidenceError:
+        raise
+    except ValueError as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    except OSError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    finally:
+        if not renamed:
+            _safe_unlink_owned_file(staging_fd, temporary_name, identity)
+
+
+def _validate_existing_current(
+    integration_fd: int,
+    generations_fd: int,
+) -> EvidencePointer | None:
+    try:
+        payload, _identity = private_io.read_private_bytes_at(
+            integration_fd,
+            "current.json",
+            maximum=_POINTER_MAX_BYTES,
+            mode=0o600,
+        )
+    except FileNotFoundError:
+        return None
+    except ValueError as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    except OSError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    pointer = parse_pointer(payload)
+    generation_fd = -1
+    try:
+        generation_fd = private_io.open_private_dir_at(
+            generations_fd,
+            pointer.current_generation_id,
+        )
+        binding_bytes, _identity = private_io.read_private_bytes_at(
+            generation_fd,
+            "account-usage-v2.binding.json",
+            maximum=_BINDING_MAX_BYTES,
+            mode=0o600,
+        )
+        binding = parse_binding(binding_bytes)
+        if (
+            binding.generation_id != pointer.current_generation_id
+            or hashlib.sha256(binding_bytes).hexdigest()
+            != pointer.current_binding_sha256
+        ):
+            raise IntegrationEvidenceInvalid()
+        return pointer
+    except IntegrationEvidenceError:
+        raise
+    except FileNotFoundError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    except ValueError as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    except OSError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    finally:
+        if generation_fd >= 0:
+            os.close(generation_fd)
+
+
+def _remove_safe_staging_directory(generations_fd: int, name: str) -> None:
+    staging_fd = -1
+    try:
+        staging_fd = private_io.open_private_dir_at(generations_fd, name)
+        staging_identity = _fd_identity(staging_fd)
+        entries = list(os.scandir(staging_fd))
+        if len(entries) > 4:
+            raise IntegrationEvidenceInvalid()
+        identities: list[tuple[str, FileIdentity]] = []
+        for entry in entries:
+            if entry.name not in {
+                "account-usage-v2.json",
+                "account-usage-v2.binding.json",
+            } and _STAGING_FILE_RE.fullmatch(entry.name) is None:
+                raise IntegrationEvidenceInvalid()
+            item = entry.stat(follow_symlinks=False)
+            maximum = (
+                _BINDING_MAX_BYTES if "binding" in entry.name else _PAYLOAD_MAX_BYTES
+            )
+            identity = private_io._require_private_file_stat(
+                item,
+                maximum=maximum,
+                mode=0o600,
+            )
+            identities.append((entry.name, identity))
+        for entry_name, identity in identities:
+            if _named_identity(staging_fd, entry_name, directory=False) != identity:
+                raise IntegrationEvidenceInvalid()
+        for entry_name, _identity in identities:
+            os.unlink(entry_name, dir_fd=staging_fd)
+        os.fsync(staging_fd)
+        if (
+            _fd_identity(staging_fd) != staging_identity
+            or _named_identity(generations_fd, name, directory=True) != staging_identity
+        ):
+            raise IntegrationEvidenceInvalid()
+        os.rmdir(name, dir_fd=generations_fd)
+        os.fsync(generations_fd)
+    except IntegrationEvidenceError:
+        raise
+    except ValueError as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    except OSError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    finally:
+        if staging_fd >= 0:
+            os.close(staging_fd)
+
+
+def recover_evidence_staging(*, generations_fd: int) -> None:
+    try:
+        private_io._require_private_directory_fd(generations_fd)
+        staging_names: list[str] = []
+        with os.scandir(generations_fd) as entries:
+            for entry in entries:
+                if entry.name.startswith(".tmp-"):
+                    if _STAGING_RE.fullmatch(entry.name) is None:
+                        raise IntegrationEvidenceInvalid()
+                    staging_names.append(entry.name)
+                    if len(staging_names) > 16:
+                        raise IntegrationEvidenceInvalid()
+        for name in sorted(staging_names):
+            _remove_safe_staging_directory(generations_fd, name)
+    except IntegrationEvidenceError:
+        raise
+    except ValueError as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    except OSError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+
+
+def _fresh_parent_identities(state_home: Path) -> tuple[FileIdentity, FileIdentity]:
+    try:
+        return _verify_lock_target_parent(state_home)
+    except IntegrationEvidenceUnavailable as exc:
+        raise IntegrationEvidenceInvalid() from exc
+
+
+def _atomic_replace_current(integration_fd: int, pointer_bytes: bytes) -> None:
+    temporary_name = f".tmp-current.json-{secrets.token_hex(16)}"
+    identity = private_io.write_private_bytes_at(
+        integration_fd,
+        temporary_name,
+        pointer_bytes,
+        mode=0o600,
+    )
+    renamed = False
+    try:
+        _verify_named_file(
+            integration_fd,
+            temporary_name,
+            pointer_bytes,
+            maximum=_POINTER_MAX_BYTES,
+            hook=lambda *_: None,
+        )
+        os.replace(
+            temporary_name,
+            "current.json",
+            src_dir_fd=integration_fd,
+            dst_dir_fd=integration_fd,
+        )
+        renamed = True
+        os.fsync(integration_fd)
+    except IntegrationEvidenceError:
+        raise
+    except ValueError as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    except OSError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    finally:
+        if not renamed:
+            _safe_unlink_owned_file(integration_fd, temporary_name, identity)
+
+
+def gc_evidence_generations(
+    *,
+    state_home: Path,
+    data_home: Path,
+    pointer: EvidencePointer,
+    verified_active_manifest: VerifiedActiveManifest,
+) -> None:
+    """Task-3 staging interface; bounded retention is implemented in Task 5."""
+    if type(state_home) is not type(Path()) or type(data_home) is not type(Path()):
+        raise IntegrationEvidenceInvalid()
+    parse_pointer(serialize_pointer(pointer))
+    _require_verified_manifest(verified_active_manifest)
+
+
+def publish_evidence_generation(
+    payload: bytes,
+    *,
+    state_home: Path,
+    data_home: Path,
+    verified_active_manifest: VerifiedActiveManifest,
+) -> EvidencePointer:
+    verified = _require_verified_manifest(verified_active_manifest)
+    if (
+        type(state_home) is not type(Path())
+        or type(data_home) is not type(Path())
+        or not state_home.is_absolute()
+        or not data_home.is_absolute()
+    ):
+        raise IntegrationEvidenceInvalid()
+    document = validate_v2_payload_bytes(payload)
+    published_at = cast(str, document["generated_at"])
+    payload_digest = hashlib.sha256(payload).hexdigest()
+    pointer: EvidencePointer | None = None
+
+    with evidence_lock_set(
+        state_home=state_home,
+        release_mode="exclusive",
+        current_mode="exclusive",
+        timeout_seconds=0,
+        create=False,
+    ):
+        state_fd = app_fd = integration_fd = generations_fd = generation_fd = -1
+        try:
+            state_fd, app_fd, integration_fd, generations_fd = _open_evidence_parents(
+                state_home
+            )
+            held_state_identity = _fd_identity(state_fd)
+            held_integration_identity = _fd_identity(integration_fd)
+            if (
+                held_state_identity != verified.state_home_identity
+                or held_integration_identity != verified.integration_parent_identity
+            ):
+                raise IntegrationEvidenceInvalid()
+            recover_evidence_staging(generations_fd=generations_fd)
+            old_pointer = _validate_existing_current(integration_fd, generations_fd)
+
+            _before_publish_active_reverify(state_home, data_home, verified)
+            repeated = _verify_active_manifest_for_publish(
+                state_home=state_home,
+                data_home=data_home,
+                expected_entrypoint_path=verified.active_release.entrypoint_path,
+            )
+            _require_same_verified_manifest(verified, repeated)
+
+            for _attempt in range(16):
+                generation_id = secrets.token_hex(16)
+                staging_name = f".tmp-{generation_id}"
+                try:
+                    os.stat(generation_id, dir_fd=generations_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    continue
+                try:
+                    os.mkdir(staging_name, mode=0o700, dir_fd=generations_fd)
+                except FileExistsError:
+                    continue
+                break
+            else:
+                raise IntegrationEvidenceUnavailable()
+
+            _before_publish_staging()
+            generation_fd = private_io.open_private_dir_at(
+                generations_fd,
+                staging_name,
+            )
+            staged_identity = _fd_identity(generation_fd)
+            binding = EvidenceBinding(
+                active_manifest_sha256=verified.active_manifest_sha256,
+                binding_schema_version=1,
+                generation_id=generation_id,
+                payload_filename="account-usage-v2.json",
+                payload_sha256=payload_digest,
+                payload_size_bytes=len(payload),
+                published_at=published_at,
+                producer_version="0.6.536",
+                release_id=verified.release_id,
+                source_manifest_sha256=verified.source_manifest_sha256,
+            )
+            binding_bytes = serialize_binding(binding)
+            if parse_binding(binding_bytes) != binding:
+                raise IntegrationEvidenceInvalid()
+            _write_staged_file(
+                generation_fd,
+                "account-usage-v2.json",
+                payload,
+                maximum=_PAYLOAD_MAX_BYTES,
+                hook=_before_publish_payload_recheck,
+            )
+            _write_staged_file(
+                generation_fd,
+                "account-usage-v2.binding.json",
+                binding_bytes,
+                maximum=_BINDING_MAX_BYTES,
+                hook=_before_publish_binding_recheck,
+            )
+            os.fsync(generation_fd)
+            os.rename(
+                staging_name,
+                generation_id,
+                src_dir_fd=generations_fd,
+                dst_dir_fd=generations_fd,
+            )
+            os.fsync(generations_fd)
+            _before_publish_generation_recheck(
+                generations_fd,
+                generation_id,
+                generation_fd,
+            )
+            if (
+                _fd_identity(generation_fd) != staged_identity
+                or _named_identity(
+                    generations_fd,
+                    generation_id,
+                    directory=True,
+                )
+                != staged_identity
+            ):
+                raise IntegrationEvidenceInvalid()
+
+            pointer = EvidencePointer(
+                generation_id,
+                hashlib.sha256(binding_bytes).hexdigest(),
+                1,
+                old_pointer.current_generation_id if old_pointer else None,
+                old_pointer.current_binding_sha256 if old_pointer else None,
+            )
+            pointer_bytes = serialize_pointer(pointer)
+            _before_publish_pointer_parent_recheck(state_home, integration_fd)
+            fresh_state_identity, fresh_integration_identity = _fresh_parent_identities(
+                state_home
+            )
+            if (
+                _fd_identity(state_fd) != held_state_identity
+                or _fd_identity(integration_fd) != held_integration_identity
+                or fresh_state_identity != held_state_identity
+                or fresh_integration_identity != held_integration_identity
+            ):
+                raise IntegrationEvidenceInvalid()
+            _atomic_replace_current(integration_fd, pointer_bytes)
+        except IntegrationEvidenceError:
+            raise
+        except ValueError as exc:
+            raise IntegrationEvidenceInvalid() from exc
+        except OSError as exc:
+            raise IntegrationEvidenceUnavailable() from exc
+        finally:
+            _close_fds(generation_fd, generations_fd, integration_fd, app_fd, state_fd)
+
+    assert pointer is not None
+    fresh = _verify_active_manifest_for_publish(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=verified.active_release.entrypoint_path,
+    )
+    _require_same_verified_manifest(verified, fresh)
+    gc_evidence_generations(
+        state_home=state_home,
+        data_home=data_home,
+        pointer=pointer,
+        verified_active_manifest=fresh,
+    )
+    return pointer
