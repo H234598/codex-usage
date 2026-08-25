@@ -1653,6 +1653,12 @@ def test_jwt_claims_reject_extra_segments():
     assert _current_jwt_claims(token) is None
 
 
+def test_jwt_claims_reject_invalid_base64_payload_characters():
+    header, payload, signature = _jwt_with_claims({"sub": "account"}).split(".")
+
+    assert _current_jwt_claims(f"{header}.{payload}!!!!.{signature}") is None
+
+
 def test_jwt_claims_reject_nonstandard_json_constants():
     payload = base64.urlsafe_b64encode(b'{"sub":NaN}').rstrip(b"=").decode("ascii")
     token = f"e30.{payload}.signature"
@@ -3402,6 +3408,9 @@ def test_select_stable_wham_usage_keeps_latest_dynamic_metadata_for_stable_limit
             "account_id": "account-test",
             "credits": credits,
             "resets": resets,
+            "available": resets,
+            "known": True,
+            "redeem_capability": False,
             "rate_limit": {
                 "primary_window": {
                     "used_percent": 50,
@@ -3422,6 +3431,8 @@ def test_select_stable_wham_usage_keeps_latest_dynamic_metadata_for_stable_limit
 
     assert selected["credits"] == 80
     assert selected["resets"] == 3
+    assert selected["available"] == 3
+    assert selected["known"] is True
 
 
 def test_fetch_stable_wham_usage_groups_dynamic_reset_buckets(monkeypatch):

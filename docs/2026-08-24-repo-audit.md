@@ -4717,3 +4717,22 @@ Verifikation: **395 `tests/test_direct.py`-Tests**, **1147 gekoppelte
 Direct-/Bridge-/App-Server-/Extractor-Tests**, **5540 Python-Tests plus ein
 Skip**, **650 Applet-Tests**, 100%-Statement- und Branch-Coverage im Direct-
 Modul, Mypy, Ruff, `py_compile`, `make check` und `git diff --check` grün.
+
+## Runde 234: Strikte JWT-Payload-Kodierung
+
+Fokus: `src/codex_usage/direct.py`, lokale JWT-Claim-Extraktion aus
+`auth.json`.
+
+Ein reproduzierbarer Parserfehler: `base64.urlsafe_b64decode()` ignorierte
+ungültige Zeichen im Payload-Segment. Ein Token mit gültigen Claims und
+angehängtem `!!!!` wurde deshalb als gültige Claimquelle akzeptiert.
+
+Fix: Vor Decoding muss das Payload-Segment ausschließlich aus URL-safe
+Base64-Zeichen (`A-Z`, `a-z`, `0-9`, `-`, `_`) bestehen. Opaque Access-Tokens
+ohne JWT-Payload bleiben weiterhin zulässig; nur pseudo-JWT-Claims mit
+ungültiger Kodierung werden verworfen.
+
+Verifikation: **396 `tests/test_direct.py`-Tests**, **1220 gekoppelte
+Direct-/Identity-/Bridge-/App-Server-/Extractor-Tests**, 100%-Statement- und
+Branch-Coverage im Direct-Modul, Mypy, Ruff, Python-Compile und
+`git diff --check` grün.

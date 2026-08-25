@@ -1161,11 +1161,13 @@ def _select_stable_wham_usage(payloads: list[dict[str, Any]]) -> dict[str, Any]:
         "remainingCredits",
         "usage_resets",
         "resets",
-        "available",
-        "known",
-        "redeem_capability",
     ):
         if key in latest and latest[key] is not None:
+            selected[key] = latest[key]
+    if all(
+        key in latest for key in ("available", "known", "redeem_capability")
+    ):
+        for key in ("available", "known", "redeem_capability"):
             selected[key] = latest[key]
     return selected
 
@@ -1810,6 +1812,8 @@ def _jwt_claims(token: Any) -> dict[str, Any] | None:
         return None
     parts = token.split(".")
     if len(parts) != 3 or not parts[1]:
+        return None
+    if re.fullmatch(r"[A-Za-z0-9_-]+", parts[1]) is None:
         return None
     payload = parts[1] + "=" * (-len(parts[1]) % 4)
     try:
