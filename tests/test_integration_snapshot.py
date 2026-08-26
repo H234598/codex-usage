@@ -637,6 +637,79 @@ def test_schema2_projection_validates_invalid_credit_before_status_suppression(
         build_schema2_document((usage,), generated_at=GENERATED)
 
 
+def test_schema2_projection_rejects_secondary_credit_alias_domain_violation():
+    from codex_usage.direct import _credit_window
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        build_schema2_document,
+    )
+
+    credits = _credit_window(
+        {
+            "credits": {
+                "remaining": 0.0,
+                "available": -math.ulp(0.0),
+            }
+        },
+        GENERATED,
+    )
+    assert credits == LimitWindow(name="credits", source="invalid:credits")
+    usage = replace(_usage("alpha"), credits=credits)
+
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema2_document((usage,), generated_at=GENERATED)
+
+
+def test_schema2_projection_rejects_credit_reset_alias_conflict():
+    from codex_usage.direct import _credit_window
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        build_schema2_document,
+    )
+
+    credits = _credit_window(
+        {
+            "credits": {
+                "percent": 80,
+                "reset_at": "2026-09-01T00:00:00Z",
+                "resetAt": "2026-10-01T00:00:00Z",
+            }
+        },
+        GENERATED,
+    )
+    assert credits == LimitWindow(name="credits", source="invalid:credits")
+    usage = replace(_usage("alpha"), credits=credits)
+
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema2_document((usage,), generated_at=GENERATED)
+
+
+def test_schema2_projection_preserves_equal_offset_credit_reset_alias_instant():
+    from codex_usage.direct import _credit_window
+    from codex_usage.integration_snapshot import build_schema2_document
+
+    credits = _credit_window(
+        {
+            "credits": {
+                "percent": 80,
+                "reset_at": "2026-09-01T00:00:00Z",
+                "resetAt": "2026-09-01T02:00:00+02:00",
+            }
+        },
+        GENERATED,
+    )
+    usage = replace(_usage("alpha"), credits=credits)
+
+    document = build_schema2_document((usage,), generated_at=GENERATED)
+    credit = next(
+        limit
+        for limit in document["accounts"][0]["limits"]
+        if limit["pool"] == "credits"
+    )
+
+    assert credit["reset_at"] == "2026-09-01T00:00:00Z"
+
+
 @pytest.mark.parametrize(
     ("credits", "expected_remaining_percent"),
     [

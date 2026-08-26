@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
@@ -115,6 +116,118 @@ def test_state_numeric_helpers_reject_subclasses_before_operations(tmp_path, mon
     )
     with pytest.raises(ValueError, match="invalid state generation"):
         state_module._read_state_generation(path, "account")
+
+
+def test_credit_alias_domain_violation_survives_state_as_sanitized_sentinel(tmp_path):
+    from codex_usage.direct import _credit_window
+
+    captured = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+    credits = _credit_window(
+        {
+            "credits": {
+                "remaining": 0.0,
+                "available": -math.ulp(0.0),
+            }
+        },
+        captured,
+    )
+    assert credits == LimitWindow(name="credits", source="invalid:credits")
+    current_dir = tmp_path / "current"
+    save_current_usage(
+        AccountUsage(
+            account_id="alias-boundary",
+            label="Alias boundary",
+            captured_at=captured,
+            five_hour=LimitWindow(name="5h", remaining=83.0),
+            weekly=LimitWindow(name="weekly", remaining=58.0),
+            credits=credits,
+            backend_configured="app-server",
+            backend_used="app-server",
+        ),
+        current_dir,
+    )
+
+    loaded = load_current_usage("alias-boundary", current_dir)
+
+    assert loaded is not None
+    assert loaded.credits == LimitWindow(name="credits", source="invalid:credits")
+
+
+def test_credit_reset_alias_conflict_survives_state_as_sanitized_sentinel(tmp_path):
+    from codex_usage.direct import _credit_window
+
+    captured = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+    credits = _credit_window(
+        {
+            "credits": {
+                "percent": 80,
+                "reset_at": "2026-09-01T00:00:00Z",
+                "resetAt": "2026-10-01T00:00:00Z",
+            }
+        },
+        captured,
+    )
+    assert credits == LimitWindow(name="credits", source="invalid:credits")
+    current_dir = tmp_path / "current"
+    save_current_usage(
+        AccountUsage(
+            account_id="reset-conflict",
+            label="Reset conflict",
+            captured_at=captured,
+            five_hour=LimitWindow(name="5h", remaining=83.0),
+            weekly=LimitWindow(name="weekly", remaining=58.0),
+            credits=credits,
+            backend_configured="app-server",
+            backend_used="app-server",
+        ),
+        current_dir,
+    )
+
+    loaded = load_current_usage("reset-conflict", current_dir)
+
+    assert loaded is not None
+    assert loaded.credits == LimitWindow(name="credits", source="invalid:credits")
+
+
+def test_equal_offset_credit_reset_aliases_roundtrip_through_state(tmp_path):
+    from codex_usage.direct import _credit_window
+
+    captured = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+    credits = _credit_window(
+        {
+            "credits": {
+                "percent": 80,
+                "reset_at": "2026-09-01T00:00:00Z",
+                "resetAt": "2026-09-01T02:00:00+02:00",
+            }
+        },
+        captured,
+    )
+    assert credits == LimitWindow(
+        name="credits",
+        percent=80,
+        reset_at=datetime(2026, 9, 1, tzinfo=UTC),
+        source="json:credits",
+    )
+    current_dir = tmp_path / "current"
+    save_current_usage(
+        AccountUsage(
+            account_id="equal-offset-reset",
+            label="Equal offset reset",
+            captured_at=captured,
+            five_hour=LimitWindow(name="5h", remaining=83.0),
+            weekly=LimitWindow(name="weekly", remaining=58.0),
+            credits=credits,
+            backend_configured="app-server",
+            backend_used="app-server",
+        ),
+        current_dir,
+    )
+
+    loaded = load_current_usage("equal-offset-reset", current_dir)
+
+    assert loaded is not None
+    assert loaded.credits == credits
 
 
 def test_state_times_with_failing_timezone_callback_use_local_zone(monkeypatch):

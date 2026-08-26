@@ -1026,6 +1026,90 @@ def test_usage_samples_omit_denominatorless_absolute_credit(remaining):
     assert usage_samples_from_usage(usage) == ()
 
 
+def test_usage_samples_omit_sanitized_secondary_credit_alias_violation():
+    from codex_usage.direct import _credit_window
+
+    captured = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+    credits = _credit_window(
+        {
+            "credits": {
+                "remaining": 0.0,
+                "available": -math.ulp(0.0),
+            }
+        },
+        captured,
+    )
+    assert credits == LimitWindow(name="credits", source="invalid:credits")
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        credits=credits,
+        status=AccountStatus.OK,
+        backend_used="app-server",
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
+def test_usage_samples_omit_sanitized_credit_reset_alias_conflict():
+    from codex_usage.direct import _credit_window
+
+    captured = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+    credits = _credit_window(
+        {
+            "credits": {
+                "percent": 80,
+                "reset_at": "2026-09-01T00:00:00Z",
+                "resetAt": "2026-10-01T00:00:00Z",
+            }
+        },
+        captured,
+    )
+    assert credits == LimitWindow(name="credits", source="invalid:credits")
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        credits=credits,
+        status=AccountStatus.OK,
+        backend_used="app-server",
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
+def test_usage_samples_preserve_equal_offset_credit_reset_alias_instant():
+    from codex_usage.direct import _credit_window
+
+    captured = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+    credits = _credit_window(
+        {
+            "credits": {
+                "percent": 80,
+                "reset_at": "2026-09-01T00:00:00Z",
+                "resetAt": "2026-09-01T02:00:00+02:00",
+            }
+        },
+        captured,
+    )
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        credits=credits,
+        status=AccountStatus.OK,
+        backend_used="app-server",
+    )
+
+    samples = usage_samples_from_usage(usage)
+
+    assert len(samples) == 1
+    assert samples[0].pool == "credits"
+    assert samples[0].reset_at == datetime(2026, 9, 1, tzinfo=UTC)
+    assert samples[0].reset_generation == "2026-09-01T00:00:00+00:00"
+
+
 @pytest.mark.parametrize(
     "credits",
     [

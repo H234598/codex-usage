@@ -1721,7 +1721,11 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
         if type(candidate) is not dict:
             raise ValueError("credit value is invalid")
 
-        def number(*keys: str) -> float | None:
+        def number(
+            *keys: str,
+            allow_zero: bool = True,
+            maximum: float | None = None,
+        ) -> float | None:
             values: list[float] = []
             for key in keys:
                 if key not in candidate:
@@ -1733,7 +1737,12 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
                     numeric = float(cast(int | float | str, value))
                 except (OverflowError, TypeError, ValueError):
                     raise ValueError("credit value is invalid") from None
-                if not math.isfinite(numeric):
+                if (
+                    not math.isfinite(numeric)
+                    or numeric < 0
+                    or (not allow_zero and numeric == 0)
+                    or (maximum is not None and numeric > maximum)
+                ):
                     raise ValueError("credit value is invalid")
                 values.append(numeric)
             if not values:
@@ -1742,21 +1751,52 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
                 raise ValueError("credit aliases conflict")
             return values[0]
 
+        def reset() -> datetime | None:
+            values: list[datetime] = []
+            for key in ("reset_at", "resetAt"):
+                if key not in candidate:
+                    continue
+                raw_value = candidate[key]
+                if (
+                    type(raw_value) is not str
+                    or not raw_value
+                    or len(raw_value) > 64
+                    or raw_value != raw_value.strip()
+                    or "T" not in raw_value
+                ):
+                    raise ValueError("credit reset is invalid")
+                parsed = _parse_iso_datetime(raw_value)
+                if (
+                    parsed is None
+                    or parsed.tzinfo is None
+                    or parsed.utcoffset() is None
+                ):
+                    raise ValueError("credit reset is invalid")
+                values.append(parsed.astimezone(UTC))
+            if not values:
+                return None
+            if any(value != values[0] for value in values[1:]):
+                raise ValueError("credit reset aliases conflict")
+            return values[0]
+
         window = LimitWindow(
             name="credits",
             duration_seconds=None,
             used=number("used", "consumed"),
-            limit=number("limit", "total", "maximum"),
+            limit=number("limit", "total", "maximum", allow_zero=False),
             remaining=number(
                 "remaining",
                 "available",
                 "balance",
                 "credit_balance",
             ),
-            percent=number("percent", "remaining_percent", "remainingPercentage"),
-            reset_at=_parse_iso_datetime(
-                candidate.get("reset_at") or candidate.get("resetAt")
+            percent=number(
+                "percent",
+                "remaining_percent",
+                "remainingPercentage",
+                maximum=100.0,
             ),
+            reset_at=reset(),
             source="json:credits",
         )
         return window, credit_window_remaining_percent(window)

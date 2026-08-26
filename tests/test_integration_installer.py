@@ -3887,6 +3887,32 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
         source="json:credits",
     )
     save_current_usage(boundary, current_dir)
+    offset_reset_command = _fake_codex(
+        tmp_path / "codex-offset-reset-credit",
+        tmp_path / "app-server-requests-offset-reset-credit.json",
+        account_credits_payload={
+            "percent": 80,
+            "reset_at": "2026-09-01T00:00:00Z",
+            "resetAt": "2026-09-01T02:00:00+02:00",
+        },
+    )
+    offset_reset = fetch_account_usage_app_server(
+        Account(
+            id="offset-reset-credit",
+            label="Offset reset credit",
+            profile_dir=str(tmp_path / "profile-offset-reset-credit"),
+            auth_json_path=str(auth_path),
+            backend="app-server",
+        ),
+        codex_command=offset_reset_command,
+    )
+    assert offset_reset.credits == LimitWindow(
+        name="credits",
+        percent=80,
+        reset_at=datetime(2026, 9, 1, tzinfo=UTC),
+        source="json:credits",
+    )
+    save_current_usage(offset_reset, current_dir)
     roundtrip = read_current_usage_records(current_dir)
     roundtrip_by_id = {usage.account_id: usage for usage in roundtrip}
     for account_id, source_value in scalar_values.items():
@@ -3904,6 +3930,13 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
         for sample in usage_samples_from_usage(boundary_roundtrip)
         if sample.pool == "credits"
     ] == [pytest.approx(100.0 - near_percent)]
+    offset_reset_roundtrip = roundtrip_by_id["offset-reset-credit"]
+    assert offset_reset_roundtrip.credits == offset_reset.credits
+    assert [
+        sample.reset_generation
+        for sample in usage_samples_from_usage(offset_reset_roundtrip)
+        if sample.pool == "credits"
+    ] == ["2026-09-01T00:00:00+00:00"]
 
     direct_error = None
     direct_document = None
@@ -3940,6 +3973,7 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
         accounts = {account["account_id"]: account for account in payload["accounts"]}
         assert set(accounts) == set(scalar_values) | {
             "near-endpoint-credit",
+            "offset-reset-credit",
             "percent-credit",
         }
         for account_id in scalar_values:
@@ -3960,6 +3994,19 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
             {
                 "pool": "credits",
                 "remaining_percent": 80.0,
+                "used_percent": 20.0,
+                "window_seconds": 2_592_000,
+            }
+        ]
+        assert [
+            limit
+            for limit in accounts["offset-reset-credit"]["limits"]
+            if limit["pool"] == "credits"
+        ] == [
+            {
+                "pool": "credits",
+                "remaining_percent": 80.0,
+                "reset_at": "2026-09-01T00:00:00Z",
                 "used_percent": 20.0,
                 "window_seconds": 2_592_000,
             }
@@ -4122,6 +4169,42 @@ def test_installed_launcher_invalid_real_credit_does_not_commit_current(tmp_path
         ("nan", "NaN", None),
         ("infinite", "Inf", None),
         ("unparseable", "not-a-number", None),
+        (
+            "secondary-negative-alias",
+            None,
+            {"remaining": 0.0, "available": -math.ulp(0.0)},
+        ),
+        (
+            "secondary-percent-above-hundred",
+            None,
+            {
+                "percent": 100.0,
+                "remaining_percent": math.nextafter(100.0, math.inf),
+            },
+        ),
+        (
+            "secondary-zero-limit",
+            None,
+            {"used": 0.0, "limit": math.ulp(0.0), "total": 0.0},
+        ),
+        (
+            "conflicting-reset-aliases",
+            None,
+            {
+                "percent": 80,
+                "reset_at": "2026-09-01T00:00:00Z",
+                "resetAt": "2026-10-01T00:00:00Z",
+            },
+        ),
+        (
+            "malformed-plus-valid-reset-aliases",
+            None,
+            {
+                "percent": 80,
+                "reset_at": "not-a-timestamp",
+                "resetAt": "2026-09-01T00:00:00Z",
+            },
+        ),
         ("pair-used-limit", None, {"used": 101, "limit": 100}),
         ("pair-used-percent", None, {"used": 20, "percent": 70}),
         (

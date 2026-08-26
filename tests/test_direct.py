@@ -1237,6 +1237,11 @@ def test_credit_window_bounds_native_source_containers():
 
 def test_credit_window_bounds_collected_native_candidates():
     captured_at = datetime(2026, 7, 16, 4, 0, tzinfo=UTC)
+    credit = {
+        "percent": 80,
+        "reset_at": "2026-09-01T00:00:00Z",
+        "resetAt": "2026-09-01T02:00:00+02:00",
+    }
     aliases = (
         "credits",
         "credit_balance",
@@ -1244,11 +1249,11 @@ def test_credit_window_bounds_collected_native_candidates():
         "remaining_credits",
         "remainingCredits",
     )
-    source = {key: {"percent": 80} for key in aliases}
-    source["account"] = {"credits": {"percent": 80}}
+    source = {key: dict(credit) for key in aliases}
+    source["account"] = {"credits": dict(credit)}
     payload = {
-        "credits": {"percent": 80},
-        "credit_balance": {"percent": 80},
+        "credits": dict(credit),
+        "credit_balance": dict(credit),
         "rateLimitsByLimitId": {
             str(index): dict(source) for index in range(8)
         },
@@ -1257,7 +1262,7 @@ def test_credit_window_bounds_collected_native_candidates():
     window = _credit_window(payload, captured_at)
 
     assert window is not None and window.percent == 80
-    payload["creditBalance"] = {"percent": 80}
+    payload["creditBalance"] = dict(credit)
     assert _credit_window(payload, captured_at) == LimitWindow(
         name="credits",
         source="invalid:credits",
@@ -1360,6 +1365,165 @@ def test_credit_window_preserves_conflicts_as_invalid(fields):
         {"credits": fields},
         datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
     ) == LimitWindow(name="credits", source="invalid:credits")
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param(
+            {"used": -math.ulp(0.0), "consumed": 0.0, "limit": 1.0},
+            id="used-primary-negative",
+        ),
+        pytest.param(
+            {"used": 0.0, "consumed": -math.ulp(0.0), "limit": 1.0},
+            id="used-secondary-negative",
+        ),
+        pytest.param(
+            {"used": 0.0, "limit": 0.0, "total": math.ulp(0.0)},
+            id="limit-primary-zero",
+        ),
+        pytest.param(
+            {"used": 0.0, "limit": math.ulp(0.0), "total": 0.0},
+            id="limit-total-zero",
+        ),
+        pytest.param(
+            {"used": 0.0, "limit": math.ulp(0.0), "maximum": 0.0},
+            id="limit-maximum-zero",
+        ),
+        pytest.param(
+            {"remaining": -math.ulp(0.0), "available": 0.0},
+            id="remaining-primary-negative",
+        ),
+        pytest.param(
+            {"remaining": 0.0, "available": -math.ulp(0.0)},
+            id="remaining-available-negative",
+        ),
+        pytest.param(
+            {"remaining": 0.0, "balance": -math.ulp(0.0)},
+            id="remaining-balance-negative",
+        ),
+        pytest.param(
+            {"remaining": 0.0, "credit_balance": -math.ulp(0.0)},
+            id="remaining-credit-balance-negative",
+        ),
+        pytest.param(
+            {
+                "percent": math.nextafter(100.0, math.inf),
+                "remaining_percent": 100.0,
+            },
+            id="percent-primary-above-hundred",
+        ),
+        pytest.param(
+            {
+                "percent": 100.0,
+                "remaining_percent": math.nextafter(100.0, math.inf),
+            },
+            id="percent-remaining-percent-above-hundred",
+        ),
+        pytest.param(
+            {
+                "percent": 100.0,
+                "remainingPercentage": math.nextafter(100.0, math.inf),
+            },
+            id="percent-remaining-percentage-above-hundred",
+        ),
+    ],
+)
+def test_credit_window_validates_every_present_numeric_alias_before_matching(fields):
+    assert _credit_window(
+        {"credits": fields},
+        datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+    ) == LimitWindow(name="credits", source="invalid:credits")
+
+
+@pytest.mark.parametrize(
+    "reset_fields",
+    [
+        pytest.param(
+            {
+                "reset_at": "2026-09-01T00:00:00Z",
+                "resetAt": "2026-10-01T00:00:00Z",
+            },
+            id="conflicting-instants",
+        ),
+        pytest.param({"reset_at": "not-a-timestamp"}, id="malformed-only"),
+        pytest.param(
+            {
+                "reset_at": "not-a-timestamp",
+                "resetAt": "2026-09-01T00:00:00Z",
+            },
+            id="malformed-primary-valid-secondary",
+        ),
+        pytest.param(
+            {
+                "reset_at": "2026-09-01T00:00:00Z",
+                "resetAt": "not-a-timestamp",
+            },
+            id="valid-primary-malformed-secondary",
+        ),
+        pytest.param(
+            {"reset_at": "", "resetAt": "2026-09-01T00:00:00Z"},
+            id="empty-primary-valid-secondary",
+        ),
+        pytest.param(
+            {"reset_at": None, "resetAt": "2026-09-01T00:00:00Z"},
+            id="null-primary-valid-secondary",
+        ),
+        pytest.param(
+            {"reset_at": "2026-09-01T00:00:00"},
+            id="timezone-naive",
+        ),
+        pytest.param(
+            {
+                "reset_at": "2026-09-01T00:00:00."
+                + "0" * 65
+                + "Z"
+            },
+            id="oversized",
+        ),
+    ],
+)
+def test_credit_window_rejects_invalid_or_conflicting_reset_aliases(reset_fields):
+    assert _credit_window(
+        {"credits": {"percent": 80, **reset_fields}},
+        datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+    ) == LimitWindow(name="credits", source="invalid:credits")
+
+
+@pytest.mark.parametrize(
+    "reset_fields",
+    [
+        pytest.param({}, id="absent"),
+        pytest.param(
+            {"resetAt": "2026-09-01T00:00:00Z"},
+            id="single-camel-case",
+        ),
+        pytest.param(
+            {
+                "reset_at": "2026-09-01T00:00:00Z",
+                "resetAt": "2026-09-01T00:00:00Z",
+            },
+            id="equal-text",
+        ),
+        pytest.param(
+            {
+                "reset_at": "2026-09-01T00:00:00Z",
+                "resetAt": "2026-09-01T02:00:00+02:00",
+            },
+            id="equal-instant-offsets",
+        ),
+    ],
+)
+def test_credit_window_accepts_absent_or_equal_reset_aliases(reset_fields):
+    window = _credit_window(
+        {"credits": {"percent": 80, **reset_fields}},
+        datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+    )
+
+    assert window is not None and window.source == "json:credits"
+    assert window.reset_at == (
+        None if not reset_fields else datetime(2026, 9, 1, tzinfo=UTC)
+    )
 
 
 @pytest.mark.parametrize(
