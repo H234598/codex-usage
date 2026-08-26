@@ -41,11 +41,24 @@
   vorhandenen invaliden Quelle. Negative, nicht endliche oder unparsebare
   Werte bleiben als sanitisiertes Invalid-Sentinel durch den State-Roundtrip
   erhalten und stoppen den gesamten atomaren Publish vor dem Current-Commit.
+  Diese Prüfung läuft vor statusabhängiger Limitunterdrückung und gilt deshalb
+  auch für `blocked`, `error` und alle übrigen Accountstatus.
+- Credit-Erkennung sammelt statt First-Match sämtliche nativen Kandidaten aus
+  Top-Level-Aliassen, `rateLimits`, `rate_limits`, jedem bounded
+  `rateLimitsByLimitId`-Eintrag und `account.credits`. Höchstens 50 variable
+  Container und 50 Creditkandidaten werden gelesen; Kandidat 51, eine weitere
+  invalide Quelle oder ein semantischer Konflikt erzeugt das sanitierte
+  Invalid-Sentinel.
 - Alle vorhandenen `used`-, `remaining`-, `limit`- und Prozentfelder sowie ihre
-  Aliasse müssen innerhalb reiner Float-ULP-Rundung übereinstimmen.
-  Widersprüchliche Paare, Tripel und Quadrupel bleiben fail-closed; explizite
-  Prozent- und konsistente limitbasierte Credits behalten ihre bisherige
-  Projektion. Kein Clamp und kein Nenner werden ergänzt.
+  Aliasse müssen vollständig übereinstimmen. Denominatorlos ist ausschließlich
+  ein einzelnes logisches `remaining` zulässig; `used+remaining` ohne
+  `limit`/Prozent ist nicht korrelierbar und bleibt fail-closed.
+- Float-Konsistenz akzeptiert exakt vier `nextafter`-Schritte und verwirft den
+  fünften. Werte innerhalb `0..limit` behalten ihr echtes Verhältnis; nur eine
+  tatsächliche geringe Überschreitung darf bis zu dieser Grenze auf den
+  Endpoint normalisiert werden. Explizite Prozent- und konsistente
+  limitbasierte Credits behalten damit ihre Projektion, ohne erfundenen
+  Nenner, In-Range-Clamp oder Credittrend.
 
 ## 0.6.534 - 2026-08-24
 

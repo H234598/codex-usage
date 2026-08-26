@@ -79,7 +79,9 @@ Feld-Allowlist:
   endliche nichtnegative Scalar-`remaining`-Wert ohne `limit` und ohne
   explizites Prozentfeld ist unabhängig vom Zahlenbereich ein denominatorloser
   Absolutbetrag. Das gilt insbesondere für `0`, `12`, `80`, `100`, `100.01`
-  und `794`.
+  und `794`. Im denominatorlosen Zweig ist ausschließlich dieses einzelne
+  logische `remaining` zulässig; zusätzliches `used` ohne expliziten Nenner
+  kann nicht korreliert werden und ist invalid.
 - Denominatorlose absolute Credits sind im ausschließlich prozentualen
   V2-Schema nicht darstellbar. Snapshot und History lassen deshalb Credit-
   Limit und Credit-Sample aus; valide Main-Fenster desselben Accounts und
@@ -91,14 +93,28 @@ Feld-Allowlist:
   Quelle wird dagegen als sanitisiertes Invalid-Sentinel ohne Providerrohwert
   durch den kanonischen State-Roundtrip erhalten. Snapshot und Entrypoint
   stoppen dann den gesamten Multi-Account-Publish vor einem neuen
-  `current.json`-Commit. Invalide Main-Quellen bleiben ebenfalls fail-closed.
-- Sind mehrere Credit-Aliasse oder Repräsentationsfelder vorhanden, müssen
-  alle `used`-, `remaining`-, `limit`- und Prozentangaben miteinander
-  übereinstimmen. Toleriert wird ausschließlich legitime binäre
-  Float-Rundung bis vier ULP; widersprüchliche Paare, Tripel und Quadrupel
-  werden nicht durch Branchpriorität verdeckt. Es gibt keinen Clamp und keinen
-  ergänzten Nenner. Ein gültiger Payload kann nach bestehender Reader-Policy
-  wegen fehlender Trend-Evidenz weiterhin `partial` sein.
+  `current.json`-Commit. Die Creditvalidierung läuft vor statusabhängiger
+  Limitunterdrückung und kann daher auch bei `blocked`, `error` oder jedem
+  anderen Accountstatus nicht umgangen werden. Invalide Main-Quellen bleiben
+  ebenfalls fail-closed.
+- Der Adapter sammelt sämtliche erkannten nativen Creditkandidaten aus den
+  Top-Level-Aliassen, beiden `rateLimits`-/`rate_limits`-Containern, jedem
+  bounded `rateLimitsByLimitId`-Eintrag und `account.credits`. Es gelten die
+  vorhandene kleine JSON-Grenze von höchstens 50 variablen Containern und
+  höchstens 50 Kandidaten; der jeweils 51. Eintrag wird ohne weitere
+  Materialisierung als invalid verworfen. Jeder Kandidat wird einzeln
+  validiert, danach müssen Repräsentationsart, Projektion und alle expliziten
+  `used`-, `remaining`-, `limit`- und Prozentangaben vollständig
+  übereinstimmen. Eine zusätzliche invalide oder widersprüchliche Quelle kann
+  nicht durch Branchpriorität verdeckt werden.
+- Float-Konsistenz wird in beide Richtungen anhand exakt vier darstellbarer
+  `nextafter`-Schritte geprüft; der fünfte Schritt ist ein Konflikt. Für
+  `0 <= used <= limit` und `0 <= remaining <= limit` wird immer das echte
+  Verhältnis berechnet. Nur eine tatsächliche geringe Überschreitung darf bis
+  zur Vier-Schritt-Grenze auf den Endpoint normalisiert werden. Es gibt keinen
+  In-Range-Clamp, keinen ergänzten Nenner und kein erfundenes Prozentfeld. Ein
+  gültiger Payload kann nach bestehender Reader-Policy wegen fehlender
+  Trend-Evidenz weiterhin `partial` sein.
 - Prozentwerte und Projektionen sind endlich und in `[0,100]`.
   `used_percent + remaining_percent` muss mit ausschließlich absoluter
   Toleranz `1e-9` und relativer Toleranz `0` genau `100` sein. Die Rate ist
