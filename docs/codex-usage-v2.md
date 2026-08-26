@@ -73,6 +73,17 @@ Feld-Allowlist:
   ASCII-Tokens mit 1 bis 64 Zeichen, ohne lokale Pfadform. Tracker-Evidenz wird
   ausschließlich für `main` und `gpt-5.3-codex-spark` erzeugt. `credits` darf
   als Limit-Pool vorkommen, nie als Trackertrend.
+- Ein valider optionaler Credit-Restwert, der nur als endlicher
+  nichtnegativer Absolutbetrag ohne Limit oder Prozentdarstellung vorliegt,
+  ist im ausschließlich prozentualen V2-Schema nicht darstellbar. Der Producer
+  lässt deshalb nur diesen Credit-Pool aus `limits` aus; valide Main-Fenster
+  und weitere Accounts bleiben veröffentlichbar. Er serialisiert weder den
+  Rohbetrag noch einen erfundenen Nenner und erzeugt keinen Credit-Trend.
+  Prozentdarstellbare Credits behalten unverändert ihre exakten Werte.
+  Negative, nicht endliche oder zu expliziten Prozent-/Limitangaben
+  inkonsistente Credit-Quellen sowie invalide Main-Quellen bleiben
+  fail-closed. Ein gültiger Payload kann nach bestehender Reader-Policy wegen
+  fehlender Trend-Evidenz weiterhin `partial` sein.
 - Prozentwerte und Projektionen sind endlich und in `[0,100]`.
   `used_percent + remaining_percent` muss mit ausschließlich absoluter
   Toleranz `1e-9` und relativer Toleranz `0` genau `100` sein. Die Rate ist

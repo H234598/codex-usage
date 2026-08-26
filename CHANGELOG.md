@@ -31,6 +31,11 @@
   Create oder Datei-`fsync` unter Release→Current-EX-Sperren vor Publikation,
   Rollback und Installer-Artefaktscans. Unsichere, malformed oder überzählige
   Root-Einträge bleiben fail-closed; `current.json` bleibt 1..4096 Byte.
+- Valide endliche nichtnegative absolute Credit-Restwerte ohne Nenner werden
+  aus dem prozentualen V2-`limits`-Feld ausgelassen, ohne valide Main-Fenster
+  oder weitere Accounts zu blockieren. Rohbetrag, erfundener Nenner und
+  Credit-Trend werden nicht veröffentlicht; prozentdarstellbare Credits bleiben
+  unverändert und invalide Quellen fail-closed.
 
 ## 0.6.534 - 2026-08-24
 
