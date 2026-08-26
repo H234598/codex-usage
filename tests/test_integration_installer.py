@@ -1571,6 +1571,60 @@ def test_source_drift_before_active_swap_keeps_prior_active_release(tmp_path, mo
     )
 
 
+def _exit_after_pointer_temp_fsync(integration_text: str, index: int) -> None:
+    integration_fd = os.open(
+        integration_text,
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
+    name = f".tmp-current.json-{index:032x}"
+    fd = os.open(
+        name,
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+        dir_fd=integration_fd,
+    )
+    if os.write(fd, b"{}") != 2:
+        os._exit(91)
+    os.fsync(fd)
+    os._exit(77)
+
+
+def _leave_pointer_temp_crash_debris(integration: Path, count: int) -> None:
+    context = multiprocessing.get_context("fork")
+    for index in range(count):
+        process = context.Process(
+            target=_exit_after_pointer_temp_fsync,
+            args=(str(integration), index),
+        )
+        process.start()
+        process.join(timeout=10)
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=10)
+        assert process.exitcode == 77
+
+
+def _try_current_lock(state_home_text: str, result) -> None:
+    from codex_usage.private_io import private_path_lock
+
+    current = Path(state_home_text) / "codex-usage/integration/current.json"
+    try:
+        with private_path_lock(
+            current,
+            timeout_seconds=0,
+            label="test current lock",
+            create=False,
+        ):
+            result.put("acquired")
+    except TimeoutError:
+        result.put("busy")
+
+
 def _prepared_active_transaction(tmp_path: Path, operation: str) -> SimpleNamespace:
     from codex_usage import integration_installer
     from codex_usage.private_io import write_private_text
@@ -1630,6 +1684,98 @@ def _prepared_active_transaction(tmp_path: Path, operation: str) -> SimpleNamesp
         previous_before=previous_before,
         run=run,
     )
+
+
+@pytest.mark.parametrize("operation", ("install", "rollback"))
+def test_install_and_rollback_recover_sixty_one_pointer_temp_crashes_before_scan(
+    tmp_path,
+    monkeypatch,
+    operation,
+):
+    """Would fail if 61 durable pointer temps still wedged root scan at entry 65."""
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, operation)
+    _leave_pointer_temp_crash_debris(prepared.integration, 61)
+    assert len(list(os.scandir(prepared.integration))) == 65
+    assert len(
+        [
+            entry
+            for entry in os.scandir(prepared.integration)
+            if entry.name.startswith(".tmp-current.json-")
+        ]
+    ) == 61
+    real_scan = integration_installer._active_transaction_artifacts
+    observed: list[tuple[int, int]] = []
+
+    def track_scan(**kwargs):
+        entries = list(os.scandir(kwargs["parent_fd"]))
+        observed.append(
+            (
+                len(entries),
+                sum(
+                    entry.name.startswith(".tmp-current.json-")
+                    for entry in entries
+                ),
+            )
+        )
+        return real_scan(**kwargs)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_active_transaction_artifacts",
+        track_scan,
+    )
+
+    prepared.run()
+
+    assert observed == [(4, 0)]
+    assert not any(
+        entry.name.startswith(".tmp-current.json-")
+        for entry in os.scandir(prepared.integration)
+    )
+
+
+@pytest.mark.parametrize("operation", ("install", "rollback"))
+def test_install_and_rollback_hold_current_exclusive_before_recovery_scan(
+    tmp_path,
+    monkeypatch,
+    operation,
+):
+    """Would fail if recovery ran under Release EX without Current EX."""
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, operation)
+    real_recover = integration_installer._recover_active_transactions
+    observed: list[str] = []
+
+    def probe_current_lock(**kwargs):
+        context = multiprocessing.get_context("spawn")
+        result = context.Queue()
+        process = context.Process(
+            target=_try_current_lock,
+            args=(str(prepared.state_home), result),
+        )
+        process.start()
+        try:
+            observed.append(result.get(timeout=10))
+        finally:
+            process.join(timeout=10)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=10)
+        assert process.exitcode == 0
+        return real_recover(**kwargs)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_recover_active_transactions",
+        probe_current_lock,
+    )
+
+    prepared.run()
+
+    assert observed == ["busy"]
 
 
 def _write_active_transaction_artifact(path: Path, payload: bytes = b"stale") -> None:

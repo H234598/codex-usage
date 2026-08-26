@@ -71,6 +71,10 @@ _STAGING_RE = re.compile(r"\.tmp-([0-9a-f]{32})")
 _STAGING_FILE_RE = re.compile(
     r"\.tmp-account-usage-v2(?:\.binding)?\.json-[0-9a-f]{32}"
 )
+_POINTER_STAGING_PREFIX = ".tmp-current.json-"
+_POINTER_STAGING_RE = re.compile(r"\.tmp-current\.json-[0-9a-f]{32}")
+_POINTER_STAGING_MAX_ENTRIES = 64
+_INTEGRATION_RECOVERY_MAX_ENTRIES = 128
 
 
 @dataclass(frozen=True)
@@ -132,6 +136,12 @@ class _CompleteEvidenceGeneration:
 class _GenerationNamespace:
     complete_names: tuple[str, ...]
     staging_names: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _PointerStagingArtifact:
+    name: str
+    snapshot: os.stat_result
 
 
 class IntegrationBusy(IntegrationEvidenceError):
@@ -1498,6 +1508,104 @@ def _same_private_file_snapshot(
     )
 
 
+def _require_pointer_staging_snapshot(item: os.stat_result) -> None:
+    private_io._require_private_file_stat(
+        item,
+        maximum=_POINTER_MAX_BYTES,
+        mode=0o600,
+    )
+    if item.st_size < 1:
+        raise ValueError("pointer staging file is empty")
+
+
+def _scan_integration_recovery_namespace(
+    integration_fd: int,
+) -> tuple[_PointerStagingArtifact, ...]:
+    try:
+        private_io._require_private_directory_fd(integration_fd)
+        artifacts: list[_PointerStagingArtifact] = []
+        with os.scandir(integration_fd) as entries:
+            for entry_count, entry in enumerate(entries, start=1):
+                if entry_count > _INTEGRATION_RECOVERY_MAX_ENTRIES:
+                    raise IntegrationEvidenceInvalid()
+                if not entry.name.startswith(_POINTER_STAGING_PREFIX):
+                    continue
+                if _POINTER_STAGING_RE.fullmatch(entry.name) is None:
+                    raise IntegrationEvidenceInvalid()
+                artifacts.append(
+                    _PointerStagingArtifact(
+                        name=entry.name,
+                        snapshot=entry.stat(follow_symlinks=False),
+                    )
+                )
+                if len(artifacts) > _POINTER_STAGING_MAX_ENTRIES:
+                    raise IntegrationEvidenceInvalid()
+        for artifact in artifacts:
+            _require_pointer_staging_snapshot(artifact.snapshot)
+        return tuple(artifacts)
+    except IntegrationEvidenceError:
+        raise
+    except ValueError as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    except OSError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+
+
+def _remove_safe_pointer_staging_artifact(
+    integration_fd: int,
+    artifact: _PointerStagingArtifact,
+) -> None:
+    fd = -1
+    try:
+        if _POINTER_STAGING_RE.fullmatch(artifact.name) is None:
+            raise IntegrationEvidenceInvalid()
+        fd = os.open(
+            artifact.name,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=integration_fd,
+        )
+        opened = os.fstat(fd)
+        _require_pointer_staging_snapshot(opened)
+        if not _same_private_file_snapshot(artifact.snapshot, opened):
+            raise IntegrationEvidenceInvalid()
+        named = os.stat(
+            artifact.name,
+            dir_fd=integration_fd,
+            follow_symlinks=False,
+        )
+        _require_pointer_staging_snapshot(named)
+        if (
+            not _same_private_file_snapshot(artifact.snapshot, named)
+            or not _same_private_file_snapshot(opened, named)
+        ):
+            raise IntegrationEvidenceInvalid()
+        os.unlink(artifact.name, dir_fd=integration_fd)
+    except IntegrationEvidenceError:
+        raise
+    except ValueError as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    except OSError as exc:
+        if exc.errno in (errno.ENOENT, errno.ELOOP, errno.EISDIR, errno.ENXIO):
+            raise IntegrationEvidenceInvalid() from exc
+        raise IntegrationEvidenceUnavailable() from exc
+    finally:
+        _close_fds(fd)
+
+
+def _recover_pointer_staging_artifacts(
+    *,
+    integration_fd: int,
+    artifacts: tuple[_PointerStagingArtifact, ...],
+) -> None:
+    for artifact in sorted(artifacts, key=lambda item: item.name):
+        _remove_safe_pointer_staging_artifact(integration_fd, artifact)
+    if artifacts:
+        os.fsync(integration_fd)
+
+
 def _remove_safe_staging_directory(generations_fd: int, name: str) -> None:
     staging_fd = -1
     try:
@@ -1553,13 +1661,48 @@ def _remove_safe_staging_directory(generations_fd: int, name: str) -> None:
         _close_fds(staging_fd)
 
 
-def recover_evidence_staging(*, generations_fd: int) -> None:
+def recover_evidence_staging(*, state_home: Path) -> None:
+    if type(state_home) is not type(Path()) or not state_home.is_absolute():
+        raise IntegrationEvidenceInvalid()
     try:
-        namespace = _scan_generation_namespace(generations_fd)
-        _recover_evidence_staging_from_namespace(
-            generations_fd=generations_fd,
-            namespace=namespace,
-        )
+        with evidence_lock_set(
+            state_home=state_home,
+            release_mode="exclusive",
+            current_mode="exclusive",
+            timeout_seconds=0,
+            create=False,
+        ):
+            state_fd = app_fd = integration_fd = generations_fd = -1
+            try:
+                state_fd, app_fd, integration_fd, generations_fd = (
+                    _open_evidence_parents(state_home)
+                )
+                state_identity = _fd_identity(state_fd)
+                integration_identity = _fd_identity(integration_fd)
+                generations_identity = _fd_identity(generations_fd)
+                _recover_evidence_staging_from_fds(
+                    integration_fd=integration_fd,
+                    generations_fd=generations_fd,
+                )
+                fresh_state_identity, fresh_integration_identity = (
+                    _fresh_parent_identities(state_home)
+                )
+                if (
+                    _fd_identity(state_fd) != state_identity
+                    or _fd_identity(integration_fd) != integration_identity
+                    or _fd_identity(generations_fd) != generations_identity
+                    or fresh_state_identity != state_identity
+                    or fresh_integration_identity != integration_identity
+                    or _named_identity(
+                        integration_fd,
+                        "generations",
+                        directory=True,
+                    )
+                    != generations_identity
+                ):
+                    raise IntegrationEvidenceInvalid()
+            finally:
+                _close_fds(generations_fd, integration_fd, app_fd, state_fd)
     except IntegrationEvidenceError:
         raise
     except ValueError as exc:
@@ -1597,6 +1740,24 @@ def _recover_evidence_staging_from_namespace(
 ) -> None:
     for name in sorted(namespace.staging_names):
         _remove_safe_staging_directory(generations_fd, name)
+
+
+def _recover_evidence_staging_from_fds(
+    *,
+    integration_fd: int,
+    generations_fd: int,
+) -> _GenerationNamespace:
+    pointer_artifacts = _scan_integration_recovery_namespace(integration_fd)
+    namespace = _scan_generation_namespace(generations_fd)
+    _recover_evidence_staging_from_namespace(
+        generations_fd=generations_fd,
+        namespace=namespace,
+    )
+    _recover_pointer_staging_artifacts(
+        integration_fd=integration_fd,
+        artifacts=pointer_artifacts,
+    )
+    return namespace
 
 
 def _fresh_parent_identities(state_home: Path) -> tuple[FileIdentity, FileIdentity]:
@@ -1736,10 +1897,9 @@ def gc_evidence_generations(
             ):
                 raise IntegrationEvidenceInvalid()
 
-            namespace = _scan_generation_namespace(generations_fd)
-            _recover_evidence_staging_from_namespace(
+            namespace = _recover_evidence_staging_from_fds(
+                integration_fd=integration_fd,
                 generations_fd=generations_fd,
-                namespace=namespace,
             )
             fresh = _verify_active_manifest_for_publish(
                 state_home=state_home,
@@ -2001,10 +2161,9 @@ def rollback_current_evidence(
             ):
                 raise IntegrationEvidenceInvalid()
 
-            namespace = _scan_generation_namespace(generations_fd)
-            _recover_evidence_staging_from_namespace(
+            _recover_evidence_staging_from_fds(
+                integration_fd=integration_fd,
                 generations_fd=generations_fd,
-                namespace=namespace,
             )
             fresh = _verify_active_manifest_for_publish(
                 state_home=state_home,
@@ -2157,7 +2316,10 @@ def _publish_evidence_generation_locked(
         ):
             raise IntegrationEvidenceInvalid()
 
-        namespace = _scan_generation_namespace(generations_fd)
+        namespace = _recover_evidence_staging_from_fds(
+            integration_fd=integration_fd,
+            generations_fd=generations_fd,
+        )
         old_pointer = _validate_existing_current(integration_fd, generations_fd)
         if old_pointer is not None:
             current_generation = _validate_pointer_binding(
@@ -2201,10 +2363,6 @@ def _publish_evidence_generation_locked(
             expected_entrypoint_path=verified.active_release.entrypoint_path,
         )
         _require_same_verified_manifest(verified, repeated)
-        _recover_evidence_staging_from_namespace(
-            generations_fd=generations_fd,
-            namespace=namespace,
-        )
         complete_generations = _inspect_complete_generation_names(
             generations_fd=generations_fd,
             names=namespace.complete_names,

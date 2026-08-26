@@ -39,10 +39,13 @@ from .integration_attestation import (
     _verify_manifest,
     _verify_previous_schema2_manifest_for_upgrade,
 )
-from .integration_evidence import bootstrap_evidence_lock_inodes
+from .integration_evidence import (
+    bootstrap_evidence_lock_inodes,
+    evidence_lock_set,
+    recover_evidence_staging,
+)
 from .private_io import (
     ensure_private_directory,
-    private_path_lock,
     read_private_bytes_at,
     read_private_text,
     write_private_text,
@@ -75,7 +78,6 @@ SOURCE_MANIFEST_FILES = (
 )
 ACTIVE_NAME = "active.json"
 PREVIOUS_NAME = "previous.json"
-RELEASE_LOCK_STEM = "producer-install"
 DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.536.dist-info"
 DIST_INFO_FILES = frozenset({"METADATA", "WHEEL", "RECORD", "top_level.txt"})
 EXPECTED_WHEEL_NAME = "codex_usage_integration_producer-0.6.536-py3-none-any.whl"
@@ -1290,6 +1292,7 @@ def _recover_active_transactions(
 ) -> None:
     parent_fd = -1
     try:
+        recover_evidence_staging(state_home=state_home)
         parent_fd = _open_bound_parent_fd(integration, integration_identity)
         artifacts = _active_transaction_artifacts(
             integration=integration,
@@ -3130,10 +3133,11 @@ def _install_release(
     final_release_dir: Path | None = None
     final_renamed = False
     try:
-        with private_path_lock(
-            integration / RELEASE_LOCK_STEM,
+        with evidence_lock_set(
+            state_home=state_home,
+            release_mode="exclusive",
+            current_mode="exclusive",
             timeout_seconds=0,
-            label="integration producer lock",
             create=False,
         ):
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
@@ -3493,10 +3497,11 @@ def rollback_active_release(*, state_home: Path, data_home: Path) -> ActiveRelea
         _require_private_dir(data_home, None, False)
         app_identity, integration_identity = _bootstrap_integration_dir(state_home)
         integration = state_home / "codex-usage" / "integration"
-        with private_path_lock(
-            integration / RELEASE_LOCK_STEM,
+        with evidence_lock_set(
+            state_home=state_home,
+            release_mode="exclusive",
+            current_mode="exclusive",
             timeout_seconds=0,
-            label="integration producer lock",
             create=False,
         ):
             _revalidate_bootstrap(state_home, app_identity, integration_identity)

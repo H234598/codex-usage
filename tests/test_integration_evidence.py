@@ -324,6 +324,39 @@ def create_seventeen_staging_directories(evidence_layout) -> int:
     return generations_fd
 
 
+def _write_pointer_temp(
+    integration: Path,
+    index: int,
+    *,
+    payload: bytes = b"{}",
+) -> Path:
+    name = f".tmp-current.json-{index:032x}"
+    integration_fd = os.open(
+        integration,
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
+    fd = -1
+    try:
+        fd = os.open(
+            name,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=integration_fd,
+        )
+        assert os.write(fd, payload) == len(payload)
+        os.fsync(fd)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        os.close(integration_fd)
+    return integration / name
+
+
 def _try_shared_evidence_lock(state_home_text: str, result) -> None:
     from codex_usage.integration_evidence import IntegrationBusy, evidence_lock_set
 
@@ -1038,14 +1071,14 @@ def test_recovery_rejects_seventeenth_or_unsafe_staging_directory(
     from codex_usage import integration_evidence
     from codex_usage.private_io import IntegrationEvidenceInvalid
 
+    state_home, _data_home, _entrypoint, _payload, _verified = (
+        staged_evidence_layout
+    )
     if scenario == "seventeenth":
         generations_fd = create_seventeen_staging_directories(
             staged_evidence_layout
         )
     else:
-        state_home, _data_home, _entrypoint, _payload, _verified = (
-            staged_evidence_layout
-        )
         generations = state_home / "codex-usage/integration/generations"
         generations_fd = os.open(
             generations,
@@ -1064,13 +1097,9 @@ def test_recovery_rejects_seventeenth_or_unsafe_staging_directory(
             os.symlink("outside", "account-usage-v2.json", dir_fd=staging_fd)
         finally:
             os.close(staging_fd)
-    try:
-        with pytest.raises(IntegrationEvidenceInvalid):
-            integration_evidence.recover_evidence_staging(
-                generations_fd=generations_fd
-            )
-    finally:
-        os.close(generations_fd)
+    os.close(generations_fd)
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.recover_evidence_staging(state_home=state_home)
 
 
 def test_namespace_scan_stops_at_258th_complete_entry(tmp_path, monkeypatch):
@@ -1180,15 +1209,271 @@ def test_recovery_rechecks_each_name_before_unlink(
         "unlink",
         replace_other_after_first_unlink,
     )
+    os.close(generations_fd)
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.recover_evidence_staging(state_home=state_home)
+    assert replacement_name
+    assert (generations / staging_name / replacement_name[0]).exists()
+
+
+@pytest.mark.parametrize(
+    "shape",
+    (
+        "directory",
+        "symlink",
+        "hardlink",
+        "oversize",
+        "wrong-mode",
+        "empty",
+        "malformed-short",
+        "malformed-uppercase",
+    ),
+)
+def test_pointer_temp_recovery_rejects_unsafe_artifact_without_deleting_it(
+    staged_evidence_layout,
+    shape,
+):
+    """Would fail if root recovery deleted a non-private pointer temp."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, _data_home, _entrypoint, _payload, _verified = staged_evidence_layout
+    integration = state_home / "codex-usage/integration"
+    if shape == "malformed-short":
+        name = f".tmp-current.json-{0:031x}"
+    elif shape == "malformed-uppercase":
+        name = f".tmp-current.json-{'A' * 32}"
+    else:
+        name = f".tmp-current.json-{0:032x}"
+    artifact = integration / name
+    if shape == "directory":
+        artifact.mkdir(mode=0o700)
+    elif shape == "symlink":
+        artifact.symlink_to("current.json")
+    elif shape == "hardlink":
+        source = integration / "pointer-temp-hardlink-source"
+        source.write_bytes(b"{}")
+        source.chmod(0o600)
+        os.link(source, artifact)
+    else:
+        payload = {
+            "oversize": b"x" * 4097,
+            "empty": b"",
+        }.get(shape, b"{}")
+        artifact.write_bytes(payload)
+        artifact.chmod(0o644 if shape == "wrong-mode" else 0o600)
+
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.recover_evidence_staging(state_home=state_home)
+
+    assert artifact.exists() or artifact.is_symlink()
+
+
+@pytest.mark.parametrize("size", (1, 4096))
+def test_pointer_temp_recovery_accepts_private_size_boundaries(
+    staged_evidence_layout,
+    size,
+):
+    """Would fail if recovery rejected a safe boundary-sized pointer temp."""
+    from codex_usage import integration_evidence
+
+    state_home, _data_home, _entrypoint, _payload, _verified = staged_evidence_layout
+    integration = state_home / "codex-usage/integration"
+    artifact = _write_pointer_temp(integration, size, payload=b"x" * size)
+
+    integration_evidence.recover_evidence_staging(state_home=state_home)
+
+    assert not artifact.exists()
+
+
+def test_pointer_temp_recovery_rejects_sixty_fifth_artifact_without_deletion(
+    staged_evidence_layout,
+):
+    """Would fail if recovery crossed its 64-artifact materialization cap."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, _data_home, _entrypoint, _payload, _verified = staged_evidence_layout
+    integration = state_home / "codex-usage/integration"
+    artifacts = [_write_pointer_temp(integration, index) for index in range(65)]
+
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.recover_evidence_staging(state_home=state_home)
+
+    assert all(artifact.read_bytes() == b"{}" for artifact in artifacts)
+
+
+def test_pointer_temp_root_scan_stops_at_129th_entry(tmp_path, monkeypatch):
+    """Would fail if root recovery consumed an unbounded directory iterator."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    integration = tmp_path / "integration"
+    integration.mkdir(mode=0o700)
+    integration_fd = os.open(
+        integration,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+    )
+    consumed = 0
+
+    class Entry:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class Entries:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def __iter__(self):
+            nonlocal consumed
+            for index in range(100_000):
+                consumed += 1
+                yield Entry(f"foreign-{index}")
+
+    monkeypatch.setattr(integration_evidence.os, "scandir", lambda _fd: Entries())
     try:
         with pytest.raises(IntegrationEvidenceInvalid):
-            integration_evidence.recover_evidence_staging(
-                generations_fd=generations_fd
+            integration_evidence._scan_integration_recovery_namespace(
+                integration_fd
             )
-        assert replacement_name
-        assert (generations / staging_name / replacement_name[0]).exists()
     finally:
-        os.close(generations_fd)
+        os.close(integration_fd)
+
+    assert consumed == 129
+
+
+def test_pointer_temp_recovery_rechecks_name_identity_before_each_unlink(
+    staged_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if cleanup unlinked a replacement after its initial scan."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, _data_home, _entrypoint, _payload, _verified = staged_evidence_layout
+    integration = state_home / "codex-usage/integration"
+    artifacts = [_write_pointer_temp(integration, index) for index in range(2)]
+    real_unlink = integration_evidence.os.unlink
+    replaced: list[Path] = []
+
+    def replace_second_after_first_unlink(name, *args, dir_fd=None, **kwargs):
+        result = real_unlink(name, *args, dir_fd=dir_fd, **kwargs)
+        if not replaced:
+            second = artifacts[1]
+            real_unlink(second)
+            second.write_bytes(b"{}")
+            second.chmod(0o600)
+            replaced.append(second)
+        return result
+
+    monkeypatch.setattr(
+        integration_evidence.os,
+        "unlink",
+        replace_second_after_first_unlink,
+    )
+
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.recover_evidence_staging(state_home=state_home)
+
+    assert replaced == [artifacts[1]]
+    assert artifacts[1].read_bytes() == b"{}"
+
+
+def test_pointer_temp_cleanup_interruption_is_recoverable(
+    staged_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if partial cleanup poisoned the next public recovery run."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceUnavailable
+
+    state_home, _data_home, _entrypoint, _payload, _verified = staged_evidence_layout
+    integration = state_home / "codex-usage/integration"
+    artifacts = [_write_pointer_temp(integration, index) for index in range(2)]
+    real_unlink = integration_evidence.os.unlink
+    interrupted = False
+
+    def interrupt_after_first_unlink(name, *args, dir_fd=None, **kwargs):
+        nonlocal interrupted
+        result = real_unlink(name, *args, dir_fd=dir_fd, **kwargs)
+        if not interrupted:
+            interrupted = True
+            raise OSError("simulated cleanup interruption")
+        return result
+
+    monkeypatch.setattr(
+        integration_evidence.os,
+        "unlink",
+        interrupt_after_first_unlink,
+    )
+    with pytest.raises(IntegrationEvidenceUnavailable):
+        integration_evidence.recover_evidence_staging(state_home=state_home)
+
+    monkeypatch.setattr(integration_evidence.os, "unlink", real_unlink)
+    integration_evidence.recover_evidence_staging(state_home=state_home)
+
+    assert not any(artifact.exists() for artifact in artifacts)
+
+
+def test_pointer_temp_recovery_fsyncs_integration_directory(
+    staged_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if cleanup returned before persisting root namespace changes."""
+    from codex_usage import integration_evidence
+
+    state_home, _data_home, _entrypoint, _payload, _verified = staged_evidence_layout
+    integration = state_home / "codex-usage/integration"
+    artifact = _write_pointer_temp(integration, 0)
+    real_fsync = integration_evidence.os.fsync
+    fsynced_names: list[str] = []
+
+    def track_fsync(fd):
+        fsynced_names.append(_crash_fd_name(fd))
+        return real_fsync(fd)
+
+    monkeypatch.setattr(integration_evidence.os, "fsync", track_fsync)
+    integration_evidence.recover_evidence_staging(state_home=state_home)
+
+    assert not artifact.exists()
+    assert "integration" in fsynced_names
+
+
+def test_public_recovery_does_not_delete_while_other_process_holds_locks(
+    staged_evidence_layout,
+):
+    """Would fail if public cleanup bypassed cooperative Release/Current locks."""
+    from codex_usage import integration_evidence
+
+    state_home, _data_home, _entrypoint, _payload, _verified = staged_evidence_layout
+    integration = state_home / "codex-usage/integration"
+    artifact = _write_pointer_temp(integration, 0)
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    release = context.Event()
+    process = context.Process(
+        target=_hold_exclusive_evidence_locks,
+        args=(str(state_home), ready, release),
+    )
+    process.start()
+    try:
+        assert ready.wait(10)
+        with pytest.raises(integration_evidence.IntegrationBusy):
+            integration_evidence.recover_evidence_staging(state_home=state_home)
+        assert artifact.read_bytes() == b"{}"
+    finally:
+        release.set()
+        process.join(timeout=10)
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=10)
+    assert process.exitcode == 0
+
+    integration_evidence.recover_evidence_staging(state_home=state_home)
+    assert not artifact.exists()
 
 
 def _crash_fd_name(fd: int) -> str:
@@ -1344,25 +1629,21 @@ def _recover_and_read_after_crash(
             "account-usage-v2.json",
             "account-usage-v2.binding.json",
         }
-    generations_fd = os.open(
-        generations,
-        os.O_RDONLY
-        | getattr(os, "O_DIRECTORY", 0)
-        | getattr(os, "O_NOFOLLOW", 0),
+    integration = state_home / "codex-usage/integration"
+    pointer_debris = [
+        entry
+        for entry in os.scandir(integration)
+        if entry.name.startswith(".tmp-current.json-")
+    ]
+    if scenario == "pointer_temp_fsync":
+        assert len(pointer_debris) == 1
+
+    integration_evidence.recover_evidence_staging(state_home=state_home)
+
+    assert not any(
+        entry.name.startswith(".tmp-current.json-")
+        for entry in os.scandir(integration)
     )
-    try:
-        with integration_evidence.evidence_lock_set(
-            state_home=state_home,
-            release_mode="exclusive",
-            current_mode="exclusive",
-            timeout_seconds=5,
-            create=False,
-        ):
-            integration_evidence.recover_evidence_staging(
-                generations_fd=generations_fd
-            )
-    finally:
-        os.close(generations_fd)
     if scenario == "staging_fsync":
         assert not any(
             entry.name.startswith(".tmp-") for entry in os.scandir(generations)
