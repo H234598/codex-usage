@@ -17,7 +17,8 @@ import sys
 import time
 import tomllib
 import zipfile
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -3789,6 +3790,134 @@ def test_temporary_launcher_emits_schema2_from_temporary_state(tmp_path):
     assert (generation / "account-usage-v2.json").read_bytes() == completed.stdout.encode()
     assert (generation / "account-usage-v2.binding.json").is_file()
     assert not (integration / "account-usage-v1.json").exists()
+
+
+def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts(tmp_path):
+    from codex_usage.app_server import fetch_account_usage_app_server
+    from codex_usage.integration_evidence import read_current_evidence
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        build_schema2_document,
+        read_current_usage_records,
+        serialize_schema2_document,
+    )
+    from codex_usage.models import Account, LimitWindow
+    from codex_usage.state import save_current_usage
+    from tests.test_app_server import _auth, _fake_codex
+
+    release, data_home, state_home = _install(tmp_path)
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
+    command = _fake_codex(
+        tmp_path / "codex",
+        tmp_path / "app-server-requests.json",
+        account_credits="794",
+    )
+    fetched = fetch_account_usage_app_server(
+        Account(
+            id="absolute-credit",
+            label="Absolute credit",
+            profile_dir=str(tmp_path / "profile"),
+            auth_json_path=str(auth_path),
+            backend="app-server",
+        ),
+        codex_command=command,
+    )
+    assert fetched.main is not None
+    assert len(fetched.main.windows) == 2
+    assert fetched.credits is not None
+    assert fetched.credits.remaining == 794.0
+    assert fetched.credits.limit is None
+    assert fetched.credits.remaining_percent is None
+
+    current_dir = data_home / "codex-usage" / "current"
+    save_current_usage(fetched, current_dir)
+    save_current_usage(
+        replace(
+            fetched,
+            account_id="percent-credit",
+            label="Percent credit",
+            credits=LimitWindow(name="credits", percent=80.0),
+        ),
+        current_dir,
+    )
+    roundtrip = read_current_usage_records(current_dir)
+    roundtrip_by_id = {usage.account_id: usage for usage in roundtrip}
+    assert roundtrip_by_id["absolute-credit"].credits is not None
+    assert roundtrip_by_id["absolute-credit"].credits.remaining == 794.0
+
+    direct_error = None
+    direct_document = None
+    try:
+        direct_document = build_schema2_document(
+            roundtrip,
+            generated_at=datetime.now(UTC),
+        )
+    except IntegrationInvalidSource as exc:
+        direct_error = type(exc).__name__
+
+    completed = subprocess.run(
+        [
+            str(release.launcher_path),
+            "integration-snapshot",
+            "--schema",
+            "2",
+            "--format",
+            "json",
+        ],
+        env={"PATH": "/usr/bin:/bin"},
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert (direct_error, completed.returncode, completed.stderr) == (None, 0, "")
+    assert direct_document is not None
+    direct_payload = serialize_schema2_document(direct_document).decode("utf-8")
+    for payload_text in (direct_payload, completed.stdout):
+        payload = json.loads(payload_text)
+        accounts = {account["account_id"]: account for account in payload["accounts"]}
+        assert set(accounts) == {"absolute-credit", "percent-credit"}
+        assert {
+            limit["window_seconds"]
+            for limit in accounts["absolute-credit"]["limits"]
+            if limit["pool"] == "main"
+        } == {18_000, 604_800}
+        assert not any(
+            limit["pool"] == "credits"
+            for limit in accounts["absolute-credit"]["limits"]
+        )
+        assert [
+            limit
+            for limit in accounts["percent-credit"]["limits"]
+            if limit["pool"] == "credits"
+        ] == [
+            {
+                "pool": "credits",
+                "remaining_percent": 80.0,
+                "used_percent": 20.0,
+                "window_seconds": 2_592_000,
+            }
+        ]
+        assert all(
+            evidence["pool"] != "credits"
+            for account in accounts.values()
+            for evidence in account["tracker_evidence"]
+        )
+        assert "794" not in payload_text
+
+    evidence, status = read_current_evidence(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=release.entrypoint_path,
+        now=datetime.now(UTC),
+    )
+    assert evidence == json.loads(completed.stdout)
+    assert status == "partial"
 
 
 def test_installer_module_has_no_network_import():

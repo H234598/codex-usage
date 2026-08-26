@@ -329,6 +329,28 @@ def _status_text(status: AccountStatus) -> str:
     return status.value
 
 
+def _omittable_absolute_credit(window: LimitWindow) -> bool:
+    try:
+        if (
+            window.limit is not None
+            or window.percent is not None
+            or window.remaining_percent is not None
+            or type(window.remaining) not in (int, float)
+        ):
+            return False
+        remaining = float(window.remaining)
+        if not math.isfinite(remaining) or remaining < 0:
+            return False
+        if window.used is None:
+            return True
+        if type(window.used) not in (int, float):
+            return False
+        used = float(window.used)
+        return math.isfinite(used) and used >= 0
+    except (AttributeError, OverflowError, TypeError, ValueError):
+        return False
+
+
 def _source_limits(usage: AccountUsage) -> list[dict[str, object]]:
     if (
         type(usage.models) is not tuple
@@ -350,20 +372,26 @@ def _source_limits(usage: AccountUsage) -> list[dict[str, object]]:
             or credit_duration not in TRACKER_EVIDENCE_WINDOW_SECONDS
         ):
             _invalid()
-        pools.append(
-            UsagePool(
-                key="credits",
-                display_name="Credits",
-                windows=(
-                    replace(
-                        usage.credits,
-                        name=_WINDOW_SECONDS_NAME[credit_duration],
-                        duration_seconds=credit_duration,
+        if _omittable_absolute_credit(usage.credits):
+            if usage.credits.reset_at is not None:
+                if not isinstance(usage.credits.reset_at, datetime):
+                    _invalid()
+                _utc_text(usage.credits.reset_at)
+        else:
+            pools.append(
+                UsagePool(
+                    key="credits",
+                    display_name="Credits",
+                    windows=(
+                        replace(
+                            usage.credits,
+                            name=_WINDOW_SECONDS_NAME[credit_duration],
+                            duration_seconds=credit_duration,
+                        ),
                     ),
-                ),
-                availability_sources=("usage",),
+                    availability_sources=("usage",),
+                )
             )
-        )
     seen: set[str] = set()
     limits: list[dict[str, object]] = []
     for pool in pools:

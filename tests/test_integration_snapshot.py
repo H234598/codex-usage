@@ -469,6 +469,83 @@ def test_schema2_projection_includes_credit_limit_without_tracker_evidence():
     assert account["tracker_evidence"] == []
 
 
+def test_schema2_projection_omits_absolute_credit_and_preserves_percent_control():
+    from codex_usage.integration_snapshot import (
+        build_schema2_document,
+        serialize_schema2_document,
+    )
+
+    absolute = replace(
+        _usage("absolute-credit"),
+        credits=LimitWindow(name="credits", remaining=794.0),
+    )
+    percent = replace(
+        _usage("percent-credit"),
+        credits=LimitWindow(name="credits", percent=80.0),
+    )
+
+    document = build_schema2_document((absolute, percent), generated_at=GENERATED)
+    serialized = serialize_schema2_document(document)
+    accounts = {account["account_id"]: account for account in document["accounts"]}
+
+    assert accounts["absolute-credit"]["limits"] == [
+        {
+            "pool": "main",
+            "remaining_percent": 75.0,
+            "used_percent": 25.0,
+            "window_seconds": 18_000,
+        }
+    ]
+    assert accounts["percent-credit"]["limits"] == [
+        {
+            "pool": "credits",
+            "remaining_percent": 80.0,
+            "used_percent": 20.0,
+            "window_seconds": 2_592_000,
+        },
+        {
+            "pool": "main",
+            "remaining_percent": 75.0,
+            "used_percent": 25.0,
+            "window_seconds": 18_000,
+        },
+    ]
+    assert all(
+        evidence["pool"] != "credits"
+        for account in accounts.values()
+        for evidence in account["tracker_evidence"]
+    )
+    assert b"794" not in serialized
+
+
+@pytest.mark.parametrize(
+    "credits",
+    [
+        pytest.param(LimitWindow(name="credits", remaining=-1.0), id="negative"),
+        pytest.param(LimitWindow(name="credits", remaining=float("inf")), id="nonfinite"),
+        pytest.param(
+            LimitWindow(name="credits", remaining=794.0, used=float("nan")),
+            id="nonfinite-used",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", remaining=80.0, percent=70.0),
+            id="inconsistent-percent",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", remaining=101.0, limit=100.0),
+            id="inconsistent-limit",
+        ),
+    ],
+)
+def test_schema2_projection_rejects_invalid_absolute_credit_source(credits):
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema2_document
+
+    usage = replace(_usage("alpha"), credits=credits)
+
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema2_document((usage,), generated_at=GENERATED)
+
+
 def test_schema2_projection_preserves_valid_partial_limits_and_evidence():
     from codex_usage.integration_snapshot import build_schema2_document, serialize_schema2_document
 
