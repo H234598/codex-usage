@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -29,6 +30,37 @@ from help_page import (  # noqa: E402
 
 def _schema() -> dict:
     return json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
+
+
+def test_help_module_loads_sibling_format_module_in_isolation() -> None:
+    module_name = "_codex_usage_help_loader_probe"
+    bound_name = "_codex_usage_format_table_selector"
+    original_path = list(sys.path)
+    original_format_module = sys.modules.get("format_table_selector")
+    original_bound_module = sys.modules.pop(bound_name, None)
+    collision = ModuleType("format_table_selector")
+    collision._materialize_format_definition = lambda *_args: {}
+    sys.modules["format_table_selector"] = collision
+    sys.path[:] = [path for path in sys.path if path != str(APPLET_DIR)]
+    try:
+        spec = importlib.util.spec_from_file_location(
+            module_name,
+            APPLET_DIR / "help_page.py",
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        assert module._materialize_format_definition.__module__ == bound_name
+    finally:
+        sys.path[:] = original_path
+        sys.modules.pop(module_name, None)
+        sys.modules.pop(bound_name, None)
+        if original_bound_module is not None:
+            sys.modules[bound_name] = original_bound_module
+        if original_format_module is not None:
+            sys.modules["format_table_selector"] = original_format_module
+        else:
+            sys.modules.pop("format_table_selector", None)
 
 
 def test_help_text_helpers_preserve_detail_and_escape_markup() -> None:
