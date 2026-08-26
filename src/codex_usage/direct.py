@@ -15,7 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-from .extractor import LOCAL_TZ, JsonCandidate, extract_windows
+from .extractor import LOCAL_TZ, MAX_JSON_CANDIDATES, JsonCandidate, extract_windows
 from .identity import backend_identity_from_payload, backend_plan_type_from_payload
 from .json_utils import loads_strict
 from .models import (
@@ -46,6 +46,8 @@ MAX_RESPONSE_BYTES = 2_000_000
 MAX_AUTH_JSON_BYTES = 1_000_000
 MAX_ACCESS_TOKEN_CHARS = 16_384
 MAX_AUTH_ID_CHARS = 256
+MAX_CREDIT_SOURCE_CONTAINERS = MAX_JSON_CANDIDATES
+MAX_CREDIT_CANDIDATES = MAX_JSON_CANDIDATES
 PROC_SELF_FD_RE = re.compile(r"^/proc/self/fd/([0-9]+)$")
 PLAN_TYPE_ALIASES = {"pro": "plus"}
 SUPPORTED_WINDOW_SECONDS = frozenset((18_000, 604_800))
@@ -1670,8 +1672,7 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
     explicit top-level fields are accepted so a missing credit API cannot
     produce a fabricated balance in the applet.
     """
-    missing = object()
-    candidate: Any = missing
+    invalid = LimitWindow(name="credits", source="invalid:credits")
     sources: list[dict[str, Any]] = [payload]
     for key in ("rateLimits", "rate_limits"):
         nested = payload.get(key)
@@ -1679,9 +1680,13 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
             sources.append(nested)
     by_id = payload.get("rateLimitsByLimitId")
     if type(by_id) is dict:
-        for nested in by_id.values():
+        for index, nested in enumerate(by_id.values()):
+            if index >= MAX_CREDIT_SOURCE_CONTAINERS:
+                return invalid
             if type(nested) is dict:
                 sources.append(nested)
+
+    candidates: list[Any] = []
     for source in sources:
         for key in (
             "credits",
@@ -1691,52 +1696,52 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
             "remainingCredits",
         ):
             if key in source:
-                candidate = source[key]
-                break
-        if candidate is not missing:
-            break
+                if len(candidates) >= MAX_CREDIT_CANDIDATES:
+                    return invalid
+                candidates.append(source[key])
         account = source.get("account")
         if type(account) is dict and "credits" in account:
-            candidate = account["credits"]
-            break
-    if candidate is missing:
+            if len(candidates) >= MAX_CREDIT_CANDIDATES:
+                return invalid
+            candidates.append(account["credits"])
+    if not candidates:
         return None
-    invalid = LimitWindow(name="credits", source="invalid:credits")
-    if isinstance(candidate, bool):
-        return invalid
-    if type(candidate) in (int, float, str):
-        try:
-            numeric = float(candidate)
-        except (OverflowError, TypeError, ValueError):
-            return invalid
-        if not math.isfinite(numeric) or numeric < 0:
-            return invalid
-        return LimitWindow(name="credits", remaining=numeric)
-    if type(candidate) is not dict:
-        return invalid
 
-    def number(*keys: str) -> float | None:
-        values: list[float] = []
-        for key in keys:
-            if key not in candidate:
-                continue
-            value = candidate[key]
-            if type(value) not in (int, float, str):
-                raise ValueError("credit value is invalid")
+    def parse_candidate(candidate: Any) -> tuple[LimitWindow, float | None]:
+        if isinstance(candidate, bool):
+            raise ValueError("credit value is invalid")
+        if type(candidate) in (int, float, str):
             try:
-                numeric = float(cast(int | float | str, value))
+                numeric = float(candidate)
             except (OverflowError, TypeError, ValueError):
                 raise ValueError("credit value is invalid") from None
-            if not math.isfinite(numeric):
+            if not math.isfinite(numeric) or numeric < 0:
                 raise ValueError("credit value is invalid")
-            values.append(numeric)
-        if not values:
-            return None
-        if any(not credit_values_match(value, values[0]) for value in values[1:]):
-            raise ValueError("credit aliases conflict")
-        return values[0]
+            return LimitWindow(name="credits", remaining=numeric), None
+        if type(candidate) is not dict:
+            raise ValueError("credit value is invalid")
 
-    try:
+        def number(*keys: str) -> float | None:
+            values: list[float] = []
+            for key in keys:
+                if key not in candidate:
+                    continue
+                value = candidate[key]
+                if type(value) not in (int, float, str):
+                    raise ValueError("credit value is invalid")
+                try:
+                    numeric = float(cast(int | float | str, value))
+                except (OverflowError, TypeError, ValueError):
+                    raise ValueError("credit value is invalid") from None
+                if not math.isfinite(numeric):
+                    raise ValueError("credit value is invalid")
+                values.append(numeric)
+            if not values:
+                return None
+            if any(not credit_values_match(value, values[0]) for value in values[1:]):
+                raise ValueError("credit aliases conflict")
+            return values[0]
+
         window = LimitWindow(
             name="credits",
             duration_seconds=None,
@@ -1752,6 +1757,47 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
             reset_at=_parse_iso_datetime(
                 candidate.get("reset_at") or candidate.get("resetAt")
             ),
+            source="json:credits",
+        )
+        return window, credit_window_remaining_percent(window)
+
+    try:
+        parsed = tuple(parse_candidate(candidate) for candidate in candidates)
+        projections = tuple(projection for _, projection in parsed)
+        if any(
+            (projection is None) != (projections[0] is None)
+            for projection in projections[1:]
+        ):
+            raise ValueError("credit representations conflict")
+        if projections[0] is not None and any(
+            not credit_values_match(projection, projections[0])
+            for projection in projections[1:]
+        ):
+            raise ValueError("credit projections conflict")
+
+        merged: dict[str, float | None] = {}
+        for field_name in ("used", "limit", "remaining", "percent"):
+            values = tuple(
+                value
+                for window, _ in parsed
+                if (value := getattr(window, field_name)) is not None
+            )
+            if any(not credit_values_match(value, values[0]) for value in values[1:]):
+                raise ValueError("credit fields conflict")
+            merged[field_name] = values[0] if values else None
+        resets = tuple(
+            window.reset_at for window, _ in parsed if window.reset_at is not None
+        )
+        if any(reset != resets[0] for reset in resets[1:]):
+            raise ValueError("credit resets conflict")
+        window = LimitWindow(
+            name="credits",
+            duration_seconds=None,
+            used=merged["used"],
+            limit=merged["limit"],
+            remaining=merged["remaining"],
+            percent=merged["percent"],
+            reset_at=resets[0] if resets else None,
             source="json:credits",
         )
         credit_window_remaining_percent(window)

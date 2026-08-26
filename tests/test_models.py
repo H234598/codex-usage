@@ -1,4 +1,5 @@
 import json
+import math
 from datetime import UTC, datetime
 
 import pytest
@@ -48,6 +49,150 @@ class _ExplodingPool(UsagePool):
     @property
     def exhausted(self):
         raise TypeError("synthetic exhaustion marker")
+
+
+def _nextafter_steps(value: float, direction: float, count: int) -> float:
+    for _ in range(count):
+        value = math.nextafter(value, direction)
+    return value
+
+
+@pytest.mark.parametrize(
+    ("base", "direction"),
+    [
+        pytest.param(0.0, -math.inf, id="zero-down"),
+        pytest.param(0.0, math.inf, id="zero-up"),
+        pytest.param(1.0, 0.0, id="one-down"),
+        pytest.param(1.0, math.inf, id="one-up"),
+        pytest.param(100.0, 0.0, id="hundred-down"),
+        pytest.param(100.0, math.inf, id="hundred-up"),
+        pytest.param(math.ldexp(1.0, 900), 0.0, id="large-normal-down"),
+        pytest.param(math.ldexp(1.0, 900), math.inf, id="large-normal-up"),
+        pytest.param(math.ulp(0.0) * 16, 0.0, id="subnormal-down"),
+        pytest.param(math.ulp(0.0) * 16, math.inf, id="subnormal-up"),
+    ],
+)
+def test_credit_values_match_accepts_four_but_not_five_float_steps(base, direction):
+    four_steps = _nextafter_steps(base, direction, 4)
+    five_steps = _nextafter_steps(base, direction, 5)
+
+    assert models_module.credit_values_match(base, four_steps) is True
+    assert models_module.credit_values_match(base, five_steps) is False
+
+
+_CREDIT_LIMITS = (
+    pytest.param(1.0, id="one"),
+    pytest.param(100.0, id="hundred"),
+    pytest.param(math.ldexp(1.0, 900), id="large-normal"),
+    pytest.param(math.ulp(0.0) * 16, id="subnormal"),
+)
+
+
+@pytest.mark.parametrize("limit", _CREDIT_LIMITS)
+def test_credit_projection_never_clamps_values_inside_limit(limit):
+    near_limit = math.nextafter(limit, 0.0)
+
+    assert models_module.credit_window_remaining_percent(
+        LimitWindow(name="credits", used=near_limit, limit=limit)
+    ) == (limit - near_limit) / limit * 100.0
+    assert models_module.credit_window_remaining_percent(
+        LimitWindow(name="credits", remaining=near_limit, limit=limit)
+    ) == near_limit / limit * 100.0
+
+
+@pytest.mark.parametrize("limit", _CREDIT_LIMITS)
+@pytest.mark.parametrize(
+    "shape",
+    (
+        "used-limit",
+        "remaining-limit",
+        "used-remaining-limit",
+        "used-limit-percent",
+        "remaining-limit-percent",
+        "quad",
+    ),
+)
+def test_credit_projection_accepts_consistent_nextafter_field_matrix(limit, shape):
+    used = math.nextafter(limit, 0.0)
+    remaining = limit - used
+    percent = remaining / limit * 100.0
+    fields = {
+        "used-limit": {"used": used, "limit": limit},
+        "remaining-limit": {"remaining": remaining, "limit": limit},
+        "used-remaining-limit": {
+            "used": used,
+            "remaining": remaining,
+            "limit": limit,
+        },
+        "used-limit-percent": {
+            "used": used,
+            "limit": limit,
+            "percent": percent,
+        },
+        "remaining-limit-percent": {
+            "remaining": remaining,
+            "limit": limit,
+            "percent": percent,
+        },
+        "quad": {
+            "used": used,
+            "remaining": remaining,
+            "limit": limit,
+            "percent": percent,
+        },
+    }
+
+    assert models_module.credit_window_remaining_percent(
+        LimitWindow(name="credits", **fields[shape])
+    ) == percent
+
+
+@pytest.mark.parametrize("limit", _CREDIT_LIMITS)
+@pytest.mark.parametrize("field", ("used", "remaining"))
+def test_credit_projection_tolerates_only_four_out_of_range_float_steps(
+    limit,
+    field,
+):
+    four_steps = _nextafter_steps(limit, math.inf, 4)
+    five_steps = _nextafter_steps(limit, math.inf, 5)
+
+    assert models_module.credit_window_remaining_percent(
+        LimitWindow(name="credits", limit=limit, **{field: four_steps})
+    ) == (0.0 if field == "used" else 100.0)
+    with pytest.raises(ValueError, match="credit window is invalid"):
+        models_module.credit_window_remaining_percent(
+            LimitWindow(name="credits", limit=limit, **{field: five_steps})
+        )
+
+
+@pytest.mark.parametrize(
+    "fields",
+    (
+        {"used": 99.0, "limit": 100.0},
+        {"remaining": 1.0, "limit": 100.0},
+        {"used": 99.0, "remaining": 1.0, "limit": 100.0},
+    ),
+    ids=("used-triple", "remaining-triple", "quad"),
+)
+@pytest.mark.parametrize(
+    "direction",
+    (0.0, math.inf),
+    ids=("down", "up"),
+)
+@pytest.mark.parametrize("steps", (4, 5), ids=("four-steps", "five-steps"))
+def test_credit_projection_applies_float_step_boundary_to_redundant_fields(
+    fields,
+    direction,
+    steps,
+):
+    percent = _nextafter_steps(1.0, direction, steps)
+    window = LimitWindow(name="credits", percent=percent, **fields)
+
+    if steps == 4:
+        assert models_module.credit_window_remaining_percent(window) == percent
+    else:
+        with pytest.raises(ValueError, match="credit window is invalid"):
+            models_module.credit_window_remaining_percent(window)
 
 
 @pytest.mark.parametrize("duration", [True, 1.0, "1", 0, -1, None])

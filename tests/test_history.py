@@ -1,4 +1,5 @@
 import errno
+import math
 import os
 import sqlite3
 from contextlib import nullcontext
@@ -1037,6 +1038,10 @@ def test_usage_samples_omit_denominatorless_absolute_credit(remaining):
             id="pair-used-percent",
         ),
         pytest.param(
+            LimitWindow(name="credits", used=20, remaining=80),
+            id="pair-used-remaining-without-denominator",
+        ),
+        pytest.param(
             LimitWindow(name="credits", used=20, limit=100, remaining=70),
             id="triple-used-limit-remaining",
         ),
@@ -1122,6 +1127,17 @@ def test_usage_samples_skip_conflicting_explicit_credit_fields(credits):
             ),
             30,
             id="float-rounding",
+        ),
+        pytest.param(
+            LimitWindow(
+                name="credits",
+                used=math.nextafter(1.0, 0.0),
+                remaining=1.0 - math.nextafter(1.0, 0.0),
+                limit=1.0,
+                percent=(1.0 - math.nextafter(1.0, 0.0)) * 100.0,
+            ),
+            100.0 - (1.0 - math.nextafter(1.0, 0.0)) * 100.0,
+            id="nextafter-quad",
         ),
     ],
 )

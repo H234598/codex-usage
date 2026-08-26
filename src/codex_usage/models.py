@@ -536,8 +536,12 @@ def credit_values_match(left: Any, right: Any) -> bool:
     if left_number is None or right_number is None:
         return False
     try:
-        tolerance = max(4 * math.ulp(left_number), 4 * math.ulp(right_number))
-        return abs(left_number - right_number) <= tolerance
+        lower, upper = sorted((left_number, right_number))
+        for _ in range(4):
+            if lower == upper:
+                return True
+            lower = math.nextafter(lower, upper)
+        return lower == upper
     except (OverflowError, TypeError, ValueError):
         return False
 
@@ -564,7 +568,7 @@ def credit_window_remaining_percent(window: LimitWindow) -> float | None:
         raise ValueError("credit window is invalid")
     if limit is None:
         if percent is None:
-            if remaining is None:
+            if remaining is None or used is not None:
                 raise ValueError("credit window is invalid")
             return None
         if used is not None or (
@@ -577,21 +581,17 @@ def credit_window_remaining_percent(window: LimitWindow) -> float | None:
 
     derived: list[float] = []
     if used is not None:
-        if used > limit and not credit_values_match(used, limit):
-            raise ValueError("credit window is invalid")
-        derived.append(
-            0.0
-            if credit_values_match(used, limit)
-            else (limit - used) / limit * 100.0
-        )
+        if used > limit:
+            if not credit_values_match(used, limit):
+                raise ValueError("credit window is invalid")
+            used = limit
+        derived.append((limit - used) / limit * 100.0)
     if remaining is not None:
-        if remaining > limit and not credit_values_match(remaining, limit):
-            raise ValueError("credit window is invalid")
-        derived.append(
-            100.0
-            if credit_values_match(remaining, limit)
-            else remaining / limit * 100.0
-        )
+        if remaining > limit:
+            if not credit_values_match(remaining, limit):
+                raise ValueError("credit window is invalid")
+            remaining = limit
+        derived.append(remaining / limit * 100.0)
     if used is not None and remaining is not None:
         try:
             total = used + remaining

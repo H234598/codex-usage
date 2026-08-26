@@ -335,6 +335,32 @@ def _status_text(status: AccountStatus) -> str:
     return status.value
 
 
+def _credit_projection(
+    credit: object,
+) -> tuple[LimitWindow, int, float | None] | None:
+    if credit is None:
+        return None
+    if not isinstance(credit, LimitWindow):
+        _invalid()
+    credit_duration = credit.duration_seconds
+    if credit_duration is None:
+        credit_duration = CREDIT_HISTORY_WINDOW_SECONDS
+    if (
+        type(credit_duration) is not int
+        or credit_duration not in TRACKER_EVIDENCE_WINDOW_SECONDS
+    ):
+        _invalid()
+    try:
+        credit_percent = credit_window_remaining_percent(credit)
+    except (AttributeError, OverflowError, TypeError, ValueError):
+        _invalid()
+    if credit_percent is None and credit.reset_at is not None:
+        if not isinstance(credit.reset_at, datetime):
+            _invalid()
+        _utc_text(credit.reset_at)
+    return credit, credit_duration, credit_percent
+
+
 def _source_limits(usage: AccountUsage) -> list[dict[str, object]]:
     if (
         type(usage.models) is not tuple
@@ -345,34 +371,17 @@ def _source_limits(usage: AccountUsage) -> list[dict[str, object]]:
     if usage.main is not None:
         pools.append(usage.main)
     pools.extend(usage.models)
-    if usage.credits is not None:
-        if not isinstance(usage.credits, LimitWindow):
-            _invalid()
-        credit_duration = usage.credits.duration_seconds
-        if credit_duration is None:
-            credit_duration = CREDIT_HISTORY_WINDOW_SECONDS
-        if (
-            type(credit_duration) is not int
-            or credit_duration not in TRACKER_EVIDENCE_WINDOW_SECONDS
-        ):
-            _invalid()
-        try:
-            credit_percent = credit_window_remaining_percent(usage.credits)
-        except (AttributeError, OverflowError, TypeError, ValueError):
-            _invalid()
-        if credit_percent is None:
-            if usage.credits.reset_at is not None:
-                if not isinstance(usage.credits.reset_at, datetime):
-                    _invalid()
-                _utc_text(usage.credits.reset_at)
-        else:
+    credit_projection = _credit_projection(usage.credits)
+    if credit_projection is not None:
+        credit, credit_duration, credit_percent = credit_projection
+        if credit_percent is not None:
             pools.append(
                 UsagePool(
                     key="credits",
                     display_name="Credits",
                     windows=(
                         replace(
-                            usage.credits,
+                            credit,
                             name=_WINDOW_SECONDS_NAME[credit_duration],
                             duration_seconds=credit_duration,
                             used=None,
@@ -474,6 +483,7 @@ def build_schema2_document(
         if usage.account_id in seen or not isinstance(usage.stale, bool):
             _invalid()
         seen.add(usage.account_id)
+        _credit_projection(usage.credits)
         status_text = _status_text(usage.status)
         capture = (
             usage.values_captured_at

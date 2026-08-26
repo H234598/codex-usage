@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta, tzinfo
 from itertools import repeat
@@ -563,6 +564,10 @@ def test_schema2_projection_omits_absolute_credit_and_preserves_percent_control(
             id="pair-used-percent",
         ),
         pytest.param(
+            LimitWindow(name="credits", used=20.0, remaining=80.0),
+            id="pair-used-remaining-without-denominator",
+        ),
+        pytest.param(
             LimitWindow(name="credits", used=20.0, limit=100.0, remaining=70.0),
             id="triple-used-limit-remaining",
         ),
@@ -613,6 +618,25 @@ def test_schema2_projection_rejects_invalid_absolute_credit_source(credits):
         build_schema2_document((usage,), generated_at=GENERATED)
 
 
+@pytest.mark.parametrize("status", tuple(AccountStatus))
+def test_schema2_projection_validates_invalid_credit_before_status_suppression(
+    status,
+):
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        build_schema2_document,
+    )
+
+    usage = replace(
+        _usage("alpha"),
+        status=status,
+        credits=LimitWindow(name="credits", source="invalid:credits"),
+    )
+
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema2_document((usage,), generated_at=GENERATED)
+
+
 @pytest.mark.parametrize(
     ("credits", "expected_remaining_percent"),
     [
@@ -658,6 +682,17 @@ def test_schema2_projection_rejects_invalid_absolute_credit_source(credits):
             ),
             70.0,
             id="float-rounding",
+        ),
+        pytest.param(
+            LimitWindow(
+                name="credits",
+                used=math.nextafter(1.0, 0.0),
+                remaining=1.0 - math.nextafter(1.0, 0.0),
+                limit=1.0,
+                percent=(1.0 - math.nextafter(1.0, 0.0)) * 100.0,
+            ),
+            (1.0 - math.nextafter(1.0, 0.0)) * 100.0,
+            id="nextafter-quad",
         ),
     ],
 )

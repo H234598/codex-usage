@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import marshal
+import math
 import multiprocessing
 import os
 import shutil
@@ -3854,6 +3855,38 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
         ),
         current_dir,
     )
+    near_limit = math.nextafter(1.0, 0.0)
+    near_remaining = 1.0 - near_limit
+    near_percent = near_remaining * 100.0
+    boundary_command = _fake_codex(
+        tmp_path / "codex-near-endpoint-credit",
+        tmp_path / "app-server-requests-near-endpoint-credit.json",
+        account_credits_payload={
+            "used": near_limit,
+            "remaining": near_remaining,
+            "limit": 1.0,
+            "percent": near_percent,
+        },
+    )
+    boundary = fetch_account_usage_app_server(
+        Account(
+            id="near-endpoint-credit",
+            label="Near endpoint credit",
+            profile_dir=str(tmp_path / "profile-near-endpoint-credit"),
+            auth_json_path=str(auth_path),
+            backend="app-server",
+        ),
+        codex_command=boundary_command,
+    )
+    assert boundary.credits == LimitWindow(
+        name="credits",
+        used=near_limit,
+        remaining=near_remaining,
+        limit=1.0,
+        percent=near_percent,
+        source="json:credits",
+    )
+    save_current_usage(boundary, current_dir)
     roundtrip = read_current_usage_records(current_dir)
     roundtrip_by_id = {usage.account_id: usage for usage in roundtrip}
     for account_id, source_value in scalar_values.items():
@@ -3864,6 +3897,13 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
             sample.pool == "credits"
             for sample in usage_samples_from_usage(roundtrip_by_id[account_id])
         )
+    boundary_roundtrip = roundtrip_by_id["near-endpoint-credit"]
+    assert boundary_roundtrip.credits == boundary.credits
+    assert [
+        sample.used_percent
+        for sample in usage_samples_from_usage(boundary_roundtrip)
+        if sample.pool == "credits"
+    ] == [pytest.approx(100.0 - near_percent)]
 
     direct_error = None
     direct_document = None
@@ -3898,7 +3938,10 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
     for payload_text in (direct_payload, completed.stdout):
         payload = json.loads(payload_text)
         accounts = {account["account_id"]: account for account in payload["accounts"]}
-        assert set(accounts) == set(scalar_values) | {"percent-credit"}
+        assert set(accounts) == set(scalar_values) | {
+            "near-endpoint-credit",
+            "percent-credit",
+        }
         for account_id in scalar_values:
             assert {
                 limit["window_seconds"]
@@ -3918,6 +3961,18 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
                 "pool": "credits",
                 "remaining_percent": 80.0,
                 "used_percent": 20.0,
+                "window_seconds": 2_592_000,
+            }
+        ]
+        assert [
+            limit
+            for limit in accounts["near-endpoint-credit"]["limits"]
+            if limit["pool"] == "credits"
+        ] == [
+            {
+                "pool": "credits",
+                "remaining_percent": near_percent,
+                "used_percent": 100.0 - near_percent,
                 "window_seconds": 2_592_000,
             }
         ]
@@ -3950,6 +4005,7 @@ def test_installed_launcher_invalid_real_credit_does_not_commit_current(tmp_path
     from codex_usage.integration_evidence import read_current_evidence
     from codex_usage.integration_snapshot import read_current_usage_records
     from codex_usage.models import Account, LimitWindow
+    from codex_usage.scheduler import _apply_watchdog_block
     from codex_usage.state import save_current_usage
     from tests.test_app_server import _auth, _fake_codex
 
@@ -3999,6 +4055,68 @@ def test_installed_launcher_invalid_real_credit_does_not_commit_current(tmp_path
     generations = integration / "generations"
     generations_before = {path.name for path in generations.iterdir()}
 
+    conflict_command = _fake_codex(
+        tmp_path / "codex-invalid-cross-source",
+        tmp_path / "app-server-requests-invalid-cross-source.json",
+        account_credits_payload={"percent": 80},
+        rate_limits_extra_payload={"creditBalance": {"percent": 70}},
+    )
+    fetched_conflict = fetch_account_usage_app_server(
+        Account(
+            id="invalid-credit",
+            label="Invalid credit",
+            profile_dir=str(tmp_path / "profile-invalid"),
+            auth_json_path=str(auth_path),
+            backend="app-server",
+        ),
+        codex_command=conflict_command,
+    )
+    assert fetched_conflict.credits == LimitWindow(
+        name="credits",
+        source="invalid:credits",
+    )
+    save_current_usage(fetched_conflict, current_dir)
+    conflict_roundtrip = {
+        usage.account_id: usage
+        for usage in read_current_usage_records(current_dir)
+    }
+    assert conflict_roundtrip["invalid-credit"].credits == LimitWindow(
+        name="credits",
+        source="invalid:credits",
+    )
+    conflict_state = json.loads(
+        (current_dir / "invalid-credit.json").read_bytes()
+    )
+    assert conflict_state["credits"] == {
+        "duration_seconds": None,
+        "limit": None,
+        "name": "credits",
+        "percent": None,
+        "raw": None,
+        "remaining": None,
+        "reset_at": None,
+        "source": "invalid:credits",
+        "used": None,
+    }
+
+    conflict_completed = subprocess.run(
+        argv,
+        env={"PATH": "/usr/bin:/bin"},
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert (
+        conflict_completed.returncode,
+        conflict_completed.stdout,
+        conflict_completed.stderr,
+    ) == (65, "", "integration_snapshot_invalid_source\n")
+    assert current_path.read_bytes() == current_before
+    assert {path.name for path in generations.iterdir()} == generations_before
+
     invalid_sources = (
         ("negative", "-1", None),
         ("nan", "NaN", None),
@@ -4006,6 +4124,11 @@ def test_installed_launcher_invalid_real_credit_does_not_commit_current(tmp_path
         ("unparseable", "not-a-number", None),
         ("pair-used-limit", None, {"used": 101, "limit": 100}),
         ("pair-used-percent", None, {"used": 20, "percent": 70}),
+        (
+            "pair-used-remaining-without-denominator",
+            None,
+            {"used": 20, "remaining": 80},
+        ),
         (
             "triple-used-limit-remaining",
             None,
@@ -4096,6 +4219,92 @@ def test_installed_launcher_invalid_real_credit_does_not_commit_current(tmp_path
         )
         assert current_path.read_bytes() == current_before
         assert {path.name for path in generations.iterdir()} == generations_before
+
+    raw_pair = replace(
+        healthy,
+        account_id="invalid-credit",
+        label="Invalid cached credit",
+        captured_at=datetime.now(UTC),
+        credits=LimitWindow(name="credits", used=20, remaining=80),
+    )
+    save_current_usage(raw_pair, current_dir)
+    raw_pair_roundtrip = {
+        usage.account_id: usage for usage in read_current_usage_records(current_dir)
+    }["invalid-credit"]
+    assert raw_pair_roundtrip.credits == LimitWindow(
+        name="credits",
+        used=20,
+        remaining=80,
+    )
+
+    raw_pair_completed = subprocess.run(
+        argv,
+        env={"PATH": "/usr/bin:/bin"},
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert (
+        raw_pair_completed.returncode,
+        raw_pair_completed.stdout,
+        raw_pair_completed.stderr,
+    ) == (65, "", "integration_snapshot_invalid_source\n")
+    assert current_path.read_bytes() == current_before
+    assert {path.name for path in generations.iterdir()} == generations_before
+
+    blocked_command = _fake_codex(
+        tmp_path / "codex-invalid-blocked",
+        tmp_path / "app-server-requests-invalid-blocked.json",
+        account_credits="-1",
+        primary_used_percent=100,
+        primary_resets_at=4_102_444_800,
+    )
+    fetched_blocked = fetch_account_usage_app_server(
+        Account(
+            id="invalid-credit",
+            label="Invalid blocked credit",
+            profile_dir=str(tmp_path / "profile-invalid-blocked"),
+            auth_json_path=str(auth_path),
+            backend="app-server",
+        ),
+        codex_command=blocked_command,
+    )
+    blocked = _apply_watchdog_block(
+        fetched_blocked,
+        now=fetched_blocked.captured_at,
+    )
+    assert blocked.status.value == "blocked"
+    assert blocked.credits == LimitWindow(name="credits", source="invalid:credits")
+    save_current_usage(blocked, current_dir)
+    blocked_roundtrip = {
+        usage.account_id: usage for usage in read_current_usage_records(current_dir)
+    }["invalid-credit"]
+    assert blocked_roundtrip.status.value == "blocked"
+    assert blocked_roundtrip.credits == LimitWindow(
+        name="credits",
+        source="invalid:credits",
+    )
+
+    blocked_completed = subprocess.run(
+        argv,
+        env={"PATH": "/usr/bin:/bin"},
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert (
+        blocked_completed.returncode,
+        blocked_completed.stdout,
+        blocked_completed.stderr,
+    ) == (65, "", "integration_snapshot_invalid_source\n")
+    assert current_path.read_bytes() == current_before
+    assert {path.name for path in generations.iterdir()} == generations_before
 
     evidence, status = read_current_evidence(
         state_home=state_home,
