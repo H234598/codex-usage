@@ -31,11 +31,21 @@
   Create oder Datei-`fsync` unter Release→Current-EX-Sperren vor Publikation,
   Rollback und Installer-Artefaktscans. Unsichere, malformed oder überzählige
   Root-Einträge bleiben fail-closed; `current.json` bleibt 1..4096 Byte.
-- Valide endliche nichtnegative absolute Credit-Restwerte ohne Nenner werden
-  aus dem prozentualen V2-`limits`-Feld ausgelassen, ohne valide Main-Fenster
-  oder weitere Accounts zu blockieren. Rohbetrag, erfundener Nenner und
-  Credit-Trend werden nicht veröffentlicht; prozentdarstellbare Credits bleiben
-  unverändert und invalide Quellen fail-closed.
+- Die Credit-Repräsentationsart folgt ausschließlich expliziten Feldern.
+  Endliche nichtnegative Scalar-`remaining`-Werte ohne `limit` und ohne
+  explizites Prozentfeld sind unabhängig vom Zahlenbereich denominatorlose
+  Absolutbeträge. Snapshot und History lassen sie aus; valide Main-Fenster und
+  weitere Accounts bleiben veröffentlichbar. Rohbetrag, erfundener Nenner und
+  Credit-Trend werden nicht veröffentlicht.
+- Der App-Server-Adapter unterscheidet fehlende optionale Credits von einer
+  vorhandenen invaliden Quelle. Negative, nicht endliche oder unparsebare
+  Werte bleiben als sanitisiertes Invalid-Sentinel durch den State-Roundtrip
+  erhalten und stoppen den gesamten atomaren Publish vor dem Current-Commit.
+- Alle vorhandenen `used`-, `remaining`-, `limit`- und Prozentfelder sowie ihre
+  Aliasse müssen innerhalb reiner Float-ULP-Rundung übereinstimmen.
+  Widersprüchliche Paare, Tripel und Quadrupel bleiben fail-closed; explizite
+  Prozent- und konsistente limitbasierte Credits behalten ihre bisherige
+  Projektion. Kein Clamp und kein Nenner werden ergänzt.
 
 ## 0.6.534 - 2026-08-24
 

@@ -73,17 +73,32 @@ Feld-Allowlist:
   ASCII-Tokens mit 1 bis 64 Zeichen, ohne lokale Pfadform. Tracker-Evidenz wird
   ausschließlich für `main` und `gpt-5.3-codex-spark` erzeugt. `credits` darf
   als Limit-Pool vorkommen, nie als Trackertrend.
-- Ein valider optionaler Credit-Restwert, der nur als endlicher
-  nichtnegativer Absolutbetrag ohne Limit oder Prozentdarstellung vorliegt,
-  ist im ausschließlich prozentualen V2-Schema nicht darstellbar. Der Producer
-  lässt deshalb nur diesen Credit-Pool aus `limits` aus; valide Main-Fenster
-  und weitere Accounts bleiben veröffentlichbar. Er serialisiert weder den
-  Rohbetrag noch einen erfundenen Nenner und erzeugt keinen Credit-Trend.
-  Prozentdarstellbare Credits behalten unverändert ihre exakten Werte.
-  Negative, nicht endliche oder zu expliziten Prozent-/Limitangaben
-  inkonsistente Credit-Quellen sowie invalide Main-Quellen bleiben
-  fail-closed. Ein gültiger Payload kann nach bestehender Reader-Policy wegen
-  fehlender Trend-Evidenz weiterhin `partial` sein.
+- Die Credit-Repräsentationsart wird ausschließlich aus den explizit
+  vorhandenen `used`-, `remaining`-, `limit`- und Prozentfeldern bestimmt,
+  nicht aus einer generisch abgeleiteten `remaining_percent`-Property. Jeder
+  endliche nichtnegative Scalar-`remaining`-Wert ohne `limit` und ohne
+  explizites Prozentfeld ist unabhängig vom Zahlenbereich ein denominatorloser
+  Absolutbetrag. Das gilt insbesondere für `0`, `12`, `80`, `100`, `100.01`
+  und `794`.
+- Denominatorlose absolute Credits sind im ausschließlich prozentualen
+  V2-Schema nicht darstellbar. Snapshot und History lassen deshalb Credit-
+  Limit und Credit-Sample aus; valide Main-Fenster desselben Accounts und
+  valide weitere Accounts bleiben veröffentlichbar. Weder Rohbetrag noch
+  erfundener Nenner oder Credit-Trend werden serialisiert. Explizite Prozente
+  und konsistente limitbasierte Fenster behalten ihre exakte Projektion.
+- Eine vollständig fehlende optionale Creditquelle bleibt `None`. Eine
+  vorhandene negative, nicht endliche, unparsebare oder widersprüchliche
+  Quelle wird dagegen als sanitisiertes Invalid-Sentinel ohne Providerrohwert
+  durch den kanonischen State-Roundtrip erhalten. Snapshot und Entrypoint
+  stoppen dann den gesamten Multi-Account-Publish vor einem neuen
+  `current.json`-Commit. Invalide Main-Quellen bleiben ebenfalls fail-closed.
+- Sind mehrere Credit-Aliasse oder Repräsentationsfelder vorhanden, müssen
+  alle `used`-, `remaining`-, `limit`- und Prozentangaben miteinander
+  übereinstimmen. Toleriert wird ausschließlich legitime binäre
+  Float-Rundung bis vier ULP; widersprüchliche Paare, Tripel und Quadrupel
+  werden nicht durch Branchpriorität verdeckt. Es gibt keinen Clamp und keinen
+  ergänzten Nenner. Ein gültiger Payload kann nach bestehender Reader-Policy
+  wegen fehlender Trend-Evidenz weiterhin `partial` sein.
 - Prozentwerte und Projektionen sind endlich und in `[0,100]`.
   `used_percent + remaining_percent` muss mit ausschließlich absoluter
   Toleranz `1e-9` und relativer Toleranz `0` genau `100` sein. Die Rate ist
