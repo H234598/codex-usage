@@ -1224,7 +1224,6 @@ def test_recovery_rechecks_each_name_before_unlink(
         "hardlink",
         "oversize",
         "wrong-mode",
-        "empty",
         "malformed-short",
         "malformed-uppercase",
     ),
@@ -1252,14 +1251,11 @@ def test_pointer_temp_recovery_rejects_unsafe_artifact_without_deleting_it(
         artifact.symlink_to("current.json")
     elif shape == "hardlink":
         source = integration / "pointer-temp-hardlink-source"
-        source.write_bytes(b"{}")
+        source.write_bytes(b"")
         source.chmod(0o600)
         os.link(source, artifact)
     else:
-        payload = {
-            "oversize": b"x" * 4097,
-            "empty": b"",
-        }.get(shape, b"{}")
+        payload = b"x" * 4097 if shape == "oversize" else b""
         artifact.write_bytes(payload)
         artifact.chmod(0o644 if shape == "wrong-mode" else 0o600)
 
@@ -1269,7 +1265,7 @@ def test_pointer_temp_recovery_rejects_unsafe_artifact_without_deleting_it(
     assert artifact.exists() or artifact.is_symlink()
 
 
-@pytest.mark.parametrize("size", (1, 4096))
+@pytest.mark.parametrize("size", (0, 1, 4096))
 def test_pointer_temp_recovery_accepts_private_size_boundaries(
     staged_evidence_layout,
     size,
@@ -1286,21 +1282,23 @@ def test_pointer_temp_recovery_accepts_private_size_boundaries(
     assert not artifact.exists()
 
 
-def test_pointer_temp_recovery_rejects_sixty_fifth_artifact_without_deletion(
+def test_pointer_temp_recovery_rejects_sixty_fifth_empty_artifact_without_deletion(
     staged_evidence_layout,
 ):
-    """Would fail if recovery crossed its 64-artifact materialization cap."""
+    """Would fail if empty crash debris bypassed the 64-artifact cap."""
     from codex_usage import integration_evidence
     from codex_usage.private_io import IntegrationEvidenceInvalid
 
     state_home, _data_home, _entrypoint, _payload, _verified = staged_evidence_layout
     integration = state_home / "codex-usage/integration"
-    artifacts = [_write_pointer_temp(integration, index) for index in range(65)]
+    artifacts = [
+        _write_pointer_temp(integration, index, payload=b"") for index in range(65)
+    ]
 
     with pytest.raises(IntegrationEvidenceInvalid):
         integration_evidence.recover_evidence_staging(state_home=state_home)
 
-    assert all(artifact.read_bytes() == b"{}" for artifact in artifacts)
+    assert all(artifact.read_bytes() == b"" for artifact in artifacts)
 
 
 def test_pointer_temp_root_scan_stops_at_129th_entry(tmp_path, monkeypatch):
@@ -1495,6 +1493,7 @@ def _publish_until_crash(
     from codex_usage import integration_evidence, private_io
     from codex_usage.private_io import IntegrationEvidenceError
 
+    real_open = os.open
     real_write = os.write
     real_fsync = os.fsync
     real_rename = os.rename
@@ -1507,12 +1506,25 @@ def _publish_until_crash(
         operation()
         os._exit(77)
 
+    def open_file(path, flags, mode=0o777, *, dir_fd=None):
+        fd = real_open(path, flags, mode, dir_fd=dir_fd)
+        if (
+            scenario == "pointer_temp_create_before_write"
+            and type(path) is str
+            and integration_evidence._POINTER_STAGING_RE.fullmatch(path) is not None
+            and flags & os.O_CREAT
+            and flags & os.O_EXCL
+        ):
+            ready.set()
+            os._exit(77)
+        return fd
+
     def write(fd, data):
         name = _crash_fd_name(fd)
         marker = {
             "payload_write_before_fsync": ".tmp-account-usage-v2.json-",
             "binding_write_before_fsync": ".tmp-account-usage-v2.binding.json-",
-            "pointer_temp_write_before_fsync": ".tmp-current.json-",
+            "pointer_temp_short_write_cleanup": ".tmp-current.json-",
         }.get(scenario)
         if marker is not None and name.startswith(marker):
             ready.set()
@@ -1562,10 +1574,12 @@ def _publish_until_crash(
             wait_then_exit_after(lambda: real_replace(src, dst, *args, **kwargs))
         return real_replace(src, dst, *args, **kwargs)
 
+    os.open = open_file
     os.write = write
     os.fsync = fsync
     os.rename = rename
     os.replace = replace
+    private_io.os.open = open_file
     private_io.os.write = write
     private_io.os.fsync = fsync
     integration_evidence.os.fsync = fsync
@@ -1579,7 +1593,9 @@ def _publish_until_crash(
             verified_active_manifest=verified,
         )
     except IntegrationEvidenceError:
-        if scenario.endswith("write_before_fsync"):
+        if scenario.endswith("write_before_fsync") or scenario == (
+            "pointer_temp_short_write_cleanup"
+        ):
             os._exit(0)
         os._exit(92)
     os._exit(93)
@@ -1613,7 +1629,10 @@ def _recover_and_read_after_crash(
     assert ready.wait(10)
     proceed.set()
     child.join(10)
-    assert child.exitcode == (0 if scenario.endswith("write_before_fsync") else 77)
+    normal_cleanup = scenario.endswith("write_before_fsync") or scenario == (
+        "pointer_temp_short_write_cleanup"
+    )
+    assert child.exitcode == (0 if normal_cleanup else 77)
 
     generations = state_home / "codex-usage/integration/generations"
     if scenario == "staging_fsync":
@@ -1635,10 +1654,19 @@ def _recover_and_read_after_crash(
         for entry in os.scandir(integration)
         if entry.name.startswith(".tmp-current.json-")
     ]
-    if scenario == "pointer_temp_fsync":
+    if scenario in {"pointer_temp_create_before_write", "pointer_temp_fsync"}:
         assert len(pointer_debris) == 1
+    if scenario == "pointer_temp_create_before_write":
+        item = pointer_debris[0].stat(follow_symlinks=False)
+        assert stat.S_ISREG(item.st_mode)
+        assert stat.S_IMODE(item.st_mode) == 0o600
+        assert item.st_uid == os.geteuid()
+        assert item.st_nlink == 1
+        assert item.st_size == 0
 
     integration_evidence.recover_evidence_staging(state_home=state_home)
+    if scenario == "pointer_temp_create_before_write":
+        integration_evidence.recover_evidence_staging(state_home=state_home)
 
     assert not any(
         entry.name.startswith(".tmp-current.json-")
@@ -1658,12 +1686,22 @@ def _recover_and_read_after_crash(
     assert status == "complete"
     assert document["schema_version"] == 2
     current = state_home / "codex-usage/integration/current.json"
+    if scenario == "pointer_temp_create_before_write":
+        assert current.read_bytes() == old_current
     current_pointer = integration_evidence.parse_pointer(current.read_bytes())
     old_pointer = integration_evidence.parse_pointer(old_current)
     if scenario in {"pointer_rename", "integration_fsync"}:
         assert current_pointer.previous_generation_id == old_pointer.current_generation_id
     else:
         assert current_pointer == old_pointer
+    if scenario == "pointer_temp_create_before_write":
+        published = integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+        assert published.previous_generation_id == old_pointer.current_generation_id
 
 
 class TestCrashRecovery:
@@ -1698,12 +1736,20 @@ class TestCrashRecovery:
     def test_recovery_after_generations_fsync(self, published_evidence_layout):
         _recover_and_read_after_crash(published_evidence_layout, "generations_fsync")
 
-    def test_recovery_after_pointer_temp_write_before_fsync(
+    def test_pointer_temp_short_write_uses_normal_cleanup(
         self, published_evidence_layout
     ):
         _recover_and_read_after_crash(
             published_evidence_layout,
-            "pointer_temp_write_before_fsync",
+            "pointer_temp_short_write_cleanup",
+        )
+
+    def test_recovery_after_pointer_temp_create_before_write(
+        self, published_evidence_layout
+    ):
+        _recover_and_read_after_crash(
+            published_evidence_layout,
+            "pointer_temp_create_before_write",
         )
 
     def test_recovery_after_pointer_temp_fsync(self, published_evidence_layout):

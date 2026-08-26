@@ -1514,8 +1514,6 @@ def _require_pointer_staging_snapshot(item: os.stat_result) -> None:
         maximum=_POINTER_MAX_BYTES,
         mode=0o600,
     )
-    if item.st_size < 1:
-        raise ValueError("pointer staging file is empty")
 
 
 def _scan_integration_recovery_namespace(

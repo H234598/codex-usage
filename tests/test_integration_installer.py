@@ -1571,7 +1571,11 @@ def test_source_drift_before_active_swap_keeps_prior_active_release(tmp_path, mo
     )
 
 
-def _exit_after_pointer_temp_fsync(integration_text: str, index: int) -> None:
+def _exit_after_pointer_temp_create_or_fsync(
+    integration_text: str,
+    index: int,
+    crash_point: str,
+) -> None:
     integration_fd = os.open(
         integration_text,
         os.O_RDONLY
@@ -1588,18 +1592,26 @@ def _exit_after_pointer_temp_fsync(integration_text: str, index: int) -> None:
         0o600,
         dir_fd=integration_fd,
     )
+    if crash_point == "create":
+        os._exit(77)
+    if crash_point != "fsync":
+        os._exit(92)
     if os.write(fd, b"{}") != 2:
         os._exit(91)
     os.fsync(fd)
     os._exit(77)
 
 
-def _leave_pointer_temp_crash_debris(integration: Path, count: int) -> None:
+def _leave_pointer_temp_crash_debris(
+    integration: Path,
+    count: int,
+    crash_point: str,
+) -> None:
     context = multiprocessing.get_context("fork")
     for index in range(count):
         process = context.Process(
-            target=_exit_after_pointer_temp_fsync,
-            args=(str(integration), index),
+            target=_exit_after_pointer_temp_create_or_fsync,
+            args=(str(integration), index, crash_point),
         )
         process.start()
         process.join(timeout=10)
@@ -1687,16 +1699,18 @@ def _prepared_active_transaction(tmp_path: Path, operation: str) -> SimpleNamesp
 
 
 @pytest.mark.parametrize("operation", ("install", "rollback"))
+@pytest.mark.parametrize("crash_point", ("create", "fsync"))
 def test_install_and_rollback_recover_sixty_one_pointer_temp_crashes_before_scan(
     tmp_path,
     monkeypatch,
     operation,
+    crash_point,
 ):
-    """Would fail if 61 durable pointer temps still wedged root scan at entry 65."""
+    """Would fail if 61 real pointer crashes still wedged root scan at entry 65."""
     from codex_usage import integration_installer
 
     prepared = _prepared_active_transaction(tmp_path, operation)
-    _leave_pointer_temp_crash_debris(prepared.integration, 61)
+    _leave_pointer_temp_crash_debris(prepared.integration, 61, crash_point)
     assert len(list(os.scandir(prepared.integration))) == 65
     assert len(
         [
@@ -1705,6 +1719,11 @@ def test_install_and_rollback_recover_sixty_one_pointer_temp_crashes_before_scan
             if entry.name.startswith(".tmp-current.json-")
         ]
     ) == 61
+    assert {
+        entry.stat(follow_symlinks=False).st_size
+        for entry in os.scandir(prepared.integration)
+        if entry.name.startswith(".tmp-current.json-")
+    } == {0 if crash_point == "create" else 2}
     real_scan = integration_installer._active_transaction_artifacts
     observed: list[tuple[int, int]] = []
 
