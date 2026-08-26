@@ -1866,6 +1866,23 @@ def test_systemctl_show_ignores_unrecognized_output(monkeypatch):
     }
 
 
+def test_render_service_allows_central_private_lock_root(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    lock_root = tmp_path / "private-locks"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(
+        "codex_usage.private_io._private_lock_root", lambda: lock_root
+    )
+
+    service = service_module._render_service(
+        AppConfig(accounts=()), tmp_path / "codex-usage", tmp_path / "config.toml"
+    )
+
+    assert f'ReadWritePaths="{lock_root}"' in service
+
+
 def test_cleanup_managed_timer_link_rejects_missing_symlink_directory(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     unit_dir = _unit_directory()

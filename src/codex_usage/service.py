@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import IO, Any, cast
 
+from . import private_io
 from .config import (
     AppConfig,
     _validate_config,
@@ -338,9 +339,10 @@ def managed_service_config_path() -> Path | None:
 
 def _render_service(config: AppConfig, executable: Path, config_path: Path) -> str:
     state = default_state_dir().expanduser().absolute()
+    lock_root = private_io._private_lock_root()
     # watchdog reads config; only state, browser cache, profiles and auth
     # refresh targets need write access.
-    writable = [state]
+    writable = [state, lock_root]
     cache = Path.home() / ".cache" / "ms-playwright"
     writable.append(cache)
     for account in config.accounts:
