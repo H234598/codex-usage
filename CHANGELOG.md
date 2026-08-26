@@ -26,6 +26,10 @@
   Active-Trust: Publisher und GC akzeptieren kanonisch hashgebundene Historie,
   Current-Reader und Rollback-Promotion bleiben streng ans aktive Release
   gebunden.
+- Recovery entfernt FD-gebunden und bounded sichere
+  `.tmp-current.json-<32-lowercase-hex>`-Crashreste unter Release→Current-EX-
+  Sperren vor Publikation, Rollback und Installer-Artefaktscans. Unsichere,
+  malformed oder überzählige Root-Einträge bleiben fail-closed.
 
 ## 0.6.534 - 2026-08-24
 
