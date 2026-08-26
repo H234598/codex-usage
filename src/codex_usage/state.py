@@ -16,7 +16,13 @@ from .account_lock import account_lock
 from .config import default_state_dir
 from .extractor import LOCAL_TZ
 from .json_utils import loads_strict
-from .models import AccountStatus, AccountUsage, LimitWindow, UsagePool
+from .models import (
+    AccountStatus,
+    AccountUsage,
+    LimitWindow,
+    UsagePool,
+    credit_window_remaining_percent,
+)
 from .private_io import (
     assert_no_symlink_ancestors,
     ensure_private_directory,
@@ -1827,6 +1833,20 @@ def _cached_window_expired(
         return True
     if expected_kind is not None and not _window_matches_expected_kind(window, expected_kind):
         return True
+    if expected_kind == "credits" and window.reset_at is None:
+        try:
+            if window.source == "invalid:credits":
+                return True
+            credit_window_remaining_percent(window)
+            if not isinstance(captured_at, datetime) or not isinstance(
+                reference_at, datetime
+            ):
+                return True
+            captured_utc = _localize_datetime(captured_at).astimezone(UTC)
+            reference_utc = _localize_datetime(reference_at).astimezone(UTC)
+            return captured_utc != reference_utc
+        except Exception:
+            return True
     if _is_inferred_inactive_five_hour(window) and window.reset_at is None:
         # This is a plan-level inactive bucket, not a resetless active window.
         # Keep the explicit 100% observation until a fresh response replaces it.

@@ -19,6 +19,7 @@ from codex_usage.state import (
     _allow_missing_window_restore,
     _authoritative_empty_limits,
     _backend_capture_priority,
+    _cached_window_expired,
     _is_inferred_inactive_five_hour,
     _localize_datetime,
     _remove_state_transaction_dir,
@@ -1388,6 +1389,195 @@ def test_expire_reset_windows_drops_expired_credit_value():
     assert expired.status == AccountStatus.PARTIAL
     assert expired.stale is True
     assert expired.error == "cached limit window expired: credits; refresh required"
+
+
+@pytest.mark.parametrize(
+    ("credits", "captured_at", "reference_at"),
+    (
+        pytest.param(
+            LimitWindow(name="credits", remaining=794, source="json:credits"),
+            datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+            datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+            id="absolute",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", percent=80, source="json:credits"),
+            datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+            datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+            id="percent",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", percent=80, source="json:credits"),
+            datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+            datetime(2026, 8, 26, 14, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+            id="same-instant-different-timezone",
+        ),
+    ),
+)
+def test_expire_reset_windows_keeps_valid_resetless_credit_at_capture(
+    credits,
+    captured_at,
+    reference_at,
+):
+    usage = AccountUsage(
+        account_id="fresh-credit",
+        label="Fresh credit",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        credits=credits,
+    )
+
+    current = expire_reset_windows(usage, reference_at=reference_at)
+
+    assert current is usage
+
+
+@pytest.mark.parametrize(
+    ("credits", "captured_at", "reference_at"),
+    (
+        pytest.param(
+            LimitWindow(name="credits", remaining=794, source="json:credits"),
+            datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+            datetime(2026, 8, 26, 12, 0, 0, 1, tzinfo=UTC),
+            id="one-microsecond-later",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", source="invalid:credits"),
+            datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+            datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+            id="invalid-sentinel",
+        ),
+        pytest.param(
+            LimitWindow(
+                name="credits",
+                remaining=80,
+                source="invalid:credits",
+            ),
+            datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+            datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+            id="sentinel-with-valid-looking-value",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", remaining=-1, source="json:credits"),
+            datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+            datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+            id="invalid-value",
+        ),
+    ),
+)
+def test_resetless_credit_expires_unless_fresh_and_valid(
+    credits,
+    captured_at,
+    reference_at,
+):
+    assert _cached_window_expired(
+        credits,
+        captured_at=captured_at,
+        reference_at=reference_at,
+        expected_kind="credits",
+    ) is True
+
+
+@pytest.mark.parametrize(
+    ("captured_at", "reference_at"),
+    (
+        pytest.param(
+            None,
+            datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+            id="missing-capture",
+        ),
+        pytest.param(
+            _RaisingAstimezone(2026, 8, 26, 12, 0, tzinfo=UTC),
+            datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+            id="broken-capture",
+        ),
+        pytest.param(
+            datetime(2026, 8, 26, 12, 0, tzinfo=UTC),
+            _RaisingAstimezone(2026, 8, 26, 12, 0, tzinfo=UTC),
+            id="broken-reference",
+        ),
+    ),
+)
+def test_resetless_credit_expires_with_missing_or_broken_time(
+    captured_at,
+    reference_at,
+):
+    assert _cached_window_expired(
+        LimitWindow(name="credits", percent=80, source="json:credits"),
+        captured_at=captured_at,
+        reference_at=reference_at,
+        expected_kind="credits",
+    ) is True
+
+
+def test_scheduler_keeps_fresh_resetless_app_server_credit(
+    tmp_path,
+    monkeypatch,
+):
+    import codex_usage.app_server as app_server_module
+    from codex_usage.config import AppConfig
+    from codex_usage.models import Account
+    from codex_usage.scheduler import fetch_all
+
+    captured = datetime.now(UTC)
+    primary_reset_at = int((captured + timedelta(hours=4)).timestamp())
+    weekly_reset_at = int((captured + timedelta(days=6)).timestamp())
+    auth_path = tmp_path / "codex-home" / "auth.json"
+    auth_metadata = {
+        "auth_last_refresh": None,
+        "auth_access_expires_at": None,
+        "auth_id_expires_at": None,
+    }
+    monkeypatch.setattr(
+        app_server_module,
+        "_auth_context",
+        lambda _account: (
+            auth_path,
+            auth_metadata,
+            "provider-user",
+            "provider-account",
+            "pro",
+            "account@example.test",
+        ),
+    )
+    monkeypatch.setattr(
+        app_server_module,
+        "_read_rate_limits",
+        lambda *_args, **_kwargs: {
+            "rateLimits": {
+                "primary": {
+                    "usedPercent": 20,
+                    "windowDurationMins": 300,
+                    "resetsAt": primary_reset_at,
+                },
+                "secondary": {
+                    "usedPercent": 40,
+                    "windowDurationMins": 10_080,
+                    "resetsAt": weekly_reset_at,
+                },
+            },
+            "account": {"credits": {"balance": "794"}},
+        },
+    )
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    account = Account(
+        id="app-server-credit",
+        label="App server credit",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usages = fetch_all(AppConfig(accounts=(account,)), (account,))
+
+    assert len(usages) == 1
+    assert usages[0].error is None
+    assert usages[0].status is AccountStatus.OK
+    assert usages[0].credits is not None
+    assert usages[0].credits.remaining == 794
+    assert usages[0].credits.source == "json:credits"
+    assert usages[0].main is not None and usages[0].main.has_valid_usage
+    assert usages[0].stale is False
 
 
 def test_expire_reset_windows_handles_dynamic_core_and_model_pools():
