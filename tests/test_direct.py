@@ -44,7 +44,7 @@ from codex_usage.direct import (
     read_auth_json_file,
     validate_auth_json_file,
 )
-from codex_usage.models import Account, AccountStatus
+from codex_usage.models import Account, AccountStatus, LimitWindow
 
 
 def _jwt_with_exp(expiry: int) -> str:
@@ -937,7 +937,7 @@ def test_direct_numeric_boundaries_reject_subclasses_before_operations(tmp_path,
     assert direct_module._credit_window(
         {"credits": broken_float},
         datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
-    ) is None
+    ) == LimitWindow(name="credits", source="invalid:credits")
 
     monkeypatch.setattr(
         direct_module,
@@ -1105,7 +1105,7 @@ def test_credit_window_extracts_rate_limits_nested_sources():
     assert by_limit_id is not None and by_limit_id.remaining == 34
 
 
-def test_credit_window_skips_mixed_sources_and_invalid_number_before_valid_value():
+def test_credit_window_rejects_conflicting_alias_values():
     window = _credit_window(
         {
             "rateLimitsByLimitId": {
@@ -1119,8 +1119,7 @@ def test_credit_window_skips_mixed_sources_and_invalid_number_before_valid_value
         datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
     )
 
-    assert window is not None
-    assert window.used == 5
+    assert window == LimitWindow(name="credits", source="invalid:credits")
 
 
 def test_credit_window_extracts_explicit_scalar_balance():
@@ -1134,7 +1133,7 @@ def test_credit_window_extracts_explicit_scalar_balance():
     assert window.name == "credits"
 
 
-def test_credit_window_derives_remaining_from_used_and_limit():
+def test_credit_window_preserves_explicit_used_and_limit_fields():
     window = _credit_window(
         {"credits": {"used": 25, "limit": 100}},
         datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
@@ -1143,11 +1142,12 @@ def test_credit_window_derives_remaining_from_used_and_limit():
     assert window is not None
     assert window.used == 25
     assert window.limit == 100
-    assert window.remaining == 75
-    assert window.percent == 75
+    assert window.remaining is None
+    assert window.percent is None
+    assert window.remaining_percent == 75
 
 
-def test_credit_window_derives_percent_from_remaining_and_limit():
+def test_credit_window_preserves_explicit_remaining_and_limit_fields():
     window = _credit_window(
         {"credits": {"remaining": 50, "limit": 100}},
         datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
@@ -1156,7 +1156,8 @@ def test_credit_window_derives_percent_from_remaining_and_limit():
     assert window is not None
     assert window.used is None
     assert window.remaining == 50
-    assert window.percent == 50
+    assert window.percent is None
+    assert window.remaining_percent == 50
 
 
 def test_credit_window_accepts_percent_only_balance():
@@ -1170,13 +1171,124 @@ def test_credit_window_accepts_percent_only_balance():
     assert window.percent == 75
 
 
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param({"used": 101, "limit": 100}, id="pair-used-limit"),
+        pytest.param({"used": 20, "percent": 70}, id="pair-used-percent"),
+        pytest.param(
+            {"used": 20, "limit": 100, "remaining": 70},
+            id="triple-used-limit-remaining",
+        ),
+        pytest.param(
+            {"used": 20, "limit": 100, "percent": 70},
+            id="triple-used-limit-percent",
+        ),
+        pytest.param(
+            {"remaining": 80, "limit": 100, "percent": 70},
+            id="triple-remaining-limit-percent",
+        ),
+        pytest.param(
+            {"used": 20, "remaining": 70, "percent": 70},
+            id="triple-no-limit",
+        ),
+        pytest.param(
+            {"used": 20, "limit": 100, "remaining": 70, "percent": 70},
+            id="quad",
+        ),
+        pytest.param(
+            {"used": 20, "limit": 100, "percent": 80.0000000001},
+            id="beyond-float-rounding",
+        ),
+        pytest.param({"used": 20, "consumed": 21}, id="used-aliases"),
+        pytest.param({"remaining": 80, "available": 70}, id="remaining-aliases"),
+        pytest.param({"limit": 100, "total": 101}, id="limit-aliases"),
+        pytest.param(
+            {"percent": 80, "remaining_percent": 70},
+            id="percent-aliases",
+        ),
+    ],
+)
+def test_credit_window_preserves_conflicts_as_invalid(fields):
+    assert _credit_window(
+        {"credits": fields},
+        datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+    ) == LimitWindow(name="credits", source="invalid:credits")
+
+
+@pytest.mark.parametrize(
+    ("fields", "expected_remaining_percent"),
+    [
+        pytest.param({"percent": 80}, 80, id="percent"),
+        pytest.param({"limit": 100, "percent": 80}, 80, id="limit-percent"),
+        pytest.param({"remaining": 80, "percent": 80}, 80, id="remaining-percent"),
+        pytest.param({"used": 20, "limit": 100}, 80, id="used-limit"),
+        pytest.param({"remaining": 80, "limit": 100}, 80, id="remaining-limit"),
+        pytest.param(
+            {"used": 20, "remaining": 80, "limit": 100},
+            80,
+            id="used-remaining-limit",
+        ),
+        pytest.param(
+            {"used": 20, "limit": 100, "percent": 80},
+            80,
+            id="used-limit-percent",
+        ),
+        pytest.param(
+            {"remaining": 80, "limit": 100, "percent": 80},
+            80,
+            id="remaining-limit-percent",
+        ),
+        pytest.param(
+            {"used": 20, "remaining": 80, "limit": 100, "percent": 80},
+            80,
+            id="quad",
+        ),
+        pytest.param(
+            {
+                "used": 0.1 + 0.2,
+                "remaining": 0.7,
+                "limit": 1.0,
+                "percent": 70.0,
+            },
+            70,
+            id="float-rounding",
+        ),
+        pytest.param(
+            {"used": 20, "consumed": 20, "limit": 100, "total": 100},
+            80,
+            id="consistent-aliases",
+        ),
+    ],
+)
+def test_credit_window_accepts_consistent_explicit_fields(
+    fields,
+    expected_remaining_percent,
+):
+    window = _credit_window(
+        {"credits": fields},
+        datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+    )
+
+    assert window is not None
+    assert window.source == "json:credits"
+    assert window.remaining_percent == pytest.approx(expected_remaining_percent)
+
+
+def test_credit_window_distinguishes_missing_credit_source():
+    assert _credit_window(
+        {},
+        datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+    ) is None
+
+
 def test_credit_window_rejects_percent_above_hundred():
-    assert (
-        _credit_window(
-            {"credits": {"percent": 101}},
-            datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
-        )
-        is None
+    assert _credit_window(
+        {"credits": {"percent": 101}},
+        datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+    ) == LimitWindow(
+        name="credits",
+        source="invalid:credits",
     )
 
 
@@ -1185,12 +1297,12 @@ def test_credit_window_rejects_credit_dict_subclass_hooks():
         def get(self, _key, _default=None):
             raise RuntimeError("synthetic credit mapping marker")
 
-    assert (
-        _credit_window(
-            {"credits": BrokenCredits()},
-            datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
-        )
-        is None
+    assert _credit_window(
+        {"credits": BrokenCredits()},
+        datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+    ) == LimitWindow(
+        name="credits",
+        source="invalid:credits",
     )
 
 
@@ -1228,21 +1340,24 @@ def test_credit_window_rejects_nested_source_mapping_hooks():
 @pytest.mark.parametrize(
     "payload",
     [
+        {"credits": None},
         {"credits": True},
         {"credits": -1},
+        {"credits": "NaN"},
+        {"credits": "Inf"},
         {"credits": {"balance": "not-a-number"}},
         {"credits": {"remaining": 101, "limit": 100}},
         pytest.param({"credits": 10**10_000}, id="huge-scalar"),
         pytest.param({"credits": {"balance": 10**10_000}}, id="huge-nested"),
     ],
 )
-def test_credit_window_rejects_invalid_balances(payload):
-    assert (
-        _credit_window(
-            payload,
-            datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
-        )
-        is None
+def test_credit_window_preserves_present_invalid_balances(payload):
+    assert _credit_window(
+        payload,
+        datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+    ) == LimitWindow(
+        name="credits",
+        source="invalid:credits",
     )
 
 

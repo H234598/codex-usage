@@ -18,7 +18,14 @@ from urllib.request import Request, urlopen
 from .extractor import LOCAL_TZ, JsonCandidate, extract_windows
 from .identity import backend_identity_from_payload, backend_plan_type_from_payload
 from .json_utils import loads_strict
-from .models import Account, AccountStatus, AccountUsage, LimitWindow
+from .models import (
+    Account,
+    AccountStatus,
+    AccountUsage,
+    LimitWindow,
+    credit_values_match,
+    credit_window_remaining_percent,
+)
 from .private_io import assert_no_symlink_ancestors
 from .usage_limits import (
     SPARK_METERED_FEATURE,
@@ -1663,7 +1670,8 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
     explicit top-level fields are accepted so a missing credit API cannot
     produce a fabricated balance in the applet.
     """
-    candidate: Any = None
+    missing = object()
+    candidate: Any = missing
     sources: list[dict[str, Any]] = [payload]
     for key in ("rateLimits", "rate_limits"):
         nested = payload.get(key)
@@ -1685,66 +1693,71 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
             if key in source:
                 candidate = source[key]
                 break
-        if candidate is not None:
+        if candidate is not missing:
             break
         account = source.get("account")
-        if type(account) is dict:
-            candidate = account.get("credits")
-            if candidate is not None:
-                break
-    if candidate is None:
+        if type(account) is dict and "credits" in account:
+            candidate = account["credits"]
+            break
+    if candidate is missing:
         return None
+    invalid = LimitWindow(name="credits", source="invalid:credits")
     if isinstance(candidate, bool):
-        return None
+        return invalid
     if type(candidate) in (int, float, str):
         try:
             numeric = float(candidate)
         except (OverflowError, TypeError, ValueError):
-            numeric = math.nan
+            return invalid
         if not math.isfinite(numeric) or numeric < 0:
-            return None
+            return invalid
         return LimitWindow(name="credits", remaining=numeric)
     if type(candidate) is not dict:
-        return None
+        return invalid
 
     def number(*keys: str) -> float | None:
+        values: list[float] = []
         for key in keys:
-            value = candidate.get(key)
-            if type(value) not in (int, float, str):
+            if key not in candidate:
                 continue
+            value = candidate[key]
+            if type(value) not in (int, float, str):
+                raise ValueError("credit value is invalid")
             try:
                 numeric = float(cast(int | float | str, value))
             except (OverflowError, TypeError, ValueError):
-                continue
-            if math.isfinite(numeric) and numeric >= 0:
-                return numeric
-        return None
+                raise ValueError("credit value is invalid") from None
+            if not math.isfinite(numeric):
+                raise ValueError("credit value is invalid")
+            values.append(numeric)
+        if not values:
+            return None
+        if any(not credit_values_match(value, values[0]) for value in values[1:]):
+            raise ValueError("credit aliases conflict")
+        return values[0]
 
-    used = number("used", "consumed")
-    limit = number("limit", "total", "maximum")
-    remaining = number("remaining", "available", "balance", "credit_balance")
-    percent = number("percent", "remaining_percent", "remainingPercentage")
-    if percent is not None and percent > 100:
-        percent = None
-    if remaining is None and used is None and limit is None and percent is None:
-        return None
-    if remaining is None and limit is not None and used is not None and used <= limit:
-        remaining = limit - used
-    if percent is None and remaining is not None and limit and limit > 0:
-        percent = remaining / limit * 100
-    if remaining is not None and limit is not None and remaining > limit:
-        return None
-    reset_at = _parse_iso_datetime(candidate.get("reset_at") or candidate.get("resetAt"))
-    return LimitWindow(
-        name="credits",
-        duration_seconds=None,
-        used=used,
-        limit=limit,
-        remaining=remaining,
-        percent=percent,
-        reset_at=reset_at,
-        source="json:credits",
-    )
+    try:
+        window = LimitWindow(
+            name="credits",
+            duration_seconds=None,
+            used=number("used", "consumed"),
+            limit=number("limit", "total", "maximum"),
+            remaining=number(
+                "remaining",
+                "available",
+                "balance",
+                "credit_balance",
+            ),
+            percent=number("percent", "remaining_percent", "remainingPercentage"),
+            reset_at=_parse_iso_datetime(
+                candidate.get("reset_at") or candidate.get("resetAt")
+            ),
+            source="json:credits",
+        )
+        credit_window_remaining_percent(window)
+    except (AttributeError, OverflowError, TypeError, ValueError):
+        return invalid
+    return window
 
 
 def _jwt_expiry(token: Any) -> datetime | None:

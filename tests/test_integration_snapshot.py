@@ -475,27 +475,39 @@ def test_schema2_projection_omits_absolute_credit_and_preserves_percent_control(
         serialize_schema2_document,
     )
 
-    absolute = replace(
-        _usage("absolute-credit"),
-        credits=LimitWindow(name="credits", remaining=794.0),
+    absolute_values = {
+        "absolute-a": 0.0,
+        "absolute-b": 12.0,
+        "absolute-c": 80.0,
+        "absolute-d": 100.0,
+        "absolute-e": 100.01,
+        "absolute-f": 794.0,
+    }
+    absolutes = tuple(
+        replace(
+            _usage(account_id),
+            credits=LimitWindow(name="credits", remaining=remaining),
+        )
+        for account_id, remaining in absolute_values.items()
     )
     percent = replace(
         _usage("percent-credit"),
         credits=LimitWindow(name="credits", percent=80.0),
     )
 
-    document = build_schema2_document((absolute, percent), generated_at=GENERATED)
+    document = build_schema2_document((*absolutes, percent), generated_at=GENERATED)
     serialized = serialize_schema2_document(document)
     accounts = {account["account_id"]: account for account in document["accounts"]}
 
-    assert accounts["absolute-credit"]["limits"] == [
-        {
-            "pool": "main",
-            "remaining_percent": 75.0,
-            "used_percent": 25.0,
-            "window_seconds": 18_000,
-        }
-    ]
+    for account_id in absolute_values:
+        assert accounts[account_id]["limits"] == [
+            {
+                "pool": "main",
+                "remaining_percent": 75.0,
+                "used_percent": 25.0,
+                "window_seconds": 18_000,
+            }
+        ]
     assert accounts["percent-credit"]["limits"] == [
         {
             "pool": "credits",
@@ -515,7 +527,14 @@ def test_schema2_projection_omits_absolute_credit_and_preserves_percent_control(
         for account in accounts.values()
         for evidence in account["tracker_evidence"]
     )
-    assert b"794" not in serialized
+    assert b'"remaining":' not in serialized
+    assert b'"limit":' not in serialized
+    assert all(
+        value != 794.0
+        for limit in accounts["absolute-f"]["limits"]
+        for value in limit.values()
+        if type(value) in (int, float)
+    )
 
 
 @pytest.mark.parametrize(
@@ -533,7 +552,55 @@ def test_schema2_projection_omits_absolute_credit_and_preserves_percent_control(
         ),
         pytest.param(
             LimitWindow(name="credits", remaining=101.0, limit=100.0),
-            id="inconsistent-limit",
+            id="pair-remaining-limit",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", used=101.0, limit=100.0),
+            id="pair-used-limit",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", used=20.0, percent=70.0),
+            id="pair-used-percent",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", used=20.0, limit=100.0, remaining=70.0),
+            id="triple-used-limit-remaining",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", used=20.0, limit=100.0, percent=70.0),
+            id="triple-used-limit-percent",
+        ),
+        pytest.param(
+            LimitWindow(
+                name="credits",
+                remaining=80.0,
+                limit=100.0,
+                percent=70.0,
+            ),
+            id="triple-remaining-limit-percent",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", used=20.0, remaining=70.0, percent=70.0),
+            id="triple-without-limit",
+        ),
+        pytest.param(
+            LimitWindow(
+                name="credits",
+                used=20.0,
+                limit=100.0,
+                remaining=70.0,
+                percent=70.0,
+            ),
+            id="quad",
+        ),
+        pytest.param(
+            LimitWindow(
+                name="credits",
+                used=20.0,
+                limit=100.0,
+                percent=80.0000000001,
+            ),
+            id="beyond-float-rounding",
         ),
     ],
 )
@@ -544,6 +611,75 @@ def test_schema2_projection_rejects_invalid_absolute_credit_source(credits):
 
     with pytest.raises(IntegrationInvalidSource):
         build_schema2_document((usage,), generated_at=GENERATED)
+
+
+@pytest.mark.parametrize(
+    ("credits", "expected_remaining_percent"),
+    [
+        pytest.param(LimitWindow(name="credits", percent=80.0), 80.0, id="percent"),
+        pytest.param(
+            LimitWindow(name="credits", limit=100.0, percent=80.0),
+            80.0,
+            id="limit-percent",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", remaining=80.0, percent=80.0),
+            80.0,
+            id="remaining-percent",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", used=20.0, limit=100.0),
+            80.0,
+            id="used-limit",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", remaining=80.0, limit=100.0),
+            80.0,
+            id="remaining-limit",
+        ),
+        pytest.param(
+            LimitWindow(
+                name="credits",
+                used=20.0,
+                remaining=80.0,
+                limit=100.0,
+                percent=80.0,
+            ),
+            80.0,
+            id="quad",
+        ),
+        pytest.param(
+            LimitWindow(
+                name="credits",
+                used=0.1 + 0.2,
+                remaining=0.7,
+                limit=1.0,
+                percent=70.0,
+            ),
+            70.0,
+            id="float-rounding",
+        ),
+    ],
+)
+def test_schema2_projection_preserves_consistent_explicit_credit_fields(
+    credits,
+    expected_remaining_percent,
+):
+    from codex_usage.integration_snapshot import build_schema2_document
+
+    usage = replace(_usage("alpha"), credits=credits)
+
+    account = build_schema2_document((usage,), generated_at=GENERATED)["accounts"][0]
+
+    credit_limit = next(
+        limit for limit in account["limits"] if limit["pool"] == "credits"
+    )
+    assert credit_limit["remaining_percent"] == pytest.approx(
+        expected_remaining_percent
+    )
+    assert credit_limit["used_percent"] == pytest.approx(
+        100.0 - expected_remaining_percent
+    )
 
 
 def test_schema2_projection_preserves_valid_partial_limits_and_evidence():

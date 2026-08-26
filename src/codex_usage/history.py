@@ -12,7 +12,13 @@ from pathlib import Path
 from typing import TypeGuard
 
 from .config import default_state_dir
-from .models import AccountStatus, AccountUsage, LimitWindow, UsagePool
+from .models import (
+    AccountStatus,
+    AccountUsage,
+    LimitWindow,
+    UsagePool,
+    credit_window_remaining_percent,
+)
 from .private_io import ensure_private_directory, private_path_lock
 
 MAX_HISTORY_SAMPLES = 500_000
@@ -622,7 +628,7 @@ def _iter_usage_samples(usage: AccountUsage):
     credit = usage.credits
     if isinstance(credit, LimitWindow):
         try:
-            remaining_percent = credit.remaining_percent
+            remaining_percent = credit_window_remaining_percent(credit)
         except (AttributeError, TypeError, ValueError, OverflowError):
             remaining_percent = None
         if remaining_percent is not None:

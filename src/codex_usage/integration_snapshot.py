@@ -18,7 +18,13 @@ from .consumption import (
     calculate_tracker_evidence,
 )
 from .history import CREDIT_HISTORY_WINDOW_SECONDS, MAX_HISTORY_SAMPLES
-from .models import AccountStatus, AccountUsage, LimitWindow, UsagePool
+from .models import (
+    AccountStatus,
+    AccountUsage,
+    LimitWindow,
+    UsagePool,
+    credit_window_remaining_percent,
+)
 from .private_io import assert_no_symlink_ancestors
 from .state import load_current_usage
 
@@ -329,28 +335,6 @@ def _status_text(status: AccountStatus) -> str:
     return status.value
 
 
-def _omittable_absolute_credit(window: LimitWindow) -> bool:
-    try:
-        if (
-            window.limit is not None
-            or window.percent is not None
-            or window.remaining_percent is not None
-            or type(window.remaining) not in (int, float)
-        ):
-            return False
-        remaining = float(window.remaining)
-        if not math.isfinite(remaining) or remaining < 0:
-            return False
-        if window.used is None:
-            return True
-        if type(window.used) not in (int, float):
-            return False
-        used = float(window.used)
-        return math.isfinite(used) and used >= 0
-    except (AttributeError, OverflowError, TypeError, ValueError):
-        return False
-
-
 def _source_limits(usage: AccountUsage) -> list[dict[str, object]]:
     if (
         type(usage.models) is not tuple
@@ -372,7 +356,11 @@ def _source_limits(usage: AccountUsage) -> list[dict[str, object]]:
             or credit_duration not in TRACKER_EVIDENCE_WINDOW_SECONDS
         ):
             _invalid()
-        if _omittable_absolute_credit(usage.credits):
+        try:
+            credit_percent = credit_window_remaining_percent(usage.credits)
+        except (AttributeError, OverflowError, TypeError, ValueError):
+            _invalid()
+        if credit_percent is None:
             if usage.credits.reset_at is not None:
                 if not isinstance(usage.credits.reset_at, datetime):
                     _invalid()
@@ -387,6 +375,10 @@ def _source_limits(usage: AccountUsage) -> list[dict[str, object]]:
                             usage.credits,
                             name=_WINDOW_SECONDS_NAME[credit_duration],
                             duration_seconds=credit_duration,
+                            used=None,
+                            limit=None,
+                            remaining=None,
+                            percent=credit_percent,
                         ),
                     ),
                     availability_sources=("usage",),

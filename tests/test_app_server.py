@@ -148,17 +148,20 @@ def _fake_codex(
     account_plan_type: str | None = None,
     account_email: str | None = None,
     account_credits: str | None = None,
+    account_credits_payload: dict[str, object] | None = None,
     model_id: str = "gpt-5.3-codex-spark",
 ) -> str:
     reject_initial = str(reject_initial_account_read)
     plan_field = f", 'planType': {account_plan_type!r}" if account_plan_type else ""
     email_field = f", 'email': {account_email!r}" if account_email else ""
-    credits_field = (
-        f", 'credits': {{'has_credits': True, 'unlimited': False, "
-        f"'balance': {account_credits!r}}}"
-        if account_credits is not None
-        else ""
-    )
+    credits_field = ""
+    if account_credits_payload is not None:
+        credits_field = f", 'credits': {account_credits_payload!r}"
+    elif account_credits is not None:
+        credits_field = (
+            f", 'credits': {{'has_credits': True, 'unlimited': False, "
+            f"'balance': {account_credits!r}}}"
+        )
     source = f"""#!/usr/bin/env python3
 import json
 import sys
@@ -472,6 +475,32 @@ def test_app_server_preserves_absolute_account_credits(tmp_path):
 
     assert usage.credits is not None
     assert usage.credits.remaining == 794
+
+
+@pytest.mark.parametrize("source_value", ["-1", "NaN", "Inf", "not-a-number"])
+def test_app_server_preserves_present_invalid_account_credits(tmp_path, source_value):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
+    command = _fake_codex(
+        tmp_path / "codex",
+        tmp_path / "requests.json",
+        account_credits=source_value,
+    )
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account, codex_command=command)
+
+    assert usage.status is AccountStatus.OK
+    assert usage.main is not None and len(usage.main.windows) == 2
+    assert usage.credits == LimitWindow(name="credits", source="invalid:credits")
 
 
 def test_app_server_rejects_normalized_model_identity(tmp_path):

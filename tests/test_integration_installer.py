@@ -3794,6 +3794,7 @@ def test_temporary_launcher_emits_schema2_from_temporary_state(tmp_path):
 
 def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts(tmp_path):
     from codex_usage.app_server import fetch_account_usage_app_server
+    from codex_usage.history import usage_samples_from_usage
     from codex_usage.integration_evidence import read_current_evidence
     from codex_usage.integration_snapshot import (
         IntegrationInvalidSource,
@@ -3810,33 +3811,43 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
     auth_home.mkdir()
     auth_path = auth_home / "auth.json"
     _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
-    command = _fake_codex(
-        tmp_path / "codex",
-        tmp_path / "app-server-requests.json",
-        account_credits="794",
-    )
-    fetched = fetch_account_usage_app_server(
-        Account(
-            id="absolute-credit",
-            label="Absolute credit",
-            profile_dir=str(tmp_path / "profile"),
-            auth_json_path=str(auth_path),
-            backend="app-server",
-        ),
-        codex_command=command,
-    )
-    assert fetched.main is not None
-    assert len(fetched.main.windows) == 2
-    assert fetched.credits is not None
-    assert fetched.credits.remaining == 794.0
-    assert fetched.credits.limit is None
-    assert fetched.credits.remaining_percent is None
-
+    scalar_values = {
+        "absolute-a": "0",
+        "absolute-b": "12",
+        "absolute-c": "80",
+        "absolute-d": "100",
+        "absolute-e": "100.01",
+        "absolute-f": "794",
+    }
     current_dir = data_home / "codex-usage" / "current"
-    save_current_usage(fetched, current_dir)
+    fetched_by_id = {}
+    for account_id, source_value in scalar_values.items():
+        command = _fake_codex(
+            tmp_path / f"codex-{account_id}",
+            tmp_path / f"app-server-requests-{account_id}.json",
+            account_credits=source_value,
+        )
+        fetched = fetch_account_usage_app_server(
+            Account(
+                id=account_id,
+                label="Absolute credit",
+                profile_dir=str(tmp_path / f"profile-{account_id}"),
+                auth_json_path=str(auth_path),
+                backend="app-server",
+            ),
+            codex_command=command,
+        )
+        assert fetched.main is not None
+        assert len(fetched.main.windows) == 2
+        assert fetched.credits is not None
+        assert fetched.credits.remaining == float(source_value)
+        assert fetched.credits.limit is None
+        assert fetched.credits.percent is None
+        fetched_by_id[account_id] = fetched
+        save_current_usage(fetched, current_dir)
     save_current_usage(
         replace(
-            fetched,
+            fetched_by_id["absolute-f"],
             account_id="percent-credit",
             label="Percent credit",
             credits=LimitWindow(name="credits", percent=80.0),
@@ -3845,8 +3856,14 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
     )
     roundtrip = read_current_usage_records(current_dir)
     roundtrip_by_id = {usage.account_id: usage for usage in roundtrip}
-    assert roundtrip_by_id["absolute-credit"].credits is not None
-    assert roundtrip_by_id["absolute-credit"].credits.remaining == 794.0
+    for account_id, source_value in scalar_values.items():
+        credit = roundtrip_by_id[account_id].credits
+        assert credit is not None
+        assert credit.remaining == float(source_value)
+        assert not any(
+            sample.pool == "credits"
+            for sample in usage_samples_from_usage(roundtrip_by_id[account_id])
+        )
 
     direct_error = None
     direct_document = None
@@ -3881,16 +3898,17 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
     for payload_text in (direct_payload, completed.stdout):
         payload = json.loads(payload_text)
         accounts = {account["account_id"]: account for account in payload["accounts"]}
-        assert set(accounts) == {"absolute-credit", "percent-credit"}
-        assert {
-            limit["window_seconds"]
-            for limit in accounts["absolute-credit"]["limits"]
-            if limit["pool"] == "main"
-        } == {18_000, 604_800}
-        assert not any(
-            limit["pool"] == "credits"
-            for limit in accounts["absolute-credit"]["limits"]
-        )
+        assert set(accounts) == set(scalar_values) | {"percent-credit"}
+        for account_id in scalar_values:
+            assert {
+                limit["window_seconds"]
+                for limit in accounts[account_id]["limits"]
+                if limit["pool"] == "main"
+            } == {18_000, 604_800}
+            assert not any(
+                limit["pool"] == "credits"
+                for limit in accounts[account_id]["limits"]
+            )
         assert [
             limit
             for limit in accounts["percent-credit"]["limits"]
@@ -3908,7 +3926,14 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
             for account in accounts.values()
             for evidence in account["tracker_evidence"]
         )
-        assert "794" not in payload_text
+        assert '"remaining":' not in payload_text
+        assert '"limit":' not in payload_text
+        assert all(
+            value != 794.0
+            for limit in accounts["absolute-f"]["limits"]
+            for value in limit.values()
+            if type(value) in (int, float)
+        )
 
     evidence, status = read_current_evidence(
         state_home=state_home,
@@ -3917,6 +3942,168 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
         now=datetime.now(UTC),
     )
     assert evidence == json.loads(completed.stdout)
+    assert status == "partial"
+
+
+def test_installed_launcher_invalid_real_credit_does_not_commit_current(tmp_path):
+    from codex_usage.app_server import fetch_account_usage_app_server
+    from codex_usage.integration_evidence import read_current_evidence
+    from codex_usage.integration_snapshot import read_current_usage_records
+    from codex_usage.models import Account, LimitWindow
+    from codex_usage.state import save_current_usage
+    from tests.test_app_server import _auth, _fake_codex
+
+    release, data_home, state_home = _install(tmp_path)
+    auth_home = tmp_path / "codex-home-invalid"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
+    current_dir = data_home / "codex-usage" / "current"
+    healthy_command = _fake_codex(
+        tmp_path / "codex-healthy",
+        tmp_path / "app-server-requests-healthy.json",
+    )
+    healthy = fetch_account_usage_app_server(
+        Account(
+            id="healthy",
+            label="Healthy",
+            profile_dir=str(tmp_path / "profile-healthy"),
+            auth_json_path=str(auth_path),
+            backend="app-server",
+        ),
+        codex_command=healthy_command,
+    )
+    save_current_usage(healthy, current_dir)
+
+    argv = [
+        str(release.launcher_path),
+        "integration-snapshot",
+        "--schema",
+        "2",
+        "--format",
+        "json",
+    ]
+    baseline = subprocess.run(
+        argv,
+        env={"PATH": "/usr/bin:/bin"},
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert (baseline.returncode, baseline.stderr) == (0, "")
+    integration = state_home / "codex-usage" / "integration"
+    current_path = integration / "current.json"
+    current_before = current_path.read_bytes()
+    generations = integration / "generations"
+    generations_before = {path.name for path in generations.iterdir()}
+
+    invalid_sources = (
+        ("negative", "-1", None),
+        ("nan", "NaN", None),
+        ("infinite", "Inf", None),
+        ("unparseable", "not-a-number", None),
+        ("pair-used-limit", None, {"used": 101, "limit": 100}),
+        ("pair-used-percent", None, {"used": 20, "percent": 70}),
+        (
+            "triple-used-limit-remaining",
+            None,
+            {"used": 20, "limit": 100, "remaining": 70},
+        ),
+        (
+            "triple-used-limit-percent",
+            None,
+            {"used": 20, "limit": 100, "percent": 70},
+        ),
+        (
+            "triple-remaining-limit-percent",
+            None,
+            {"remaining": 80, "limit": 100, "percent": 70},
+        ),
+        (
+            "triple-without-limit",
+            None,
+            {"used": 20, "remaining": 70, "percent": 70},
+        ),
+        (
+            "quad",
+            None,
+            {"used": 20, "limit": 100, "remaining": 70, "percent": 70},
+        ),
+    )
+    for index, (case, source_value, source_payload) in enumerate(invalid_sources):
+        command = _fake_codex(
+            tmp_path / f"codex-invalid-{index}-{case}",
+            tmp_path / f"app-server-requests-invalid-{index}-{case}.json",
+            account_credits=source_value,
+            account_credits_payload=source_payload,
+        )
+        fetched = fetch_account_usage_app_server(
+            Account(
+                id="invalid-credit",
+                label="Invalid credit",
+                profile_dir=str(tmp_path / "profile-invalid"),
+                auth_json_path=str(auth_path),
+                backend="app-server",
+            ),
+            codex_command=command,
+        )
+        assert fetched.status.value == "ok"
+        assert fetched.main is not None and len(fetched.main.windows) == 2
+        assert fetched.credits == LimitWindow(
+            name="credits",
+            source="invalid:credits",
+        )
+        save_current_usage(fetched, current_dir)
+        roundtrip = {
+            usage.account_id: usage
+            for usage in read_current_usage_records(current_dir)
+        }
+        assert roundtrip["invalid-credit"].credits == LimitWindow(
+            name="credits",
+            source="invalid:credits",
+        )
+        state_payload = json.loads(
+            (current_dir / "invalid-credit.json").read_bytes()
+        )
+        assert state_payload["credits"] == {
+            "duration_seconds": None,
+            "limit": None,
+            "name": "credits",
+            "percent": None,
+            "raw": None,
+            "remaining": None,
+            "reset_at": None,
+            "source": "invalid:credits",
+            "used": None,
+        }
+
+        completed = subprocess.run(
+            argv,
+            env={"PATH": "/usr/bin:/bin"},
+            cwd=tmp_path,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        assert (completed.returncode, completed.stdout, completed.stderr) == (
+            65,
+            "",
+            "integration_snapshot_invalid_source\n",
+        )
+        assert current_path.read_bytes() == current_before
+        assert {path.name for path in generations.iterdir()} == generations_before
+
+    evidence, status = read_current_evidence(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=release.entrypoint_path,
+        now=datetime.now(UTC),
+    )
+    assert evidence == json.loads(baseline.stdout)
     assert status == "partial"
 
 
