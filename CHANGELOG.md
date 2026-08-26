@@ -27,9 +27,10 @@
   Current-Reader und Rollback-Promotion bleiben streng ans aktive Release
   gebunden.
 - Recovery entfernt FD-gebunden und bounded sichere
-  `.tmp-current.json-<32-lowercase-hex>`-Crashreste unter Release→Current-EX-
-  Sperren vor Publikation, Rollback und Installer-Artefaktscans. Unsichere,
-  malformed oder überzählige Root-Einträge bleiben fail-closed.
+  `.tmp-current.json-<32-lowercase-hex>`-Crashreste mit 0..4096 Byte nach
+  Create oder Datei-`fsync` unter Release→Current-EX-Sperren vor Publikation,
+  Rollback und Installer-Artefaktscans. Unsichere, malformed oder überzählige
+  Root-Einträge bleiben fail-closed; `current.json` bleibt 1..4096 Byte.
 
 ## 0.6.534 - 2026-08-24
 

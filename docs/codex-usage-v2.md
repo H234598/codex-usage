@@ -372,7 +372,8 @@ sowie den gebundenen Namen erneut. Er liest und vergleicht `active.json` und
 `invalid`; niemals zu gemischter Generation. Der atomare `rename` von
 `current.json` ist Commitpunkt, ersetzt aber weder Lock noch Vor-/Nachprüfung.
 
-Ein Hard-Crash nach dem `fsync` der Pointer-Tempdatei kann ausschließlich
+Ein Hard-Crash direkt nach `O_CREAT|O_EXCL` oder nach dem `fsync` der Pointer-
+Tempdatei kann ausschließlich
 `integration/.tmp-current.json-<32-lowercase-hex>` hinterlassen. Die öffentliche
 Recovery und alle Publish-, Evidence-Rollback-, GC-, Installer- und
 Installer-Rollback-Pfade klassifizieren diesen Root-Namespace unter derselben
@@ -384,14 +385,16 @@ Namespaces endlich behandelbar; der 129. Root-Eintrag oder 65. Pointer-Temp
 ist vor jeder Löschung `invalid`.
 
 Ein löschbarer Pointer-Temp ist eine reguläre, nicht verlinkte, der effektiven
-UID eigene `0600`-Datei mit Linkcount 1 und 1..4096 Byte. Recovery öffnet sie
-FD-gebunden mit `O_NOFOLLOW`, prüft unmittelbar vor `unlinkat` nochmals die
-vollständige Dateiidentität und den gebundenen Namen und hält den FD bis zur
-Löschung offen. Danach wird das `integration/`-Verzeichnis `fsync`'t.
-Fremde, malformed, leere, zu große, falsch geschützte, verlinkte oder im
-letzten Moment ersetzte Einträge bleiben unangetastet und machen Recovery
-fail-closed. Unterbrochener Cleanup ist wiederholbar; kooperierende Live-
-Publisher sind durch die beiden EX-Locks ausgeschlossen.
+UID eigene `0600`-Datei mit Linkcount 1 und 0..4096 Byte. Größe 0 ist exakt
+der legitime Create-before-Write-Crashrest; `current.json` selbst bleibt
+zwingend 1..4096 Byte. Recovery öffnet den Temp FD-gebunden mit `O_NOFOLLOW`,
+prüft unmittelbar vor `unlinkat` nochmals die vollständige Dateiidentität und
+den gebundenen Namen und hält den FD bis zur Löschung offen. Danach wird das
+`integration/`-Verzeichnis `fsync`'t. Fremde, malformed, zu große, falsch
+geschützte, verlinkte oder im letzten Moment ersetzte Einträge bleiben
+unangetastet und machen Recovery fail-closed. Unterbrochener Cleanup ist
+wiederholbar; kooperierende Live-Publisher sind durch die beiden EX-Locks
+ausgeschlossen.
 
 `state_home`, `codex-usage`, `integration`, `generations` und jeder
 Generationordner müssen reale UID-eigene `0700`-Verzeichnisse sein. Pointer,
