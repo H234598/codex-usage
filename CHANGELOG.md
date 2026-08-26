@@ -53,6 +53,17 @@
   Aliasse müssen vollständig übereinstimmen. Denominatorlos ist ausschließlich
   ein einzelnes logisches `remaining` zulässig; `used+remaining` ohne
   `limit`/Prozent ist nicht korrelierbar und bleibt fail-closed.
+- Jeder vorhandene numerische Alias wird vor ULP-Vergleich und Reduktion in
+  seiner eigenen Domain validiert: `used`/`remaining` endlich und
+  nichtnegativ, `limit` endlich und strikt positiv, Prozent endlich in
+  `[0,100]`. Ein valider erster Alias kann dadurch einen invaliden zweiten
+  Alias nicht verdecken.
+- Innerhalb jedes Creditkandidaten werden `reset_at` und `resetAt` gemeinsam
+  ausgewertet. Jeder vorhandene Wert muss ein höchstens 64 Zeichen langer,
+  whitespace-exakter, timezone-aware ISO-Zeitstempel sein; beide Aliasse
+  dürfen verschiedene Offsets schreiben, müssen aber denselben UTC-Instant
+  bezeichnen. Malformed oder widersprüchlich bedeutet invalid, Abwesenheit
+  bleibt optional.
 - Float-Konsistenz akzeptiert exakt vier `nextafter`-Schritte und verwirft den
   fünften. Werte innerhalb `0..limit` behalten ihr echtes Verhältnis; nur eine
   tatsächliche geringe Überschreitung darf bis zu dieser Grenze auf den

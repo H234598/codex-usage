@@ -107,6 +107,22 @@ Feld-Allowlist:
   `used`-, `remaining`-, `limit`- und Prozentangaben vollständig
   übereinstimmen. Eine zusätzliche invalide oder widersprüchliche Quelle kann
   nicht durch Branchpriorität verdeckt werden.
+- Innerhalb jeder numerischen Aliasgruppe wird jeder vorhandene Alias vor
+  ULP-Vergleich und Reduktion einzeln in seiner Domain validiert:
+  `used`/`consumed` sowie `remaining`/`available`/`balance`/`credit_balance`
+  sind endlich und nichtnegativ; `limit`/`total`/`maximum` ist endlich und
+  strikt positiv; `percent`/`remaining_percent`/`remainingPercentage` ist
+  endlich und liegt in `[0,100]`. Erst danach dürfen valide Aliasse mit der
+  Vier-ULP-Regel korreliert werden. Ein valider Alias maskiert niemals einen
+  vorhandenen invaliden Alias.
+- Innerhalb jedes Creditkandidaten werden beide anerkannten Reset-Aliasse
+  `reset_at` und `resetAt` gesammelt. Jeder vorhandene Wert muss ein
+  whitespace-exakter, höchstens 64 Zeichen langer ISO-Zeitstempel mit
+  expliziter Zeitzone sein. Mehrere Aliasse dürfen verschiedene UTC-Offsets
+  verwenden, müssen aber denselben Instant bezeichnen. Malformed, naive oder
+  widersprüchliche Resetwerte erzeugen das sanitierte Invalid-Sentinel;
+  vollständige Reset-Abwesenheit bleibt optional. Die Kandidat-zu-Kandidat-
+  Korrelation vergleicht weiterhin den normalisierten UTC-Instant.
 - Float-Konsistenz wird in beide Richtungen anhand exakt vier darstellbarer
   `nextafter`-Schritte geprüft; der fünfte Schritt ist ein Konflikt. Für
   `0 <= used <= limit` und `0 <= remaining <= limit` wird immer das echte
