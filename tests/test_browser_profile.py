@@ -1345,7 +1345,14 @@ def test_fetch_marks_invalid_result_state(
         "_launch_persistent_context",
         lambda *_args, **_kwargs: FakeContext(),
     )
-    monkeypatch.setattr(browser_module, "_safe_page_text_sources", lambda _page: ("", ()))
+    monkeypatch.setattr(
+        browser_module,
+        "_safe_page_text_sources",
+        lambda _page: (
+            "Log in to start chatting" if mode == "login" else "",
+            (),
+        ),
+    )
     monkeypatch.setattr(browser_module, "auth_identity_for_account", lambda _account: (None, None))
     monkeypatch.setattr(browser_module, "auth_plan_type_for_account", lambda _account: None)
     monkeypatch.setattr(
@@ -1364,16 +1371,11 @@ def test_fetch_marks_invalid_result_state(
         "backend_plan_type_from_candidates",
         lambda *_args: None,
     )
-    monkeypatch.setattr(
-        browser_module,
-        "canonical_backend_identity",
-        lambda *_args, **_kwargs: (None, None),
-    )
-    if mode == "login":
+    if mode != "login":
         monkeypatch.setattr(
             browser_module,
-            "_status_for_result",
-            lambda **_kwargs: browser_module.AccountStatus.LOGIN_REQUIRED,
+            "canonical_backend_identity",
+            lambda *_args, **_kwargs: (None, None),
         )
 
     usage = fetch_account_usage(account, AppConfig(accounts=(account,)))

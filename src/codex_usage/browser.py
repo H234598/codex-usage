@@ -212,6 +212,16 @@ def fetch_account_usage(
                 error="auth.json identity changed during browser request",
                 cache_invalidated=True,
             )
+        if page_state == "login_required":
+            return AccountUsage(
+                account_id=account.id,
+                label=account.label,
+                captured_at=captured_at,
+                status=AccountStatus.LOGIN_REQUIRED,
+                error="browser login required",
+                source_urls=tuple(sorted(source_urls)),
+                cache_invalidated=True,
+            )
         try:
             candidates = select_identity_consistent_candidates(
                 raw_candidates,
