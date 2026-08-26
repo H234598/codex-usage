@@ -1,4 +1,5 @@
 import errno
+import math
 import os
 import sqlite3
 from contextlib import nullcontext
@@ -1419,6 +1420,241 @@ def test_usage_samples_extract_only_fresh_valid_limit_windows():
     ]
 
 
+@pytest.mark.parametrize("remaining", [0, 12, 80, 100, 100.01, 794])
+def test_usage_samples_omit_denominatorless_absolute_credit(remaining):
+    captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        credits=LimitWindow(name="credits", remaining=remaining),
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
+def test_usage_samples_omit_sanitized_secondary_credit_alias_violation():
+    from codex_usage.direct import _credit_window
+
+    captured = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+    credits = _credit_window(
+        {
+            "credits": {
+                "remaining": 0.0,
+                "available": -math.ulp(0.0),
+            }
+        },
+        captured,
+    )
+    assert credits == LimitWindow(name="credits", source="invalid:credits")
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        credits=credits,
+        status=AccountStatus.OK,
+        backend_used="app-server",
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
+def test_usage_samples_omit_sanitized_credit_reset_alias_conflict():
+    from codex_usage.direct import _credit_window
+
+    captured = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+    credits = _credit_window(
+        {
+            "credits": {
+                "percent": 80,
+                "reset_at": "2026-09-01T00:00:00Z",
+                "resetAt": "2026-10-01T00:00:00Z",
+            }
+        },
+        captured,
+    )
+    assert credits == LimitWindow(name="credits", source="invalid:credits")
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        credits=credits,
+        status=AccountStatus.OK,
+        backend_used="app-server",
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
+def test_usage_samples_preserve_equal_offset_credit_reset_alias_instant():
+    from codex_usage.direct import _credit_window
+
+    captured = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+    credits = _credit_window(
+        {
+            "credits": {
+                "percent": 80,
+                "reset_at": "2026-09-01T00:00:00Z",
+                "resetAt": "2026-09-01T02:00:00+02:00",
+            }
+        },
+        captured,
+    )
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        credits=credits,
+        status=AccountStatus.OK,
+        backend_used="app-server",
+    )
+
+    samples = usage_samples_from_usage(usage)
+
+    assert len(samples) == 1
+    assert samples[0].pool == "credits"
+    assert samples[0].reset_at == datetime(2026, 9, 1, tzinfo=UTC)
+    assert samples[0].reset_generation == "2026-09-01T00:00:00+00:00"
+
+
+@pytest.mark.parametrize(
+    "credits",
+    [
+        pytest.param(
+            LimitWindow(name="credits", used=101, limit=100),
+            id="pair-used-limit",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", used=20, percent=70),
+            id="pair-used-percent",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", used=20, remaining=80),
+            id="pair-used-remaining-without-denominator",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", used=20, limit=100, remaining=70),
+            id="triple-used-limit-remaining",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", used=20, limit=100, percent=70),
+            id="triple-used-limit-percent",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", remaining=80, limit=100, percent=70),
+            id="triple-remaining-limit-percent",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", used=20, remaining=70, percent=70),
+            id="triple-without-limit",
+        ),
+        pytest.param(
+            LimitWindow(
+                name="credits",
+                used=20,
+                limit=100,
+                remaining=70,
+                percent=70,
+            ),
+            id="quad",
+        ),
+        pytest.param(
+            LimitWindow(
+                name="credits",
+                used=20,
+                limit=100,
+                percent=80.0000000001,
+            ),
+            id="beyond-float-rounding",
+        ),
+    ],
+)
+def test_usage_samples_skip_conflicting_explicit_credit_fields(credits):
+    captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        credits=credits,
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
+@pytest.mark.parametrize(
+    ("credits", "expected_used_percent"),
+    [
+        pytest.param(LimitWindow(name="credits", percent=80), 20, id="percent"),
+        pytest.param(
+            LimitWindow(name="credits", used=20, limit=100),
+            20,
+            id="used-limit",
+        ),
+        pytest.param(
+            LimitWindow(name="credits", remaining=80, limit=100),
+            20,
+            id="remaining-limit",
+        ),
+        pytest.param(
+            LimitWindow(
+                name="credits",
+                used=20,
+                remaining=80,
+                limit=100,
+                percent=80,
+            ),
+            20,
+            id="quad",
+        ),
+        pytest.param(
+            LimitWindow(
+                name="credits",
+                used=0.1 + 0.2,
+                remaining=0.7,
+                limit=1.0,
+                percent=70,
+            ),
+            30,
+            id="float-rounding",
+        ),
+        pytest.param(
+            LimitWindow(
+                name="credits",
+                used=math.nextafter(1.0, 0.0),
+                remaining=1.0 - math.nextafter(1.0, 0.0),
+                limit=1.0,
+                percent=(1.0 - math.nextafter(1.0, 0.0)) * 100.0,
+            ),
+            100.0 - (1.0 - math.nextafter(1.0, 0.0)) * 100.0,
+            id="nextafter-quad",
+        ),
+    ],
+)
+def test_usage_samples_preserve_consistent_explicit_credit_fields(
+    credits,
+    expected_used_percent,
+):
+    captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        credits=credits,
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+
+    samples = usage_samples_from_usage(usage)
+
+    assert len(samples) == 1
+    assert samples[0].pool == "credits"
+    assert samples[0].used_percent == pytest.approx(expected_used_percent)
+
+
 def test_usage_samples_fall_back_for_integer_subclass_credit_duration():
     captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
     usage = AccountUsage(
@@ -1427,7 +1663,7 @@ def test_usage_samples_fall_back_for_integer_subclass_credit_duration():
         captured_at=captured,
         credits=LimitWindow(
             name="credits",
-            remaining=70,
+            percent=70,
             duration_seconds=_BrokenInt(3_600),
         ),
         status=AccountStatus.OK,
@@ -2194,17 +2430,12 @@ def test_usage_samples_skip_window_identity_and_duration_failures():
     assert usage_samples_from_usage(usage) == ()
 
 
-def test_usage_samples_skip_credit_remaining_property_failure():
-    class _ExplodingRemainingWindow(LimitWindow):
-        @property
-        def remaining_percent(self):
-            raise ValueError("synthetic credit marker")
-
+def test_usage_samples_skip_credit_validation_failure():
     usage = AccountUsage(
         account_id="alpha",
         label="Alpha",
         captured_at=datetime(2026, 8, 16, 10, tzinfo=UTC),
-        credits=_ExplodingRemainingWindow(name="credits", percent=75),
+        credits=LimitWindow(name="credits", percent="invalid"),  # type: ignore[arg-type]
         status=AccountStatus.OK,
         backend_used="direct",
     )

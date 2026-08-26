@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import queue
 import signal
 import socket
@@ -148,17 +149,24 @@ def _fake_codex(
     account_plan_type: str | None = None,
     account_email: str | None = None,
     account_credits: str | None = None,
+    account_credits_payload: dict[str, object] | None = None,
+    rate_limits_extra_payload: dict[str, object] | None = None,
     model_id: str = "gpt-5.3-codex-spark",
+    primary_used_percent: int = 17,
+    primary_resets_at: int = 1_780_000_000,
 ) -> str:
     reject_initial = str(reject_initial_account_read)
     plan_field = f", 'planType': {account_plan_type!r}" if account_plan_type else ""
     email_field = f", 'email': {account_email!r}" if account_email else ""
-    credits_field = (
-        f", 'credits': {{'has_credits': True, 'unlimited': False, "
-        f"'balance': {account_credits!r}}}"
-        if account_credits is not None
-        else ""
-    )
+    credits_field = ""
+    if account_credits_payload is not None:
+        credits_field = f", 'credits': {account_credits_payload!r}"
+    elif account_credits is not None:
+        credits_field = (
+            f", 'credits': {{'has_credits': True, 'unlimited': False, "
+            f"'balance': {account_credits!r}}}"
+        )
+    rate_limits_extra = rate_limits_extra_payload or {}
     source = f"""#!/usr/bin/env python3
 import json
 import sys
@@ -195,16 +203,17 @@ for line in sys.stdin:
             "result": {{
                 "rateLimits": {{
                     "primary": {{
-                        "usedPercent": 17,
+                        "usedPercent": {primary_used_percent},
                         "windowDurationMins": 300,
-                        "resetsAt": 1780000000,
+                        "resetsAt": {primary_resets_at},
                     }},
                     "secondary": {{
                         "usedPercent": 42,
                         "windowDurationMins": 10080,
                         "resetsAt": 1780500000,
                     }},
-                }}
+                }},
+                **{rate_limits_extra!r},
             }},
         }}
         print(json.dumps(response), flush=True)
@@ -472,6 +481,162 @@ def test_app_server_preserves_absolute_account_credits(tmp_path):
 
     assert usage.credits is not None
     assert usage.credits.remaining == 794
+
+
+@pytest.mark.parametrize("source_value", ["-1", "NaN", "Inf", "not-a-number"])
+def test_app_server_preserves_present_invalid_account_credits(tmp_path, source_value):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
+    command = _fake_codex(
+        tmp_path / "codex",
+        tmp_path / "requests.json",
+        account_credits=source_value,
+    )
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account, codex_command=command)
+
+    assert usage.status is AccountStatus.OK
+    assert usage.main is not None and len(usage.main.windows) == 2
+    assert usage.credits == LimitWindow(name="credits", source="invalid:credits")
+
+
+def test_app_server_preserves_conflicting_native_credit_sources_as_invalid(tmp_path):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
+    command = _fake_codex(
+        tmp_path / "codex",
+        tmp_path / "requests.json",
+        account_credits_payload={"percent": 80},
+        rate_limits_extra_payload={"creditBalance": {"percent": 70}},
+    )
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account, codex_command=command)
+
+    assert usage.status is AccountStatus.OK
+    assert usage.main is not None and len(usage.main.windows) == 2
+    assert usage.credits == LimitWindow(name="credits", source="invalid:credits")
+
+
+def test_app_server_preserves_secondary_credit_alias_domain_violation(tmp_path):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
+    command = _fake_codex(
+        tmp_path / "codex",
+        tmp_path / "requests.json",
+        account_credits_payload={
+            "remaining": 0.0,
+            "available": -math.ulp(0.0),
+        },
+    )
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account, codex_command=command)
+
+    assert usage.status is AccountStatus.OK
+    assert usage.main is not None and len(usage.main.windows) == 2
+    assert usage.credits == LimitWindow(name="credits", source="invalid:credits")
+
+
+@pytest.mark.parametrize(
+    "reset_payload",
+    [
+        pytest.param(
+            {
+                "reset_at": "2026-09-01T00:00:00Z",
+                "resetAt": "2026-10-01T00:00:00Z",
+            },
+            id="conflict",
+        ),
+        pytest.param(
+            {
+                "reset_at": "not-a-timestamp",
+                "resetAt": "2026-09-01T00:00:00Z",
+            },
+            id="malformed-plus-valid",
+        ),
+    ],
+)
+def test_app_server_preserves_invalid_credit_reset_aliases(tmp_path, reset_payload):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
+    command = _fake_codex(
+        tmp_path / "codex",
+        tmp_path / "requests.json",
+        account_credits_payload={"percent": 80, **reset_payload},
+    )
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account, codex_command=command)
+
+    assert usage.status is AccountStatus.OK
+    assert usage.main is not None and len(usage.main.windows) == 2
+    assert usage.credits == LimitWindow(name="credits", source="invalid:credits")
+
+
+def test_app_server_accepts_equal_credit_reset_alias_instants(tmp_path):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
+    command = _fake_codex(
+        tmp_path / "codex",
+        tmp_path / "requests.json",
+        account_credits_payload={
+            "percent": 80,
+            "reset_at": "2026-09-01T00:00:00Z",
+            "resetAt": "2026-09-01T02:00:00+02:00",
+        },
+    )
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account, codex_command=command)
+
+    assert usage.credits == LimitWindow(
+        name="credits",
+        percent=80,
+        reset_at=datetime(2026, 9, 1, tzinfo=UTC),
+        source="json:credits",
+    )
 
 
 def test_app_server_rejects_normalized_model_identity(tmp_path):

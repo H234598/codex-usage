@@ -7,12 +7,18 @@ from datetime import UTC, datetime, timedelta
 from itertools import islice, pairwise
 from typing import TypeGuard
 
-from .history import MAX_HISTORY_SAMPLES, UsageSample
+from .history import CREDIT_HISTORY_WINDOW_SECONDS, MAX_HISTORY_SAMPLES, UsageSample
+from .usage_limits import FIVE_HOUR_SECONDS, MAIN_POOL_KEY, SPARK_MODEL, WEEKLY_SECONDS
 
 _UNIT_SECONDS = {"minutes": 60, "hours": 3_600, "days": 86_400, "weeks": 604_800}
 _UNIT_LIMITS = {"minutes": 1_440, "hours": 720, "days": 365, "weeks": 365}
 MAX_CONSUMPTION_SAMPLES = MAX_HISTORY_SAMPLES
 MAX_FORECAST_SECONDS = 31_536_000
+EMA60_TIME_CONSTANT_SECONDS = 3_600
+TRACKER_EVIDENCE_POOLS = frozenset((MAIN_POOL_KEY, SPARK_MODEL))
+TRACKER_EVIDENCE_WINDOW_SECONDS = frozenset(
+    (FIVE_HOUR_SECONDS, WEEKLY_SECONDS, CREDIT_HISTORY_WINDOW_SECONDS)
+)
 
 
 @dataclass(frozen=True)
@@ -40,6 +46,131 @@ class ConsumptionWindow:
             }
         except Exception:
             return {}
+
+
+@dataclass(frozen=True)
+class TrackerEvidence:
+    pool: str
+    limit_window_seconds: int
+    reset_generation: str
+    ema_time_constant_seconds: int
+    rate_percentage_points_per_second: float
+    projected_used_percent_at_reset: float
+    coverage: str
+    sample_count: int
+    first_sample_at: datetime
+    last_sample_at: datetime
+
+
+def calculate_tracker_evidence(
+    samples: Iterable[UsageSample], *, now: datetime
+) -> TrackerEvidence | None:
+    _require_aware(now)
+    try:
+        now = datetime.fromtimestamp(datetime.timestamp(now), tz=UTC)
+    except (OSError, OverflowError, TypeError, ValueError) as exc:
+        raise ValueError("now is out of range") from exc
+    try:
+        observations = tuple(islice(samples, MAX_CONSUMPTION_SAMPLES + 1))
+    except TypeError:
+        raise ValueError("samples are invalid") from None
+    if len(observations) > MAX_CONSUMPTION_SAMPLES:
+        raise ValueError("too many samples")
+    if any(not isinstance(sample, UsageSample) for sample in observations):
+        raise ValueError("samples are invalid")
+    if not observations or observations[-1].reset_generation is None:
+        return None
+    if any(sample.captured_at > now for sample in observations):
+        return None
+    if any(
+        current.captured_at <= previous.captured_at
+        for previous, current in pairwise(observations)
+    ):
+        return None
+    reset_generation = observations[-1].reset_generation
+    for index in range(len(observations) - 1, -1, -1):
+        if observations[index].reset_generation != reset_generation:
+            observations = observations[index + 1 :]
+            break
+    if len(observations) < 2:
+        sample = observations[0]
+        if (
+            sample.reset_at is None
+            or sample.pool not in TRACKER_EVIDENCE_POOLS
+            or sample.window_seconds not in TRACKER_EVIDENCE_WINDOW_SECONDS
+            or sample.reset_at <= sample.captured_at
+        ):
+            return None
+        return TrackerEvidence(
+            pool=sample.pool,
+            limit_window_seconds=sample.window_seconds,
+            reset_generation=reset_generation,
+            ema_time_constant_seconds=EMA60_TIME_CONSTANT_SECONDS,
+            rate_percentage_points_per_second=0.0,
+            projected_used_percent_at_reset=float(sample.used_percent),
+            coverage="insufficient",
+            sample_count=1,
+            first_sample_at=sample.captured_at,
+            last_sample_at=sample.captured_at,
+        )
+    first = observations[0]
+    last = observations[-1]
+    if last.reset_at is None:
+        return None
+    if any(sample.reset_at != last.reset_at for sample in observations):
+        return None
+    if any(sample.account_id != first.account_id for sample in observations):
+        return None
+    if any(sample.pool != first.pool for sample in observations):
+        return None
+    if first.pool not in TRACKER_EVIDENCE_POOLS:
+        return None
+    if any(sample.window_seconds != first.window_seconds for sample in observations):
+        return None
+    if first.window_seconds not in TRACKER_EVIDENCE_WINDOW_SECONDS:
+        return None
+    if any(
+        (current.captured_at - previous.captured_at).total_seconds()
+        > EMA60_TIME_CONSTANT_SECONDS
+        for previous, current in pairwise(observations)
+    ):
+        return None
+    if any(
+        float(current.used_percent) <= float(previous.used_percent)
+        for previous, current in pairwise(observations)
+    ):
+        return None
+    elapsed_seconds = (last.captured_at - first.captured_at).total_seconds()
+    if elapsed_seconds <= 0:
+        return None
+    rate = _ema_rate(
+        list(observations),
+        time_constant_seconds=EMA60_TIME_CONSTANT_SECONDS,
+        max_gap_seconds=EMA60_TIME_CONSTANT_SECONDS,
+    )
+    if rate <= 0:
+        return None
+    until_reset_seconds = (last.reset_at - last.captured_at).total_seconds()
+    if until_reset_seconds <= 0:
+        return None
+    projected = min(100.0, float(last.used_percent) + rate * until_reset_seconds)
+    coverage = (
+        "stale"
+        if (now - last.captured_at).total_seconds() > 900
+        else "complete"
+    )
+    return TrackerEvidence(
+        pool=last.pool,
+        limit_window_seconds=last.window_seconds,
+        reset_generation=reset_generation,
+        ema_time_constant_seconds=EMA60_TIME_CONSTANT_SECONDS,
+        rate_percentage_points_per_second=rate,
+        projected_used_percent_at_reset=projected,
+        coverage=coverage,
+        sample_count=len(observations),
+        first_sample_at=first.captured_at,
+        last_sample_at=last.captured_at,
+    )
 
 
 def consumption_lookback_seconds(amount: int, unit: str) -> int:

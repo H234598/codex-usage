@@ -5758,7 +5758,7 @@ Frischeinformationen, Limits, Verbrauch und Resets. Der Vertragstext nannte
 zusätzlich Labels, obwohl der bestehende Allowlist-Regressionstest Labels und
 Provider-Metadaten explizit ausschließt.
 
-`docs/codex-usage-v1.md` beschreibt jetzt korrekt, dass Labels außerhalb des
+`docs/codex-usage-v2.md` beschreibt jetzt korrekt, dass Labels außerhalb des
 Cross-Process-Vertrags bleiben. Keine Produktionsänderung erforderlich;
 bestehende `tests/test_integration_snapshot.py`: 53/53 bestanden.
 

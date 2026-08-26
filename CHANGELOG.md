@@ -1,5 +1,107 @@
 # Changelog
 
+## 0.6.536 - 2026-08-25
+
+### Changed
+
+- Integration-Evidence wird als unveränderliche Generation mit atomarem
+  `current.json`-Pointer, kanonischer Binding-Sidecar und FD-gebundener
+  Lock-/Hashprüfung veröffentlicht und gelesen.
+- Installer und Runtime akzeptieren nur Release 0.6.536; Upgradeprovenienz ist
+  ein vollständig attestierter aktiver 0.6.536-Release oder der attestierte
+  0.6.534-/Schema-2-Recovery-Release. 0.6.535 bleibt inert.
+- Build und Launcher unterdrücken Bytecode mit
+  `PYTHONDONTWRITEBYTECODE=1` plus `python -B`; Releasebäume mit
+  `__pycache__` oder `*.pyc` werden verworfen.
+- Vollständiger Consumer-Handoff dokumentiert kanonischen Payloadpfad,
+  Binding-/Pointerkette, SH/EX-Locks, FD-gebundene Vor-/Nachprüfungen,
+  Größen-/Dateigrenzen, exakte Fenster-Allowlist und bounded GC.
+- Snapshotbau, monotone Publikation, Retention und Pointer-Commit laufen unter
+  derselben Release→Current-EX-Transaktion. Ein einzelner bounded Namespace-
+  Scan verhindert postcommit GC-Wedges und hält jede erfolgreiche Publikation
+  bei höchstens 256 Generationen.
+- Persistente Locks werden ausschließlich aus passwd-Home der effektiven UID
+  abgeleitet; `HOME`, XDG und reale UID wählen keinen alternativen Lockraum.
+- Release-Rotation trennt historische Generationsintegrität von aktueller
+  Active-Trust: Publisher und GC akzeptieren kanonisch hashgebundene Historie,
+  Current-Reader und Rollback-Promotion bleiben streng ans aktive Release
+  gebunden.
+- Recovery entfernt FD-gebunden und bounded sichere
+  `.tmp-current.json-<32-lowercase-hex>`-Crashreste mit 0..4096 Byte nach
+  Create oder Datei-`fsync` unter Release→Current-EX-Sperren vor Publikation,
+  Rollback und Installer-Artefaktscans. Unsichere, malformed oder überzählige
+  Root-Einträge bleiben fail-closed; `current.json` bleibt 1..4096 Byte.
+- Die Credit-Repräsentationsart folgt ausschließlich expliziten Feldern.
+  Endliche nichtnegative Scalar-`remaining`-Werte ohne `limit` und ohne
+  explizites Prozentfeld sind unabhängig vom Zahlenbereich denominatorlose
+  Absolutbeträge. Snapshot und History lassen sie aus; valide Main-Fenster und
+  weitere Accounts bleiben veröffentlichbar. Rohbetrag, erfundener Nenner und
+  Credit-Trend werden nicht veröffentlicht.
+- Der App-Server-Adapter unterscheidet fehlende optionale Credits von einer
+  vorhandenen invaliden Quelle. Negative, nicht endliche oder unparsebare
+  Werte bleiben als sanitisiertes Invalid-Sentinel durch den State-Roundtrip
+  erhalten und stoppen den gesamten atomaren Publish vor dem Current-Commit.
+  Diese Prüfung läuft vor statusabhängiger Limitunterdrückung und gilt deshalb
+  auch für `blocked`, `error` und alle übrigen Accountstatus.
+- Credit-Erkennung sammelt statt First-Match sämtliche nativen Kandidaten aus
+  Top-Level-Aliassen, `rateLimits`, `rate_limits`, jedem bounded
+  `rateLimitsByLimitId`-Eintrag und `account.credits`. Höchstens 50 variable
+  Container und 50 Creditkandidaten werden gelesen; Kandidat 51, eine weitere
+  invalide Quelle oder ein semantischer Konflikt erzeugt das sanitierte
+  Invalid-Sentinel.
+- Alle vorhandenen `used`-, `remaining`-, `limit`- und Prozentfelder sowie ihre
+  Aliasse müssen vollständig übereinstimmen. Denominatorlos ist ausschließlich
+  ein einzelnes logisches `remaining` zulässig; `used+remaining` ohne
+  `limit`/Prozent ist nicht korrelierbar und bleibt fail-closed.
+- Jeder vorhandene numerische Alias wird vor ULP-Vergleich und Reduktion in
+  seiner eigenen Domain validiert: `used`/`remaining` endlich und
+  nichtnegativ, `limit` endlich und strikt positiv, Prozent endlich in
+  `[0,100]`. Ein valider erster Alias kann dadurch einen invaliden zweiten
+  Alias nicht verdecken.
+- Innerhalb jedes Creditkandidaten werden `reset_at` und `resetAt` gemeinsam
+  ausgewertet. Jeder vorhandene Wert muss ein höchstens 64 Zeichen langer,
+  whitespace-exakter, timezone-aware ISO-Zeitstempel sein; beide Aliasse
+  dürfen verschiedene Offsets schreiben, müssen aber denselben UTC-Instant
+  bezeichnen. Malformed oder widersprüchlich bedeutet invalid, Abwesenheit
+  bleibt optional.
+- Float-Konsistenz akzeptiert exakt vier `nextafter`-Schritte und verwirft den
+  fünften. Werte innerhalb `0..limit` behalten ihr echtes Verhältnis; nur eine
+  tatsächliche geringe Überschreitung darf bis zu dieser Grenze auf den
+  Endpoint normalisiert werden. Explizite Prozent- und konsistente
+  limitbasierte Credits behalten damit ihre Projektion, ohne erfundenen
+  Nenner, In-Range-Clamp oder Credittrend.
+
+## 0.6.534 - 2026-08-24
+
+### Changed
+
+- Integration-Snapshot-Publish ist ausschließlich über den festen,
+  attestierten Release-Launcher erreichbar; allgemeiner CLI-Parser und
+  caller-gesteuerte Producerpfade wurden entfernt.
+- Kanonisierung und Publish binden `complete|partial|stale` exakt an das
+  900-Sekunden-Alter des letzten Samples; Prozentkomplemente verwenden nur
+  absolute Toleranz `1e-9`.
+- Aktuelle, Candidate-, Previous- und installer-only Upgrade-Manifeste
+  verlangen ihre exakte 16-Feld-Allowlist. Runtime und Rollback akzeptieren
+  nur 0.6.534/Schema 2; der Installer akzeptiert zusätzlich eng enumeriert
+  0.6.533/Schema 2 und 0.6.532/Schema 1 ausschließlich als Cutoverquelle.
+- Fehlgeschlagene Profil- und Auth-Transaktionen entfernen nur die von ihnen
+  selbst erzeugten, inode-gebundenen privaten Lockdateien, bevor neu erzeugte
+  Verzeichnisbäume zurückgerollt werden.
+
+## 0.6.533 - 2026-08-24
+
+### Changed
+
+- Attestierter Integration-Producer atomar auf Dokument- und Manifestschema 2
+  umgestellt; Projekt, Wheel, Dist-Info, Launcher und Releasebaum tragen
+  gemeinsam Version 0.6.533.
+- Runtime und Rollback akzeptieren nur Schema 2. Ein vollständig attestierter
+  0.6.532-/Schema-1-Release darf einmalig als nicht reaktivierbare
+  Upgradequelle erhalten bleiben.
+- V2-Dokumentvertrag, EMA60-, Reset-, Coverage-, Freshness-, Pool-, Fehlercode-
+  und verifiziertes Releaseverfahren vollständig dokumentiert.
+
 ## 0.6.532 - 2026-08-16
 ### Added
 - Die Warnungstabelle aktualisiert `Spark %` nach jedem Usage-Refresh; sicher

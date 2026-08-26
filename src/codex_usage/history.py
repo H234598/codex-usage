@@ -12,7 +12,13 @@ from pathlib import Path
 from typing import TypeGuard
 
 from .config import default_state_dir
-from .models import AccountStatus, AccountUsage, LimitWindow, UsagePool
+from .models import (
+    AccountStatus,
+    AccountUsage,
+    LimitWindow,
+    UsagePool,
+    credit_window_remaining_percent,
+)
 from .private_io import (
     assert_no_symlink_ancestors,
     ensure_private_directory,
@@ -756,7 +762,7 @@ def _iter_usage_samples(usage: AccountUsage):
         return
     if isinstance(credit, LimitWindow):
         try:
-            remaining_percent = credit.remaining_percent
+            remaining_percent = credit_window_remaining_percent(credit)
         except Exception:
             remaining_percent = None
         if remaining_percent is not None:

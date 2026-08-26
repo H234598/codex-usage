@@ -6,15 +6,20 @@ import errno
 import hashlib
 import importlib.util
 import json
+import marshal
+import math
 import multiprocessing
 import os
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import time
+import tomllib
 import zipfile
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,6 +36,7 @@ TEST_SOURCE_MANIFEST_FILES = (
     "src/codex_usage/consumption.py",
     "src/codex_usage/extractor.py",
     "src/codex_usage/integration_attestation.py",
+    "src/codex_usage/integration_evidence.py",
     "src/codex_usage/integration_entrypoint.py",
     "src/codex_usage/integration_snapshot.py",
     "src/codex_usage/json_utils.py",
@@ -115,6 +121,117 @@ def _roots(tmp_path: Path) -> tuple[Path, Path, Path]:
         path.mkdir(mode=0o700)
         path.chmod(0o700)
     return data_home, state_home, temporary_root
+
+
+def _write_synthetic_schema1_active(*, state_home: Path, data_home: Path) -> bytes:
+    from codex_usage.integration_attestation import _release_tree_sha256
+    from codex_usage.private_io import write_private_text
+
+    integration = state_home / "codex-usage" / "integration"
+    releases = integration / "releases"
+    source_digest = "1" * 64
+    release_id = f"0.6.532-{source_digest[:16]}"
+    release_dir = releases / release_id
+    site_packages = release_dir / "venv/lib/python3.11/site-packages"
+    dist_info = site_packages / "codex_usage_integration_producer-0.6.532.dist-info"
+    package = site_packages / "codex_usage"
+    launcher_path = release_dir / "venv/bin/codex-usage"
+    entrypoint_path = package / "integration_entrypoint.py"
+    wheel_path = release_dir / "producer.whl"
+    record_path = dist_info / "RECORD"
+    metadata_path = dist_info / "METADATA"
+    for directory in (
+        state_home / "codex-usage",
+        integration,
+        releases,
+        release_dir,
+        release_dir / "venv",
+        release_dir / "venv/bin",
+        release_dir / "venv/lib",
+        release_dir / "venv/lib/python3.11",
+        site_packages,
+        package,
+        dist_info,
+    ):
+        directory.mkdir(mode=0o700, exist_ok=True)
+        directory.chmod(0o700)
+
+    entrypoint_payload = b"# synthetic schema-1 entrypoint\n"
+    wheel_payload = b"synthetic schema-1 wheel\n"
+    launcher_payload = (
+        b"#!/bin/sh\nexec /nonexistent/python -B -I -m "
+        b"codex_usage.integration_entrypoint \"$@\"\n"
+    )
+    metadata_payload = (
+        b"Metadata-Version: 2.4\n"
+        b"Name: codex-usage-integration-producer\n"
+        b"Version: 0.6.532\n"
+    )
+
+    def record_digest(payload: bytes) -> str:
+        digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest())
+        return "sha256=" + digest.decode("ascii").rstrip("=")
+
+    metadata_relative = metadata_path.relative_to(site_packages).as_posix()
+    entrypoint_relative = entrypoint_path.relative_to(site_packages).as_posix()
+    record_relative = record_path.relative_to(site_packages).as_posix()
+    record_payload = (
+        f"{entrypoint_relative},{record_digest(entrypoint_payload)},{len(entrypoint_payload)}\n"
+        f"{metadata_relative},{record_digest(metadata_payload)},{len(metadata_payload)}\n"
+        f"{record_relative},,\n"
+    ).encode()
+    for path, payload, mode in (
+        (entrypoint_path, entrypoint_payload, 0o600),
+        (wheel_path, wheel_payload, 0o600),
+        (launcher_path, launcher_payload, 0o700),
+        (metadata_path, metadata_payload, 0o600),
+        (record_path, record_payload, 0o600),
+    ):
+        path.write_bytes(payload)
+        path.chmod(mode)
+
+    manifest = {
+        "schema_version": 1,
+        "version": "0.6.532",
+        "release_id": release_id,
+        "source_manifest_sha256": source_digest,
+        "state_home": str(state_home),
+        "data_home": str(data_home),
+        "release_dir": str(release_dir),
+        "launcher_path": str(launcher_path),
+        "entrypoint_path": str(entrypoint_path),
+        "wheel_path": str(wheel_path),
+        "record_path": str(record_path),
+        "entrypoint_sha256": hashlib.sha256(entrypoint_payload).hexdigest(),
+        "wheel_sha256": hashlib.sha256(wheel_payload).hexdigest(),
+        "record_sha256": hashlib.sha256(record_payload).hexdigest(),
+        "launcher_sha256": hashlib.sha256(launcher_payload).hexdigest(),
+        "release_tree_sha256": _release_tree_sha256(release_dir=release_dir),
+    }
+    active_text = json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n"
+    write_private_text(
+        integration / "active.json",
+        active_text,
+        label="synthetic schema-1 active manifest",
+        mode=0o600,
+    )
+    return active_text.encode("utf-8")
+
+
+def _mutate_manifest_fields(
+    manifest: dict[str, object],
+    mutation: str,
+) -> dict[str, object]:
+    mutated = dict(manifest)
+    if mutation == "unknown":
+        mutated["future_extension"] = "bounded"
+    elif mutation == "secret-like":
+        mutated["access_token"] = "synthetic-only"
+    elif mutation == "missing":
+        mutated.pop("launcher_sha256")
+    else:  # pragma: no cover - parametrization is closed
+        raise AssertionError(mutation)
+    return mutated
 
 
 def test_no_symlink_ancestors_scans_after_missing_segment(tmp_path):
@@ -291,6 +408,165 @@ def _install(tmp_path: Path):
         data_home,
         state_home,
     )
+
+
+def _patch_release_identity(monkeypatch, version: str) -> None:
+    from codex_usage import integration_attestation, integration_installer
+
+    current_version = integration_installer.RELEASE_VERSION
+    generated_pyproject = integration_installer._GENERATED_PYPROJECT.replace(
+        f'version = "{current_version}"',
+        f'version = "{version}"',
+    )
+    monkeypatch.setattr(integration_installer, "RELEASE_VERSION", version)
+    monkeypatch.setattr(
+        integration_installer,
+        "DIST_INFO_PREFIX",
+        f"codex_usage_integration_producer-{version}.dist-info",
+    )
+    monkeypatch.setattr(
+        integration_installer,
+        "EXPECTED_WHEEL_NAME",
+        f"codex_usage_integration_producer-{version}-py3-none-any.whl",
+    )
+    monkeypatch.setattr(
+        integration_installer,
+        "_GENERATED_PYPROJECT",
+        generated_pyproject,
+    )
+    monkeypatch.setattr(integration_attestation, "_EXPECTED_VERSION", version)
+    monkeypatch.setattr(
+        integration_attestation,
+        "_DIST_INFO_PREFIX",
+        f"codex_usage_integration_producer-{version}.dist-info",
+    )
+
+
+def captured_builder_environment() -> dict[str, str]:
+    from codex_usage.integration_installer import _sanitized_build_environment
+
+    return _sanitized_build_environment()
+
+
+def captured_python_argv(tmp_path: Path) -> tuple[str, ...]:
+    from codex_usage import integration_installer
+
+    capture = tmp_path / "captured-python-argv"
+    executable = tmp_path / "capture-python"
+    executable.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' \"$@\" > \"$CAPTURE_PATH\"\n"
+        "printf '%s\\n' "
+        "'{\"backend\":\"setuptools.command.bdist_wheel.bdist_wheel\","
+        "\"setuptools\":\"77.0\"}'\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o700)
+    environment = integration_installer._sanitized_build_environment()
+    environment["CAPTURE_PATH"] = str(capture)
+    result = integration_installer._run_builder_preflight(
+        python_executable=executable,
+        environment=environment,
+    )
+    assert result.returncode == 0
+    return tuple(capture.read_text(encoding="utf-8").splitlines())
+
+
+def install_verified_06534_source(tmp_path: Path):
+    from codex_usage import integration_installer
+
+    tmp_path.mkdir(mode=0o700)
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    source_root = _temporary_source_copy(tmp_path)
+    with pytest.MonkeyPatch.context() as context:
+        _patch_release_identity(context, "0.6.534")
+        previous = integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    assert previous.version == "0.6.534"
+    from codex_usage.integration_attestation import _release_tree_sha256
+    from codex_usage.private_io import write_private_text
+
+    previous.launcher_path.write_text(
+        previous.launcher_path.read_text(encoding="utf-8").replace(
+            " PYTHONDONTWRITEBYTECODE=1",
+            "",
+        ),
+        encoding="utf-8",
+    )
+    previous.launcher_path.chmod(0o700)
+    active_path = state_home / "codex-usage" / "integration" / "active.json"
+    active = json.loads(active_path.read_text(encoding="utf-8"))
+    active["launcher_sha256"] = hashlib.sha256(
+        previous.launcher_path.read_bytes()
+    ).hexdigest()
+    active["release_tree_sha256"] = _release_tree_sha256(
+        release_dir=previous.release_dir
+    )
+    write_private_text(
+        active_path,
+        json.dumps(active, sort_keys=True, separators=(",", ":")) + "\n",
+        label="historical 0.6.534 active manifest",
+        mode=0o600,
+    )
+    return integration_installer.install_release(
+        source_root=source_root,
+        state_home=state_home,
+        data_home=data_home,
+        python_executable=Path(sys.executable),
+        temporary_root=temporary_root,
+    )
+
+
+def verify_compromised_06535_runtime(tmp_path: Path):
+    from codex_usage import integration_attestation, integration_installer
+
+    tmp_path.mkdir(mode=0o700)
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    source_root = _temporary_source_copy(tmp_path)
+    with pytest.MonkeyPatch.context() as context:
+        _patch_release_identity(context, "0.6.535")
+        compromised = integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    pycache = compromised.release_dir / "venv/lib/__pycache__"
+    pycache.mkdir(mode=0o700)
+    (pycache / "compromised.pyc").write_bytes(b"compromised")
+    return integration_attestation.verify_active_release(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=compromised.entrypoint_path,
+    )
+
+
+def verified_lock_targets(state_home: Path) -> set[str]:
+    from codex_usage import integration_evidence, private_io
+
+    integration = state_home / "codex-usage" / "integration"
+    lock_root = private_io._private_lock_root()
+    root_item = lock_root.lstat()
+    assert stat.S_ISDIR(root_item.st_mode)
+    assert root_item.st_uid == os.getuid()
+    assert stat.S_IMODE(root_item.st_mode) == 0o700
+    verified: set[str] = set()
+    for logical_name in ("producer-install", "current.json"):
+        lock_name = integration_evidence._evidence_lock_name(integration / logical_name)
+        item = (lock_root / lock_name).lstat()
+        assert stat.S_ISREG(item.st_mode)
+        assert item.st_uid == os.getuid()
+        assert stat.S_IMODE(item.st_mode) == 0o600
+        assert item.st_nlink == 1
+        assert 0 <= item.st_size <= 4096
+        verified.add(logical_name)
+    return verified
 
 
 def test_temporary_source_copy_has_exact_manifest_and_no_untracked_input(tmp_path, monkeypatch):
@@ -644,20 +920,456 @@ def test_foreign_tree_digest_detects_same_size_bytes_and_symlink_target(tmp_path
     assert _foreign_tree_digest(root=root) != linked_first
 
 
-def test_release_version_is_06532_in_project_and_package():
-    assert 'version = "0.6.532"' in (PROJECT_ROOT / "pyproject.toml").read_text(
-        encoding="utf-8"
+def test_release_version_is_06536_across_project_surfaces():
+    from codex_usage import __version__, integration_installer
+
+    project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    applet = json.loads(
+        (PROJECT_ROOT / "files/codex-usage@H234598/metadata.json").read_text(
+            encoding="utf-8"
+        )
     )
-    assert '__version__ = "0.6.532"' in (
-        PROJECT_ROOT / "src" / "codex_usage" / "__init__.py"
-    ).read_text(encoding="utf-8")
+
+    assert integration_installer.RELEASE_VERSION == "0.6.536"
+    assert project["project"]["version"] == "0.6.536"
+    assert __version__ == "0.6.536"
+    assert applet["version"] == "0.6.536"
+    assert applet["comments"] == "Version: 0.6.536"
+
+
+def test_runtime_rejects_compromised_06535_but_installer_upgrades_verified_06534(
+    tmp_path,
+):
+    from codex_usage.integration_attestation import IntegrationAttestationUnavailable
+
+    assert install_verified_06534_source(tmp_path / "verified-06534").version == "0.6.536"
+    with pytest.raises(IntegrationAttestationUnavailable):
+        verify_compromised_06535_runtime(tmp_path / "compromised-06535")
+
+
+def _compromised_06535_with_previous_06534(tmp_path: Path):
+    from codex_usage import integration_installer
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    source_root = _temporary_source_copy(tmp_path)
+    with pytest.MonkeyPatch.context() as context:
+        _patch_release_identity(context, "0.6.534")
+        previous = integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    with pytest.MonkeyPatch.context() as context:
+        _patch_release_identity(context, "0.6.535")
+        compromised = integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    pycache = compromised.release_dir / "venv/lib/__pycache__"
+    pycache.mkdir(mode=0o700)
+    (pycache / "compromised.pyc").write_bytes(b"compromised")
+    integration = state_home / "codex-usage" / "integration"
+    assert json.loads((integration / "previous.json").read_bytes())["version"] == "0.6.534"
+    return (
+        previous,
+        compromised,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+    )
+
+
+def test_installer_recovers_compromised_06535_only_from_attested_previous_06534(
+    tmp_path,
+):
+    from codex_usage import integration_attestation, integration_installer
+
+    (
+        previous,
+        compromised,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+    ) = _compromised_06535_with_previous_06534(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    previous_path = integration / "previous.json"
+    previous_before = previous_path.read_bytes()
+    with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
+        integration_attestation._verify_manifest(
+            manifest_path=integration / "active.json",
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=None,
+        )
+
+    installed = integration_installer.install_release(
+        source_root=source_root,
+        state_home=state_home,
+        data_home=data_home,
+        python_executable=Path(sys.executable),
+        temporary_root=temporary_root,
+    )
+
+    assert installed.version == "0.6.536"
+    assert previous_path.read_bytes() == previous_before
+    assert json.loads(previous_before)["release_id"] == previous.release_dir.name
+    assert json.loads(previous_before)["release_id"] != compromised.release_dir.name
+    assert integration_attestation.verify_active_release(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=installed.entrypoint_path,
+    ) == installed
+
+
+_COMPROMISED_06535_MARKER_MUTATIONS = (
+    "extra-field",
+    "missing-field",
+    "schema-version-value",
+    "schema-version-float",
+    "version-value",
+    "version-type",
+    "state-home-value",
+    "state-home-type",
+    "data-home-value",
+    "data-home-type",
+    "source-digest-value",
+    "source-digest-type",
+    "source-digest-uppercase",
+    "source-digest-short",
+    "release-id-value",
+    "release-id-type",
+    "release-dir-type",
+    "release-dir-path",
+    "launcher-path-type",
+    "launcher-path-name",
+    "entrypoint-path-type",
+    "entrypoint-path-name",
+    "entrypoint-path-python-version",
+    "record-path-type",
+    "record-path-version",
+    "record-path-python-version",
+    "wheel-path-type",
+    "wheel-path-name",
+    "entrypoint-digest-type",
+    "entrypoint-digest-uppercase",
+    "launcher-digest-type",
+    "launcher-digest-uppercase",
+    "record-digest-type",
+    "record-digest-uppercase",
+    "wheel-digest-type",
+    "wheel-digest-uppercase",
+    "release-tree-digest-type",
+    "release-tree-digest-uppercase",
+)
+
+
+def _mutate_compromised_06535_marker(
+    manifest: dict[str, object],
+    mutation: str,
+) -> None:
+    release_dir = Path(str(manifest["release_dir"]))
+    site_packages = Path(str(manifest["record_path"])).parent.parent
+    digest_field = mutation.removesuffix("-type").removesuffix("-uppercase")
+    digest_fields = {
+        "entrypoint-digest": "entrypoint_sha256",
+        "launcher-digest": "launcher_sha256",
+        "record-digest": "record_sha256",
+        "wheel-digest": "wheel_sha256",
+        "release-tree-digest": "release_tree_sha256",
+    }
+    if mutation == "extra-field":
+        manifest["untrusted_recovery_hint"] = True
+    elif mutation == "missing-field":
+        del manifest["launcher_sha256"]
+    elif mutation == "schema-version-value":
+        manifest["schema_version"] = 1
+    elif mutation == "schema-version-float":
+        manifest["schema_version"] = 2.0
+    elif mutation == "version-value":
+        manifest["version"] = "0.6.534"
+    elif mutation == "version-type":
+        manifest["version"] = 535
+    elif mutation == "state-home-value":
+        manifest["state_home"] = str(Path(str(manifest["state_home"])).parent)
+    elif mutation == "state-home-type":
+        manifest["state_home"] = 1
+    elif mutation == "data-home-value":
+        manifest["data_home"] = str(Path(str(manifest["data_home"])).parent)
+    elif mutation == "data-home-type":
+        manifest["data_home"] = 1
+    elif mutation == "source-digest-value":
+        manifest["source_manifest_sha256"] = "0" * 64
+    elif mutation == "source-digest-type":
+        manifest["source_manifest_sha256"] = 1
+    elif mutation == "source-digest-uppercase":
+        manifest["source_manifest_sha256"] = "A" * 64
+    elif mutation == "source-digest-short":
+        manifest["source_manifest_sha256"] = "a" * 63
+    elif mutation == "release-id-value":
+        manifest["release_id"] = "0.6.535-0000000000000000"
+    elif mutation == "release-id-type":
+        manifest["release_id"] = 1
+    elif mutation == "release-dir-type":
+        manifest["release_dir"] = 1
+    elif mutation == "release-dir-path":
+        manifest["release_dir"] = str(release_dir.parent / "0.6.535-wrong")
+    elif mutation == "launcher-path-type":
+        manifest["launcher_path"] = 1
+    elif mutation == "launcher-path-name":
+        manifest["launcher_path"] = str(release_dir / "venv/bin/not-codex-usage")
+    elif mutation == "entrypoint-path-type":
+        manifest["entrypoint_path"] = 1
+    elif mutation == "entrypoint-path-name":
+        manifest["entrypoint_path"] = str(
+            site_packages / "codex_usage/not-integration-entrypoint.py"
+        )
+    elif mutation == "entrypoint-path-python-version":
+        manifest["entrypoint_path"] = str(
+            release_dir
+            / "venv/lib/not-python/site-packages/codex_usage/integration_entrypoint.py"
+        )
+    elif mutation == "record-path-type":
+        manifest["record_path"] = 1
+    elif mutation == "record-path-version":
+        manifest["record_path"] = str(
+            site_packages
+            / "codex_usage_integration_producer-0.6.536.dist-info/RECORD"
+        )
+    elif mutation == "record-path-python-version":
+        manifest["record_path"] = str(
+            release_dir
+            / "venv/lib/not-python/site-packages/"
+            "codex_usage_integration_producer-0.6.535.dist-info/RECORD"
+        )
+    elif mutation == "wheel-path-type":
+        manifest["wheel_path"] = 1
+    elif mutation == "wheel-path-name":
+        manifest["wheel_path"] = str(release_dir / "not-producer.whl")
+    elif digest_field in digest_fields:
+        manifest[digest_fields[digest_field]] = (
+            1 if mutation.endswith("-type") else "A" * 64
+        )
+    else:  # pragma: no cover - parameter table is closed above
+        raise AssertionError(mutation)
+
+
+@pytest.mark.parametrize("mutation", _COMPROMISED_06535_MARKER_MUTATIONS)
+def test_installer_recovery_rejects_malformed_compromised_active_marker_without_mutation(
+    tmp_path,
+    mutation,
+):
+    from codex_usage import integration_installer
+    from codex_usage.private_io import write_private_text
+
+    (
+        _,
+        _,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+    ) = _compromised_06535_with_previous_06534(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    manifest = json.loads(active_path.read_bytes())
+    _mutate_compromised_06535_marker(manifest, mutation)
+    write_private_text(
+        active_path,
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+        label="malformed compromised active integration manifest",
+        mode=0o600,
+    )
+    active_before = active_path.read_bytes()
+    previous_before = previous_path.read_bytes()
+    releases_before = {path.name for path in (integration / "releases").iterdir()}
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+
+    assert active_path.read_bytes() == active_before
+    assert previous_path.read_bytes() == previous_before
+    assert {path.name for path in (integration / "releases").iterdir()} == releases_before
+
+
+@pytest.mark.parametrize("mutation", ["unknown-field", "forbidden-pyc"])
+def test_installer_recovery_rejects_invalid_previous_without_mutation(
+    tmp_path,
+    mutation,
+):
+    from codex_usage import integration_installer
+    from codex_usage.private_io import write_private_text
+
+    (
+        previous,
+        _,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+    ) = _compromised_06535_with_previous_06534(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    if mutation == "unknown-field":
+        manifest = json.loads(previous_path.read_bytes())
+        manifest["untrusted_upgrade_fallback"] = True
+        write_private_text(
+            previous_path,
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+            label="malicious previous integration manifest",
+            mode=0o600,
+        )
+    else:
+        pycache = previous.release_dir / "venv/lib/__pycache__"
+        pycache.mkdir(mode=0o700)
+        (pycache / "previous.pyc").write_bytes(b"forbidden")
+    active_before = active_path.read_bytes()
+    previous_before = previous_path.read_bytes()
+    releases_before = {
+        path.name for path in (integration / "releases").iterdir()
+    }
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+
+    assert active_path.read_bytes() == active_before
+    assert previous_path.read_bytes() == previous_before
+    assert {
+        path.name for path in (integration / "releases").iterdir()
+    } == releases_before
+
+
+@pytest.mark.parametrize("mutation", ["version-06533", "schema1"])
+def test_installer_recovery_never_uses_legacy_active_as_fallback(
+    tmp_path,
+    mutation,
+):
+    from codex_usage import integration_installer
+    from codex_usage.private_io import write_private_text
+
+    (
+        _,
+        _,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+    ) = _compromised_06535_with_previous_06534(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    manifest = json.loads(active_path.read_bytes())
+    if mutation == "version-06533":
+        manifest["version"] = "0.6.533"
+    else:
+        manifest["schema_version"] = 1
+    write_private_text(
+        active_path,
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+        label="legacy active integration manifest",
+        mode=0o600,
+    )
+    active_before = active_path.read_bytes()
+    previous_before = previous_path.read_bytes()
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+
+    assert active_path.read_bytes() == active_before
+    assert previous_path.read_bytes() == previous_before
+
+
+def test_installer_recovery_build_failure_preserves_active_and_previous(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+
+    (
+        _,
+        _,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+    ) = _compromised_06535_with_previous_06534(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    previous_before = previous_path.read_bytes()
+
+    def fail_build(**_kwargs):
+        raise OSError("synthetic recovery build failure")
+
+    monkeypatch.setattr(integration_installer, "_build_verified_wheel", fail_build)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+
+    assert active_path.read_bytes() == active_before
+    assert previous_path.read_bytes() == previous_before
+
+
+def test_release_tree_rejects_pyc_and_builder_invokes_python_with_b_and_env(tmp_path):
+    from codex_usage.integration_attestation import (
+        IntegrationAttestationUnavailable,
+        _release_tree_sha256,
+    )
+
+    release_tree = tmp_path / "release-tree"
+    pycache = release_tree / "__pycache__"
+    pycache.mkdir(mode=0o700, parents=True)
+    (pycache / "payload.pyc").write_bytes(b"bytecode")
+
+    with pytest.raises(IntegrationAttestationUnavailable):
+        _release_tree_sha256(release_dir=release_tree)
+    assert captured_builder_environment()["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert captured_python_argv(tmp_path)[:2] == ("-B", "-I")
+
+
+def test_installer_bootstraps_exact_evidence_lock_root_and_two_inodes(tmp_path):
+    _, _, state_home = _install(tmp_path)
+
+    assert verified_lock_targets(state_home) == {"producer-install", "current.json"}
 
 
 def test_install_creates_attested_private_active_release(tmp_path):
     release, data_home, state_home = _install(tmp_path)
     from codex_usage.integration_attestation import verify_active_release
 
-    assert release.version == "0.6.532"
+    assert release.version == "0.6.536"
+    assert release.release_dir.name.startswith("0.6.536-")
     assert release.launcher_path.name == "codex-usage"
     assert stat.S_IMODE(release.launcher_path.lstat().st_mode) == 0o700
     verified = verify_active_release(
@@ -671,7 +1383,12 @@ def test_install_creates_attested_private_active_release(tmp_path):
             encoding="utf-8"
         )
     )
-    assert active["version"] == "0.6.532"
+    assert active["schema_version"] == 2
+    assert active["version"] == "0.6.536"
+    assert active["release_id"] == release.release_dir.name
+    assert Path(active["record_path"]).parent.name == (
+        "codex_usage_integration_producer-0.6.536.dist-info"
+    )
     assert active["launcher_sha256"] == release.launcher_sha256
     assert active["release_tree_sha256"] == release.release_tree_sha256
     integration = state_home / "codex-usage" / "integration"
@@ -744,7 +1461,8 @@ def test_find_site_packages_rejects_python_directory_swap_before_open(
     assert (old_python / "site-packages").is_dir()
 
 
-def test_attestation_requires_exact_integer_schema_version(tmp_path):
+@pytest.mark.parametrize("schema_version", [1, True, 2.0, "2"])
+def test_attestation_requires_exact_integer_schema_version(tmp_path, schema_version):
     from codex_usage.integration_attestation import (
         IntegrationAttestationUnavailable,
         verify_active_release,
@@ -761,12 +1479,39 @@ def test_attestation_requires_exact_integer_schema_version(tmp_path):
         == release
     )
     manifest = json.loads(active_path.read_text(encoding="utf-8"))
-    manifest["schema_version"] = True
+    assert manifest["schema_version"] == 2
+    manifest["schema_version"] = schema_version
     active_path.write_text(
         json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
         encoding="utf-8",
     )
     before = active_path.read_bytes()
+    with pytest.raises(IntegrationAttestationUnavailable):
+        verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release.entrypoint_path,
+        )
+    assert active_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("mutation", ["unknown", "secret-like", "missing"])
+def test_active_manifest_requires_exact_canonical_fields(tmp_path, mutation):
+    from codex_usage.integration_attestation import (
+        IntegrationAttestationUnavailable,
+        verify_active_release,
+    )
+
+    release, data_home, state_home = _install(tmp_path)
+    active_path = state_home / "codex-usage" / "integration" / "active.json"
+    manifest = json.loads(active_path.read_text(encoding="utf-8"))
+    mutated = _mutate_manifest_fields(manifest, mutation)
+    active_path.write_text(
+        json.dumps(mutated, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    before = active_path.read_bytes()
+
     with pytest.raises(IntegrationAttestationUnavailable):
         verify_active_release(
             state_home=state_home,
@@ -828,6 +1573,1419 @@ def test_source_drift_before_active_swap_keeps_prior_active_release(tmp_path, mo
     )
 
 
+def _exit_after_pointer_temp_create_or_fsync(
+    integration_text: str,
+    index: int,
+    crash_point: str,
+) -> None:
+    integration_fd = os.open(
+        integration_text,
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
+    name = f".tmp-current.json-{index:032x}"
+    fd = os.open(
+        name,
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+        dir_fd=integration_fd,
+    )
+    if crash_point == "create":
+        os._exit(77)
+    if crash_point != "fsync":
+        os._exit(92)
+    if os.write(fd, b"{}") != 2:
+        os._exit(91)
+    os.fsync(fd)
+    os._exit(77)
+
+
+def _leave_pointer_temp_crash_debris(
+    integration: Path,
+    count: int,
+    crash_point: str,
+) -> None:
+    context = multiprocessing.get_context("fork")
+    for index in range(count):
+        process = context.Process(
+            target=_exit_after_pointer_temp_create_or_fsync,
+            args=(str(integration), index, crash_point),
+        )
+        process.start()
+        process.join(timeout=10)
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=10)
+        assert process.exitcode == 77
+
+
+def _try_current_lock(state_home_text: str, result) -> None:
+    from codex_usage.private_io import private_path_lock
+
+    current = Path(state_home_text) / "codex-usage/integration/current.json"
+    try:
+        with private_path_lock(
+            current,
+            timeout_seconds=0,
+            label="test current lock",
+            create=False,
+        ):
+            result.put("acquired")
+    except TimeoutError:
+        result.put("busy")
+
+
+def _prepared_active_transaction(tmp_path: Path, operation: str) -> SimpleNamespace:
+    from codex_usage import integration_installer
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    write_private_text(
+        previous_path,
+        active_before.decode("utf-8") + "\n",
+        label="test previous manifest",
+        mode=0o600,
+    )
+    previous_before = previous_path.read_bytes()
+
+    if operation == "install":
+        second_root = tmp_path / "atomic-install"
+        second_root.mkdir(mode=0o700)
+        second_source = _temporary_source_copy(second_root)
+        second_entrypoint = second_source / "src/codex_usage/integration_snapshot.py"
+        second_entrypoint.write_bytes(
+            second_entrypoint.read_bytes() + b"\n# atomic release\n"
+        )
+        second_temporary = second_root / "temporary"
+        second_temporary.mkdir(mode=0o700)
+
+        def run():
+            return integration_installer.install_release(
+                source_root=second_source,
+                state_home=state_home,
+                data_home=data_home,
+                python_executable=Path(sys.executable),
+                temporary_root=second_temporary,
+            )
+
+    elif operation == "rollback":
+
+        def run():
+            return integration_installer.rollback_active_release(
+                state_home=state_home,
+                data_home=data_home,
+            )
+
+    else:
+        raise AssertionError("invalid transaction operation")
+
+    return SimpleNamespace(
+        release=release,
+        data_home=data_home,
+        state_home=state_home,
+        integration=integration,
+        active_path=active_path,
+        previous_path=previous_path,
+        active_before=active_before,
+        previous_before=previous_before,
+        run=run,
+    )
+
+
+@pytest.mark.parametrize("operation", ("install", "rollback"))
+@pytest.mark.parametrize("crash_point", ("create", "fsync"))
+def test_install_and_rollback_recover_sixty_one_pointer_temp_crashes_before_scan(
+    tmp_path,
+    monkeypatch,
+    operation,
+    crash_point,
+):
+    """Would fail if 61 real pointer crashes still wedged root scan at entry 65."""
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, operation)
+    _leave_pointer_temp_crash_debris(prepared.integration, 61, crash_point)
+    assert len(list(os.scandir(prepared.integration))) == 65
+    assert len(
+        [
+            entry
+            for entry in os.scandir(prepared.integration)
+            if entry.name.startswith(".tmp-current.json-")
+        ]
+    ) == 61
+    assert {
+        entry.stat(follow_symlinks=False).st_size
+        for entry in os.scandir(prepared.integration)
+        if entry.name.startswith(".tmp-current.json-")
+    } == {0 if crash_point == "create" else 2}
+    real_scan = integration_installer._active_transaction_artifacts
+    observed: list[tuple[int, int]] = []
+
+    def track_scan(**kwargs):
+        entries = list(os.scandir(kwargs["parent_fd"]))
+        observed.append(
+            (
+                len(entries),
+                sum(
+                    entry.name.startswith(".tmp-current.json-")
+                    for entry in entries
+                ),
+            )
+        )
+        return real_scan(**kwargs)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_active_transaction_artifacts",
+        track_scan,
+    )
+
+    prepared.run()
+
+    assert observed == [(4, 0)]
+    assert not any(
+        entry.name.startswith(".tmp-current.json-")
+        for entry in os.scandir(prepared.integration)
+    )
+
+
+@pytest.mark.parametrize("operation", ("install", "rollback"))
+def test_install_and_rollback_hold_current_exclusive_before_recovery_scan(
+    tmp_path,
+    monkeypatch,
+    operation,
+):
+    """Would fail if recovery ran under Release EX without Current EX."""
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, operation)
+    real_recover = integration_installer._recover_active_transactions
+    observed: list[str] = []
+
+    def probe_current_lock(**kwargs):
+        context = multiprocessing.get_context("spawn")
+        result = context.Queue()
+        process = context.Process(
+            target=_try_current_lock,
+            args=(str(prepared.state_home), result),
+        )
+        process.start()
+        try:
+            observed.append(result.get(timeout=10))
+        finally:
+            process.join(timeout=10)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=10)
+        assert process.exitcode == 0
+        return real_recover(**kwargs)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_recover_active_transactions",
+        probe_current_lock,
+    )
+
+    prepared.run()
+
+    assert observed == ["busy"]
+
+
+def _write_active_transaction_artifact(path: Path, payload: bytes = b"stale") -> None:
+    path.write_bytes(payload)
+    path.chmod(0o600)
+
+
+def _write_bound_stale_transaction_artifact(
+    *,
+    integration: Path,
+    active_path: Path,
+    index: int,
+    payload: bytes = b"stale",
+) -> Path:
+    source = integration / f"candidate-source-{index}"
+    _write_active_transaction_artifact(source, payload)
+    candidate = source.stat()
+    prior = active_path.stat()
+    artifact = integration / (
+        f".active.json.publish-install-{5000 + index}-{index:016x}-"
+        f"c{candidate.st_dev:x}-{candidate.st_ino:x}-"
+        f"p{prior.st_dev:x}-{prior.st_ino:x}"
+    )
+    source.rename(artifact)
+    return artifact
+
+
+def _write_forged_bound_transaction_artifact(
+    *,
+    integration: Path,
+    active_path: Path,
+    transaction_kind: str,
+    payload: bytes,
+) -> tuple[Path, tuple[int, int]]:
+    source = integration / "foreign-artifact-source"
+    _write_active_transaction_artifact(source, payload)
+    forged = source.stat()
+    active = active_path.stat()
+    artifact = integration / (
+        f".active.json.publish-{transaction_kind}-6000-fedcba9876543210-"
+        f"c{forged.st_dev:x}-{forged.st_ino:x}-"
+        f"p{active.st_dev:x}-{active.st_ino:x}"
+    )
+    source.rename(artifact)
+    return artifact, (forged.st_dev, forged.st_ino)
+
+
+def test_final_install_attestation_failure_restores_active_and_preserves_previous(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+    from codex_usage.integration_attestation import IntegrationAttestationUnavailable
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    write_private_text(
+        previous_path,
+        active_before.decode("utf-8") + "\n",
+        label="test previous manifest",
+        mode=0o600,
+    )
+    previous_before = previous_path.read_bytes()
+    second_root = tmp_path / "post-swap-install"
+    second_root.mkdir(mode=0o700)
+    second_source = _temporary_source_copy(second_root)
+    second_entrypoint = second_source / "src/codex_usage/integration_snapshot.py"
+    second_entrypoint.write_bytes(second_entrypoint.read_bytes() + b"\n# second release\n")
+    second_temporary = second_root / "temporary"
+    second_temporary.mkdir(mode=0o700)
+    original_verify = integration_installer._verify_manifest
+    active_verifications = 0
+
+    def fail_final_active_attestation(*args, **kwargs):
+        nonlocal active_verifications
+        if kwargs["manifest_path"] == active_path:
+            active_verifications += 1
+            if active_verifications == 2:
+                raise IntegrationAttestationUnavailable()
+        return original_verify(*args, **kwargs)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_verify_manifest",
+        fail_final_active_attestation,
+    )
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.install_release(
+            source_root=second_source,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=second_temporary,
+        )
+
+    assert active_verifications == 2
+    assert active_path.read_bytes() == active_before
+    assert previous_path.read_bytes() == previous_before
+    assert original_verify(
+        manifest_path=active_path,
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=release.entrypoint_path,
+    ) == release
+
+
+def test_final_rollback_attestation_failure_restores_active_and_preserves_previous(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+    from codex_usage.integration_attestation import IntegrationAttestationUnavailable
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    write_private_text(
+        previous_path,
+        active_before.decode("utf-8") + "\n",
+        label="test previous manifest",
+        mode=0o600,
+    )
+    previous_before = previous_path.read_bytes()
+    original_verify = integration_installer._verify_manifest
+
+    def fail_final_active_attestation(*args, **kwargs):
+        if kwargs["manifest_path"] == active_path:
+            raise IntegrationAttestationUnavailable()
+        return original_verify(*args, **kwargs)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_verify_manifest",
+        fail_final_active_attestation,
+    )
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.rollback_active_release(
+            state_home=state_home,
+            data_home=data_home,
+        )
+
+    assert active_path.read_bytes() == active_before
+    assert previous_path.read_bytes() == previous_before
+    assert original_verify(
+        manifest_path=active_path,
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=release.entrypoint_path,
+    ) == release
+
+
+def test_failed_active_restore_raises_cleanup_error_and_keeps_failure_evidence(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+    from codex_usage.integration_attestation import IntegrationAttestationUnavailable
+    from codex_usage.private_io import write_private_text
+
+    _, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    write_private_text(
+        previous_path,
+        active_before.decode("utf-8") + "\n",
+        label="test previous manifest",
+        mode=0o600,
+    )
+    previous_before = previous_path.read_bytes()
+    original_verify = integration_installer._verify_manifest
+
+    def fail_final_active_attestation(*args, **kwargs):
+        if kwargs["manifest_path"] == active_path:
+            raise IntegrationAttestationUnavailable()
+        return original_verify(*args, **kwargs)
+
+    def fail_active_restore(*_args, **_kwargs):
+        raise OSError("synthetic restore failure")
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_verify_manifest",
+        fail_final_active_attestation,
+    )
+    monkeypatch.setattr(
+        integration_installer,
+        "_rollback_active_publish",
+        fail_active_restore,
+    )
+    with pytest.raises(integration_installer.IntegrationCleanupError) as error:
+        integration_installer.rollback_active_release(
+            state_home=state_home,
+            data_home=data_home,
+        )
+
+    assert isinstance(error.value.__cause__, OSError)
+    assert active_path.read_bytes() == previous_before
+    assert active_path.read_bytes() != active_before
+    assert previous_path.read_bytes() == previous_before
+
+
+@pytest.mark.parametrize("operation", ["install", "rollback"])
+@pytest.mark.parametrize("capture_fault", ["oserror", "mode_drift"])
+def test_post_swap_identity_capture_failure_restores_active_and_preserves_previous(
+    tmp_path, monkeypatch, operation, capture_fault
+):
+    from codex_usage import integration_installer
+    from codex_usage.integration_attestation import verify_active_release
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    write_private_text(
+        previous_path,
+        active_before.decode("utf-8") + "\n",
+        label="test previous manifest",
+        mode=0o600,
+    )
+    previous_before = previous_path.read_bytes()
+
+    if operation == "install":
+        second_root = tmp_path / f"capture-{capture_fault}-install"
+        second_root.mkdir(mode=0o700)
+        second_source = _temporary_source_copy(second_root)
+        second_entrypoint = second_source / "src/codex_usage/integration_snapshot.py"
+        second_entrypoint.write_bytes(
+            second_entrypoint.read_bytes() + b"\n# identity capture release\n"
+        )
+        second_temporary = second_root / "temporary"
+        second_temporary.mkdir(mode=0o700)
+
+        def run_operation():
+            return integration_installer.install_release(
+                source_root=second_source,
+                state_home=state_home,
+                data_home=data_home,
+                python_executable=Path(sys.executable),
+                temporary_root=second_temporary,
+            )
+
+    else:
+
+        def run_operation():
+            return integration_installer.rollback_active_release(
+                state_home=state_home,
+                data_home=data_home,
+            )
+
+    original_file_identity = integration_installer._file_identity
+    fault_injected = False
+
+    def fail_published_identity_capture(path):
+        nonlocal fault_injected
+        if (
+            path == active_path
+            and active_path.read_bytes() != active_before
+            and not fault_injected
+        ):
+            fault_injected = True
+            if capture_fault == "oserror":
+                raise OSError("synthetic active identity capture failure")
+            active_path.chmod(0o644)
+        return original_file_identity(path)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_file_identity",
+        fail_published_identity_capture,
+    )
+    expected_error = (
+        integration_installer.IntegrationInstallError
+        if capture_fault == "oserror"
+        else integration_installer.IntegrationCleanupError
+    )
+    with pytest.raises(expected_error):
+        run_operation()
+
+    assert fault_injected
+    assert previous_path.read_bytes() == previous_before
+    if capture_fault == "oserror":
+        assert active_path.read_bytes() == active_before
+        assert stat.S_IMODE(active_path.stat().st_mode) == 0o600
+        assert verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release.entrypoint_path,
+        ) == release
+    else:
+        assert active_path.read_bytes() != active_before
+        assert stat.S_IMODE(active_path.stat().st_mode) == 0o644
+
+
+@pytest.mark.parametrize("operation", ["install", "rollback"])
+def test_post_swap_active_inode_replacement_is_preserved_as_cleanup_evidence(
+    tmp_path, monkeypatch, operation
+):
+    from codex_usage import integration_installer
+    from codex_usage.integration_attestation import IntegrationAttestationUnavailable
+    from codex_usage.private_io import write_private_text
+
+    _, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    write_private_text(
+        previous_path,
+        active_before.decode("utf-8") + "\n",
+        label="test previous manifest",
+        mode=0o600,
+    )
+    previous_before = previous_path.read_bytes()
+
+    if operation == "install":
+        second_root = tmp_path / "inode-race-install"
+        second_root.mkdir(mode=0o700)
+        second_source = _temporary_source_copy(second_root)
+        second_entrypoint = second_source / "src/codex_usage/integration_snapshot.py"
+        second_entrypoint.write_bytes(
+            second_entrypoint.read_bytes() + b"\n# inode race release\n"
+        )
+        second_temporary = second_root / "temporary"
+        second_temporary.mkdir(mode=0o700)
+
+        def run_operation():
+            return integration_installer.install_release(
+                source_root=second_source,
+                state_home=state_home,
+                data_home=data_home,
+                python_executable=Path(sys.executable),
+                temporary_root=second_temporary,
+            )
+
+    else:
+
+        def run_operation():
+            return integration_installer.rollback_active_release(
+                state_home=state_home,
+                data_home=data_home,
+            )
+
+    original_verify = integration_installer._verify_manifest
+    replacement_injected = False
+    published_inode: tuple[int, int] | None = None
+    replacement_inode: tuple[int, int] | None = None
+    raced_active: str | None = None
+
+    def replace_active_after_identity_capture(*args, **kwargs):
+        nonlocal replacement_injected, published_inode, replacement_inode, raced_active
+        if (
+            kwargs["manifest_path"] == active_path
+            and active_path.read_bytes() != active_before
+            and not replacement_injected
+        ):
+            replacement_injected = True
+            raced_active = active_path.read_text(encoding="utf-8")
+            published_stat = active_path.stat()
+            published_inode = (published_stat.st_dev, published_stat.st_ino)
+            write_private_text(
+                active_path,
+                raced_active,
+                label="synthetic raced active manifest",
+                mode=0o600,
+            )
+            replacement_stat = active_path.stat()
+            replacement_inode = (replacement_stat.st_dev, replacement_stat.st_ino)
+            raise IntegrationAttestationUnavailable()
+        return original_verify(*args, **kwargs)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_verify_manifest",
+        replace_active_after_identity_capture,
+    )
+    with pytest.raises(integration_installer.IntegrationCleanupError):
+        run_operation()
+
+    assert replacement_injected
+    assert published_inode is not None
+    assert replacement_inode is not None
+    assert replacement_inode != published_inode
+    final_stat = active_path.stat()
+    assert (final_stat.st_dev, final_stat.st_ino) == replacement_inode
+    assert raced_active is not None
+    assert active_path.read_text(encoding="utf-8") == raced_active
+    assert previous_path.read_bytes() == previous_before
+
+
+@pytest.mark.parametrize("operation", ["install", "rollback"])
+def test_restore_boundary_inode_replacement_is_never_overwritten(
+    tmp_path, monkeypatch, operation
+):
+    from codex_usage import integration_installer
+    from codex_usage.integration_attestation import IntegrationAttestationUnavailable
+    from codex_usage.private_io import write_private_text
+
+    _, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    write_private_text(
+        previous_path,
+        active_before.decode("utf-8") + "\n",
+        label="test previous manifest",
+        mode=0o600,
+    )
+    previous_before = previous_path.read_bytes()
+
+    if operation == "install":
+        second_root = tmp_path / "restore-boundary-install"
+        second_root.mkdir(mode=0o700)
+        second_source = _temporary_source_copy(second_root)
+        second_entrypoint = second_source / "src/codex_usage/integration_snapshot.py"
+        second_entrypoint.write_bytes(
+            second_entrypoint.read_bytes() + b"\n# restore boundary release\n"
+        )
+        second_temporary = second_root / "temporary"
+        second_temporary.mkdir(mode=0o700)
+
+        def run_operation():
+            return integration_installer.install_release(
+                source_root=second_source,
+                state_home=state_home,
+                data_home=data_home,
+                python_executable=Path(sys.executable),
+                temporary_root=second_temporary,
+            )
+
+    else:
+
+        def run_operation():
+            return integration_installer.rollback_active_release(
+                state_home=state_home,
+                data_home=data_home,
+            )
+
+    original_verify = integration_installer._verify_manifest
+    original_matches = integration_installer._provisional_matches
+    raced_active = '{"synthetic_restore_boundary_race":true}\n'
+    replacement_inode: tuple[int, int] | None = None
+    attestation_failed = False
+    replacement_injected = False
+
+    def fail_final_active_attestation(*args, **kwargs):
+        nonlocal attestation_failed
+        if (
+            kwargs["manifest_path"] == active_path
+            and active_path.read_bytes() != active_before
+            and not attestation_failed
+        ):
+            attestation_failed = True
+            raise IntegrationAttestationUnavailable()
+        return original_verify(*args, **kwargs)
+
+    def replace_immediately_after_restore_predicate(
+        path, identity, parent_identity, *, directory
+    ):
+        nonlocal replacement_injected, replacement_inode
+        result = original_matches(
+            path,
+            identity,
+            parent_identity,
+            directory=directory,
+        )
+        if (
+            path == active_path
+            and result
+            and attestation_failed
+            and not replacement_injected
+        ):
+            replacement_injected = True
+            write_private_text(
+                active_path,
+                raced_active,
+                label="synthetic restore-boundary active manifest",
+                mode=0o600,
+            )
+            replacement_stat = active_path.stat()
+            replacement_inode = (replacement_stat.st_dev, replacement_stat.st_ino)
+        return result
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_verify_manifest",
+        fail_final_active_attestation,
+    )
+    monkeypatch.setattr(
+        integration_installer,
+        "_provisional_matches",
+        replace_immediately_after_restore_predicate,
+    )
+    with pytest.raises(integration_installer.IntegrationCleanupError):
+        run_operation()
+
+    assert attestation_failed
+    assert replacement_injected
+    assert replacement_inode is not None
+    final_stat = active_path.stat()
+    assert (final_stat.st_dev, final_stat.st_ino) == replacement_inode
+    assert active_path.read_text(encoding="utf-8") == raced_active
+    assert previous_path.read_bytes() == previous_before
+
+
+@pytest.mark.parametrize("operation", ["install", "rollback"])
+def test_capture_failure_never_adopts_byte_identical_replacement(
+    tmp_path, monkeypatch, operation
+):
+    from codex_usage import integration_installer
+    from codex_usage.private_io import write_private_text
+
+    _, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    write_private_text(
+        previous_path,
+        active_before.decode("utf-8") + "\n",
+        label="test previous manifest",
+        mode=0o600,
+    )
+    previous_before = previous_path.read_bytes()
+
+    if operation == "install":
+        second_root = tmp_path / "identical-capture-race-install"
+        second_root.mkdir(mode=0o700)
+        second_source = _temporary_source_copy(second_root)
+        second_entrypoint = second_source / "src/codex_usage/integration_snapshot.py"
+        second_entrypoint.write_bytes(
+            second_entrypoint.read_bytes() + b"\n# identical capture race release\n"
+        )
+        second_temporary = second_root / "temporary"
+        second_temporary.mkdir(mode=0o700)
+
+        def run_operation():
+            return integration_installer.install_release(
+                source_root=second_source,
+                state_home=state_home,
+                data_home=data_home,
+                python_executable=Path(sys.executable),
+                temporary_root=second_temporary,
+            )
+
+    else:
+
+        def run_operation():
+            return integration_installer.rollback_active_release(
+                state_home=state_home,
+                data_home=data_home,
+            )
+
+    original_file_identity = integration_installer._file_identity
+    replacement_inode: tuple[int, int] | None = None
+    replacement_text: str | None = None
+    replacement_injected = False
+
+    def replace_with_identical_bytes_during_capture(path):
+        nonlocal replacement_injected, replacement_inode, replacement_text
+        if (
+            path == active_path
+            and active_path.read_bytes() != active_before
+            and not replacement_injected
+        ):
+            replacement_injected = True
+            replacement_text = active_path.read_text(encoding="utf-8")
+            write_private_text(
+                active_path,
+                replacement_text,
+                label="synthetic byte-identical active replacement",
+                mode=0o600,
+            )
+            replacement_stat = active_path.stat()
+            replacement_inode = (replacement_stat.st_dev, replacement_stat.st_ino)
+            raise OSError("synthetic capture failure after identical replacement")
+        return original_file_identity(path)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_file_identity",
+        replace_with_identical_bytes_during_capture,
+    )
+    with pytest.raises(integration_installer.IntegrationCleanupError):
+        run_operation()
+
+    assert replacement_injected
+    assert replacement_inode is not None
+    final_stat = active_path.stat()
+    assert (final_stat.st_dev, final_stat.st_ino) == replacement_inode
+    assert replacement_text is not None
+    assert active_path.read_text(encoding="utf-8") == replacement_text
+    assert previous_path.read_bytes() == previous_before
+
+
+def test_rename_exchange_swaps_existing_entries(tmp_path):
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "integration"
+    parent.mkdir(mode=0o700)
+    left = parent / "left"
+    right = parent / "right"
+    _write_active_transaction_artifact(left, b"left")
+    _write_active_transaction_artifact(right, b"right")
+    exchange = getattr(integration_installer, "_rename_exchange", None)
+    assert exchange is not None
+    parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        exchange(left.name, right.name, parent_fd)
+    finally:
+        os.close(parent_fd)
+
+    assert left.read_bytes() == b"right"
+    assert right.read_bytes() == b"left"
+
+
+@pytest.mark.parametrize("operation", ["install", "rollback"])
+def test_second_exchange_failure_keeps_active_and_prior_evidence(
+    tmp_path, monkeypatch, operation
+):
+    from codex_usage import integration_installer
+    from codex_usage.integration_attestation import IntegrationAttestationUnavailable
+
+    prepared = _prepared_active_transaction(tmp_path, operation)
+    original_verify = integration_installer._verify_manifest
+    attestation_failed = False
+
+    def fail_final_active_attestation(*args, **kwargs):
+        nonlocal attestation_failed
+        if (
+            kwargs["manifest_path"] == prepared.active_path
+            and prepared.active_path.read_bytes() != prepared.active_before
+            and not attestation_failed
+        ):
+            attestation_failed = True
+            raise IntegrationAttestationUnavailable()
+        return original_verify(*args, **kwargs)
+
+    original_exchange = getattr(integration_installer, "_rename_exchange", None)
+    exchange_calls = 0
+
+    def fail_second_exchange(source_name, target_name, parent_fd):
+        nonlocal exchange_calls
+        exchange_calls += 1
+        if exchange_calls == 2:
+            raise OSError(errno.EIO, "synthetic second exchange failure")
+        assert original_exchange is not None
+        return original_exchange(source_name, target_name, parent_fd)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_verify_manifest",
+        fail_final_active_attestation,
+    )
+    monkeypatch.setattr(
+        integration_installer,
+        "_rename_exchange",
+        fail_second_exchange,
+        raising=False,
+    )
+    with pytest.raises(integration_installer.IntegrationCleanupError):
+        prepared.run()
+
+    assert attestation_failed
+    assert exchange_calls == 2
+    assert prepared.active_path.is_file() and not prepared.active_path.is_symlink()
+    assert prepared.previous_path.read_bytes() == prepared.previous_before
+    evidence = [
+        path
+        for path in prepared.integration.iterdir()
+        if path.name.startswith(".active.json.publish-")
+    ]
+    assert len(evidence) == 1
+    assert evidence[0].read_bytes() == prepared.active_before
+
+
+@pytest.mark.parametrize("operation", ["install", "rollback"])
+def test_publish_exchange_fsync_failure_atomically_restores_active(
+    tmp_path, monkeypatch, operation
+):
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, operation)
+    integration_stat = prepared.integration.stat()
+    original_exchange = getattr(integration_installer, "_rename_exchange", None)
+    original_fsync = integration_installer.os.fsync
+    exchange_calls = 0
+    fsync_failed = False
+
+    def count_exchange(source_name, target_name, parent_fd):
+        nonlocal exchange_calls
+        exchange_calls += 1
+        assert original_exchange is not None
+        return original_exchange(source_name, target_name, parent_fd)
+
+    def fail_first_post_exchange_fsync(fd):
+        nonlocal fsync_failed
+        item = os.fstat(fd)
+        if (
+            exchange_calls == 1
+            and not fsync_failed
+            and stat.S_ISDIR(item.st_mode)
+            and (item.st_dev, item.st_ino)
+            == (integration_stat.st_dev, integration_stat.st_ino)
+        ):
+            fsync_failed = True
+            raise OSError(errno.EIO, "synthetic publish fsync failure")
+        return original_fsync(fd)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_rename_exchange",
+        count_exchange,
+        raising=False,
+    )
+    monkeypatch.setattr(integration_installer.os, "fsync", fail_first_post_exchange_fsync)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        prepared.run()
+
+    assert fsync_failed
+    assert exchange_calls == 2
+    assert prepared.active_path.read_bytes() == prepared.active_before
+    assert prepared.previous_path.read_bytes() == prepared.previous_before
+
+
+@pytest.mark.parametrize("operation", ["install", "rollback"])
+def test_commit_cleanup_failure_returns_success_with_bounded_evidence(
+    tmp_path, monkeypatch, operation
+):
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, operation)
+    original_cleanup = integration_installer._cleanup_provisional
+    cleanup_failed = False
+
+    def retain_transaction_evidence(path, identity, parent_identity, *, directory):
+        nonlocal cleanup_failed
+        if (
+            path.parent == prepared.integration
+            and path.name.startswith(
+                (".active.json.publish-", ".active.json.prior-")
+            )
+        ):
+            cleanup_failed = True
+            return False
+        return original_cleanup(
+            path,
+            identity,
+            parent_identity,
+            directory=directory,
+        )
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_cleanup_provisional",
+        retain_transaction_evidence,
+    )
+    result = prepared.run()
+
+    assert result.version == "0.6.536"
+    assert cleanup_failed
+    assert prepared.active_path.is_file()
+    if operation == "install":
+        assert prepared.previous_path.read_bytes() == prepared.active_before
+    else:
+        assert prepared.previous_path.read_bytes() == prepared.previous_before
+    evidence = [
+        path
+        for path in prepared.integration.iterdir()
+        if path.name.startswith(
+            (".active.json.publish-", ".active.json.prior-")
+        )
+    ]
+    assert len(evidence) == 1
+
+
+def test_next_operation_fails_closed_on_unproven_post_exchange_artifact(tmp_path):
+    from codex_usage import integration_installer
+
+    _, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    active_stat = active_path.stat()
+    integration_identity = integration_installer._directory_identity(integration)
+    integration_installer._begin_active_publish(
+        active_path=active_path,
+        published_text=active_before.decode("utf-8") + "\n",
+        prior_identity=integration_installer._provisional_from_stat(active_stat),
+        integration_identity=integration_identity,
+    )
+    active_after_publish = active_path.read_bytes()
+    artifacts = [
+        path
+        for path in integration.iterdir()
+        if path.name.startswith(".active.json.publish-")
+    ]
+    assert active_after_publish != active_before
+    assert not previous_path.exists()
+    assert len(artifacts) == 1
+    artifact = artifacts[0]
+    artifact_before = artifact.read_bytes()
+    artifact_stat = artifact.stat()
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.rollback_active_release(
+            state_home=state_home,
+            data_home=data_home,
+        )
+
+    assert active_path.read_bytes() == active_after_publish
+    assert not previous_path.exists()
+    assert artifact.read_bytes() == artifact_before
+    current_artifact = artifact.stat()
+    assert (current_artifact.st_dev, current_artifact.st_ino) == (
+        artifact_stat.st_dev,
+        artifact_stat.st_ino,
+    )
+
+
+def test_startup_recovery_rejects_eight_unproven_publish_artifacts(tmp_path):
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, "rollback")
+    artifacts = []
+    for index in range(8):
+        artifact = _write_bound_stale_transaction_artifact(
+            integration=prepared.integration,
+            active_path=prepared.active_path,
+            index=index,
+        )
+        artifacts.append(artifact)
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        prepared.run()
+
+    assert prepared.active_path.read_bytes() == prepared.active_before
+    assert prepared.previous_path.read_bytes() == prepared.previous_before
+    assert all(artifact.read_bytes() == b"stale" for artifact in artifacts)
+
+
+@pytest.mark.parametrize("transaction_kind", ["install", "rollback"])
+@pytest.mark.parametrize("payload_kind", ["foreign", "copied-valid-manifest"])
+def test_startup_recovery_preserves_same_owner_forged_bound_artifact(
+    tmp_path,
+    transaction_kind,
+    payload_kind,
+):
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, "rollback")
+    payload = (
+        b"foreign transaction evidence"
+        if payload_kind == "foreign"
+        else prepared.active_before
+    )
+    artifact, artifact_identity = _write_forged_bound_transaction_artifact(
+        integration=prepared.integration,
+        active_path=prepared.active_path,
+        transaction_kind=transaction_kind,
+        payload=payload,
+    )
+    forged_stat = artifact.stat()
+    assert stat.S_ISREG(forged_stat.st_mode)
+    assert stat.S_IMODE(forged_stat.st_mode) == 0o600
+    assert forged_stat.st_uid == os.getuid()
+    assert forged_stat.st_nlink == 1
+    assert (forged_stat.st_dev, forged_stat.st_ino) == artifact_identity
+    bounded_error = None
+
+    try:
+        prepared.run()
+    except integration_installer.IntegrationInstallError as error:
+        bounded_error = error
+
+    assert artifact.exists(), "same-owner forged bound artifact was deleted"
+    current_artifact = artifact.stat()
+    assert (current_artifact.st_dev, current_artifact.st_ino) == artifact_identity
+    assert artifact.read_bytes() == payload
+    assert prepared.active_path.read_bytes() == prepared.active_before
+    assert prepared.previous_path.read_bytes() == prepared.previous_before
+    assert bounded_error is not None
+
+
+def test_startup_recovery_rejects_ninth_artifact_without_deleting_evidence(
+    tmp_path,
+):
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, "rollback")
+    artifacts = []
+    for index in range(9):
+        artifact = _write_bound_stale_transaction_artifact(
+            integration=prepared.integration,
+            active_path=prepared.active_path,
+            index=100 + index,
+        )
+        artifacts.append(artifact)
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        prepared.run()
+
+    assert prepared.active_path.read_bytes() == prepared.active_before
+    assert prepared.previous_path.read_bytes() == prepared.previous_before
+    assert all(artifact.read_bytes() == b"stale" for artifact in artifacts)
+
+
+@pytest.mark.parametrize(
+    "artifact_shape",
+    [
+        "raw-valid",
+        "mode",
+        "hardlink",
+        "oversize",
+        "symlink",
+        "directory",
+        "legacy-publish",
+        "legacy-prior",
+        "legacy-failed",
+    ],
+)
+def test_startup_recovery_preserves_ambiguous_or_foreign_artifact(
+    tmp_path, artifact_shape
+):
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, "rollback")
+    if artifact_shape.startswith("legacy-"):
+        label = artifact_shape.removeprefix("legacy-")
+        artifact = prepared.integration / (
+            f".active.json.{label}-3000-0123456789abcdef"
+        )
+        _write_active_transaction_artifact(artifact, prepared.active_before)
+    else:
+        artifact = prepared.integration / (
+            ".active.json.publish-new-3000-0123456789abcdef"
+        )
+        if artifact_shape == "directory":
+            artifact.mkdir(mode=0o700)
+        elif artifact_shape == "symlink":
+            foreign = prepared.integration / "foreign-artifact-target"
+            _write_active_transaction_artifact(foreign, b"foreign")
+            artifact.symlink_to(foreign.name)
+        else:
+            payload = b"x" * (128 * 1024 + 1) if artifact_shape == "oversize" else b"stale"
+            _write_active_transaction_artifact(artifact, payload)
+            if artifact_shape == "mode":
+                artifact.chmod(0o640)
+            elif artifact_shape == "hardlink":
+                os.link(artifact, prepared.integration / "foreign-hardlink")
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        prepared.run()
+
+    assert prepared.active_path.read_bytes() == prepared.active_before
+    assert prepared.previous_path.read_bytes() == prepared.previous_before
+    assert artifact.exists() or artifact.is_symlink()
+
+
+def test_startup_recovery_preserves_bound_artifact_identity(tmp_path):
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, "rollback")
+    artifact = _write_bound_stale_transaction_artifact(
+        integration=prepared.integration,
+        active_path=prepared.active_path,
+        index=200,
+        payload=b"owned",
+    )
+    artifact_stat = artifact.stat()
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        prepared.run()
+
+    current = artifact.stat()
+    assert (current.st_dev, current.st_ino) == (
+        artifact_stat.st_dev,
+        artifact_stat.st_ino,
+    )
+    assert artifact.read_bytes() == b"owned"
+    assert prepared.active_path.read_bytes() == prepared.active_before
+    assert prepared.previous_path.read_bytes() == prepared.previous_before
+
+
+@pytest.mark.parametrize("operation", ["install", "rollback"])
+def test_failed_publish_to_initially_absent_active_keeps_active_present(
+    tmp_path, monkeypatch, operation
+):
+    from codex_usage import integration_installer
+    from codex_usage.integration_attestation import IntegrationAttestationUnavailable
+    from codex_usage.private_io import write_private_text
+
+    if operation == "install":
+        data_home, state_home, temporary_root = _roots(tmp_path)
+        initial_root = tmp_path / "initial-install"
+        initial_root.mkdir(mode=0o700)
+        source = _temporary_source_copy(initial_root)
+        active_path = state_home / "codex-usage/integration/active.json"
+        previous_path = state_home / "codex-usage/integration/previous.json"
+
+        def run():
+            return integration_installer.install_release(
+                source_root=source,
+                state_home=state_home,
+                data_home=data_home,
+                python_executable=Path(sys.executable),
+                temporary_root=temporary_root,
+            )
+
+    else:
+        _, data_home, state_home = _install(tmp_path)
+        integration = state_home / "codex-usage/integration"
+        active_path = integration / "active.json"
+        previous_path = integration / "previous.json"
+        active_text = active_path.read_text(encoding="utf-8")
+        write_private_text(
+            previous_path,
+            active_text + "\n",
+            label="test previous manifest",
+            mode=0o600,
+        )
+        active_path.unlink()
+
+        def run():
+            return integration_installer.rollback_active_release(
+                state_home=state_home,
+                data_home=data_home,
+            )
+
+    assert not active_path.exists()
+    original_verify = integration_installer._verify_manifest
+    final_attestation_failed = False
+
+    def fail_final_attestation(*args, **kwargs):
+        nonlocal final_attestation_failed
+        if kwargs["manifest_path"] == active_path:
+            final_attestation_failed = True
+            raise IntegrationAttestationUnavailable()
+        return original_verify(*args, **kwargs)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_verify_manifest",
+        fail_final_attestation,
+    )
+    with pytest.raises(integration_installer.IntegrationCleanupError):
+        run()
+
+    assert final_attestation_failed
+    assert active_path.is_file() and not active_path.is_symlink()
+    assert original_verify(
+        manifest_path=active_path,
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=None,
+    ).version == "0.6.536"
+    if operation == "install":
+        assert not previous_path.exists()
+
+
+def test_install_cutover_rejects_schema1_upgrade_source(
+    tmp_path,
+):
+    from codex_usage.integration_attestation import (
+        IntegrationAttestationUnavailable,
+        verify_active_release,
+    )
+    from codex_usage.integration_installer import (
+        IntegrationInstallError,
+        install_release,
+        rollback_active_release,
+    )
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    schema1_active = _write_synthetic_schema1_active(
+        state_home=state_home,
+        data_home=data_home,
+    )
+    schema1_entrypoint = Path(
+        json.loads(schema1_active)["entrypoint_path"]
+    )
+    with pytest.raises(IntegrationAttestationUnavailable):
+        verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=schema1_entrypoint,
+        )
+
+    with pytest.raises(IntegrationInstallError):
+        install_release(
+            source_root=_temporary_source_copy(tmp_path),
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    assert active_path.read_bytes() == schema1_active
+    assert not (integration / "previous.json").exists()
+    with pytest.raises(IntegrationInstallError):
+        rollback_active_release(state_home=state_home, data_home=data_home)
+    assert active_path.read_bytes() == schema1_active
+
+
+def test_install_cutover_rejects_attested_schema2_06533_upgrade_source(
+    tmp_path,
+    monkeypatch,
+):
+    from codex_usage import integration_attestation, integration_installer
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    source_root = _temporary_source_copy(tmp_path)
+    with monkeypatch.context() as old_release_context:
+        _patch_release_identity(old_release_context, "0.6.533")
+        old_release = integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    old_active = active_path.read_bytes()
+    with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
+        integration_attestation.verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=old_release.entrypoint_path,
+        )
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    assert active_path.read_bytes() == old_active
+    assert not (integration / "previous.json").exists()
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.rollback_active_release(
+            state_home=state_home,
+            data_home=data_home,
+        )
+    assert active_path.read_bytes() == old_active
+
+
+@pytest.mark.parametrize("mutation", ["unknown", "secret-like", "missing"])
+def test_legacy_upgrade_manifest_requires_exact_canonical_fields(
+    tmp_path,
+    mutation,
+):
+    from codex_usage.integration_installer import IntegrationInstallError, install_release
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    _write_synthetic_schema1_active(state_home=state_home, data_home=data_home)
+    active_path = state_home / "codex-usage" / "integration" / "active.json"
+    manifest = json.loads(active_path.read_text(encoding="utf-8"))
+    mutated = _mutate_manifest_fields(manifest, mutation)
+    active_path.write_text(
+        json.dumps(mutated, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    before = active_path.read_bytes()
+
+    with pytest.raises(IntegrationInstallError):
+        install_release(
+            source_root=_temporary_source_copy(tmp_path),
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    assert active_path.read_bytes() == before
+
+
 def test_rollback_revalidates_prior_manifest_and_swaps_only_active_json(tmp_path):
     from codex_usage.integration_attestation import verify_active_release
     from codex_usage.integration_installer import rollback_active_release
@@ -860,6 +3018,113 @@ def test_rollback_revalidates_prior_manifest_and_swaps_only_active_json(tmp_path
     )
 
 
+@pytest.mark.parametrize("missing", ["producer-lock", "lock-root"])
+def test_rollback_missing_lock_namespace_fails_without_recreating_or_mutating(
+    tmp_path, monkeypatch, missing
+):
+    from codex_usage import integration_evidence, integration_installer, private_io
+    from codex_usage.private_io import write_private_text
+
+    lock_root = tmp_path / "installer-lock-root"
+    monkeypatch.setattr(private_io, "_private_lock_root", lambda: lock_root)
+    _, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    write_private_text(
+        previous_path,
+        active_before.decode("utf-8"),
+        label="synthetic previous manifest",
+        mode=0o600,
+    )
+    previous_before = previous_path.read_bytes()
+    producer_lock = lock_root / integration_evidence._evidence_lock_name(
+        integration / "producer-install"
+    )
+    if missing == "producer-lock":
+        producer_lock.unlink()
+        missing_path = producer_lock
+    else:
+        missing_path = tmp_path / "missing-lock-root"
+        monkeypatch.setattr(private_io, "_private_lock_root", lambda: missing_path)
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.rollback_active_release(
+            state_home=state_home,
+            data_home=data_home,
+        )
+
+    assert not missing_path.exists()
+    assert active_path.read_bytes() == active_before
+    assert previous_path.read_bytes() == previous_before
+
+
+def test_rollback_rejects_schema1_previous_without_changing_schema2_active(tmp_path):
+    from codex_usage.integration_attestation import verify_active_release
+    from codex_usage.integration_installer import (
+        IntegrationInstallError,
+        rollback_active_release,
+    )
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    active_before = active_path.read_bytes()
+    previous = json.loads(active_before)
+    assert previous["schema_version"] == 2
+    previous["schema_version"] = 1
+    write_private_text(
+        integration / "previous.json",
+        json.dumps(previous, sort_keys=True, separators=(",", ":")) + "\n",
+        label="synthetic schema-1 previous manifest",
+        mode=0o600,
+    )
+
+    with pytest.raises(IntegrationInstallError):
+        rollback_active_release(state_home=state_home, data_home=data_home)
+
+    assert active_path.read_bytes() == active_before
+    assert (
+        verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release.entrypoint_path,
+        )
+        == release
+    )
+
+
+@pytest.mark.parametrize("mutation", ["unknown", "secret-like", "missing"])
+def test_rollback_previous_manifest_requires_exact_canonical_fields(
+    tmp_path,
+    mutation,
+):
+    from codex_usage.integration_installer import (
+        IntegrationInstallError,
+        rollback_active_release,
+    )
+    from codex_usage.private_io import write_private_text
+
+    _, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    manifest = json.loads(active_path.read_text(encoding="utf-8"))
+    mutated = _mutate_manifest_fields(manifest, mutation)
+    write_private_text(
+        integration / "previous.json",
+        json.dumps(mutated, sort_keys=True, separators=(",", ":")) + "\n",
+        label="mutated previous manifest",
+        mode=0o600,
+    )
+    active_before = active_path.read_bytes()
+
+    with pytest.raises(IntegrationInstallError):
+        rollback_active_release(state_home=state_home, data_home=data_home)
+    assert active_path.read_bytes() == active_before
+
+
 def test_generated_wheel_has_no_general_cli_or_forbidden_modules(tmp_path):
     release, _, _ = _install(tmp_path)
     with zipfile.ZipFile(release.release_dir / "producer.whl") as wheel:
@@ -875,11 +3140,87 @@ def test_launcher_uses_isolated_python_and_fixed_environment(tmp_path):
     release, data_home, state_home = _install(tmp_path)
     launcher = release.launcher_path.read_text(encoding="utf-8")
     assert " -B -I -m codex_usage.integration_entrypoint" in launcher
+    assert "PYTHONDONTWRITEBYTECODE=1" in launcher
     assert str(data_home) in launcher
     assert str(state_home) in launcher
     assert "codex_usage.cli" not in launcher
     assert "PYTHONPATH" in launcher
     assert launcher.splitlines()[0] == "#!/bin/sh"
+
+
+def test_attestation_requires_launcher_bytecode_environment(tmp_path):
+    from codex_usage import integration_attestation
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    launcher = release.launcher_path
+    launcher.write_text(
+        launcher.read_text(encoding="utf-8").replace(
+            " PYTHONDONTWRITEBYTECODE=1",
+            "",
+        ),
+        encoding="utf-8",
+    )
+    launcher.chmod(0o700)
+    active_path = state_home / "codex-usage" / "integration" / "active.json"
+    manifest = json.loads(active_path.read_text(encoding="utf-8"))
+    manifest["launcher_sha256"] = hashlib.sha256(launcher.read_bytes()).hexdigest()
+    manifest["release_tree_sha256"] = integration_attestation._release_tree_sha256(
+        release_dir=release.release_dir
+    )
+    write_private_text(
+        active_path,
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+        label="launcher without bytecode environment",
+        mode=0o600,
+    )
+
+    with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
+        integration_attestation.verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release.entrypoint_path,
+        )
+
+
+def test_launcher_rejects_schema1_active_manifest_without_repair(tmp_path):
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    _write_launcher_state(data_home)
+    active_path = state_home / "codex-usage" / "integration" / "active.json"
+    manifest = json.loads(active_path.read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 2
+    manifest["schema_version"] = 1
+    write_private_text(
+        active_path,
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+        label="synthetic schema-1 active manifest",
+        mode=0o600,
+    )
+    before = active_path.read_bytes()
+
+    completed = subprocess.run(
+        [
+            str(release.launcher_path),
+            "integration-snapshot",
+            "--schema",
+            "2",
+            "--format",
+            "json",
+        ],
+        env={"PATH": "/usr/bin:/bin"},
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_snapshot_unavailable\n"
+    assert active_path.read_bytes() == before
 
 
 def test_verify_rejects_record_or_launcher_drift_without_active_repair(tmp_path):
@@ -899,6 +3240,95 @@ def test_verify_rejects_record_or_launcher_drift_without_active_repair(tmp_path)
             expected_entrypoint_path=release.entrypoint_path,
         )
     assert active_path.read_bytes() == old
+
+
+@pytest.mark.parametrize(
+    ("field", "relative", "mode"),
+    [
+        ("launcher_path", Path("venv/bin/alternate-launcher"), 0o700),
+        ("wheel_path", Path("alternate-producer.whl"), 0o600),
+    ],
+)
+def test_attestation_rejects_manifest_path_drift_even_when_hashes_match(
+    tmp_path,
+    field,
+    relative,
+    mode,
+):
+    from codex_usage import integration_attestation
+    from codex_usage.integration_attestation import (
+        IntegrationAttestationUnavailable,
+        verify_active_release,
+    )
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    active_path = state_home / "codex-usage" / "integration" / "active.json"
+    manifest = json.loads(active_path.read_text(encoding="utf-8"))
+    original_path = Path(manifest[field])
+    alternate = release.release_dir / relative
+    alternate.write_bytes(original_path.read_bytes())
+    alternate.chmod(mode)
+    manifest[field] = str(alternate)
+    manifest["release_tree_sha256"] = integration_attestation._release_tree_sha256(
+        release_dir=release.release_dir
+    )
+    write_private_text(
+        active_path,
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+        label="mutated active path manifest",
+        mode=0o600,
+    )
+    before = active_path.read_bytes()
+
+    with pytest.raises(IntegrationAttestationUnavailable):
+        verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release.entrypoint_path,
+        )
+    assert active_path.read_bytes() == before
+
+
+def test_attestation_rejects_entrypoint_and_dist_info_outside_canonical_site_packages(
+    tmp_path,
+):
+    from codex_usage import integration_attestation
+    from codex_usage.integration_attestation import (
+        IntegrationAttestationUnavailable,
+        verify_active_release,
+    )
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    active_path = state_home / "codex-usage" / "integration" / "active.json"
+    manifest = json.loads(active_path.read_text(encoding="utf-8"))
+    original_record = Path(manifest["record_path"])
+    original_site_packages = original_record.parent.parent
+    alternate_site_packages = release.release_dir / "venv/alternate/site-packages"
+    shutil.copytree(original_site_packages, alternate_site_packages)
+    alternate_entrypoint = alternate_site_packages / "codex_usage/integration_entrypoint.py"
+    alternate_record = alternate_site_packages / original_record.parent.name / "RECORD"
+    manifest["entrypoint_path"] = str(alternate_entrypoint)
+    manifest["record_path"] = str(alternate_record)
+    manifest["release_tree_sha256"] = integration_attestation._release_tree_sha256(
+        release_dir=release.release_dir
+    )
+    write_private_text(
+        active_path,
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+        label="mutated entrypoint and dist-info manifest",
+        mode=0o600,
+    )
+    before = active_path.read_bytes()
+
+    with pytest.raises(IntegrationAttestationUnavailable):
+        verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=alternate_entrypoint,
+        )
+    assert active_path.read_bytes() == before
 
 
 def test_installer_build_subprocess_is_no_index_and_sanitized(tmp_path, monkeypatch):
@@ -956,7 +3386,9 @@ def test_installer_build_subprocess_is_no_index_and_sanitized(tmp_path, monkeypa
             environment=integration_installer._sanitized_build_environment(),
         )
     assert "--no-index" in observed["argv"]
+    assert observed["argv"][:3] == (str(Path(sys.executable)), "-B", "-I")
     assert observed["env"]["PIP_NO_INDEX"] == "1"
+    assert observed["env"]["PYTHONDONTWRITEBYTECODE"] == "1"
     assert "PYTHONPATH" not in observed["env"]
     assert observed["timeout"] == 120
     assert observed["stdout"] == subprocess.DEVNULL
@@ -1328,7 +3760,7 @@ def _write_launcher_state(data_home: Path) -> None:
     )
 
 
-def test_temporary_launcher_emits_schema1_from_temporary_state(tmp_path):
+def test_temporary_launcher_emits_schema2_from_temporary_state(tmp_path):
     release, data_home, state_home = _install(tmp_path)
     _write_launcher_state(data_home)
     completed = subprocess.run(
@@ -1336,7 +3768,7 @@ def test_temporary_launcher_emits_schema1_from_temporary_state(tmp_path):
             str(release.launcher_path),
             "integration-snapshot",
             "--schema",
-            "1",
+            "2",
             "--format",
             "json",
         ],
@@ -1349,11 +3781,622 @@ def test_temporary_launcher_emits_schema1_from_temporary_state(tmp_path):
     )
     assert completed.returncode == 0
     payload = json.loads(completed.stdout)
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert "never-exported-label" not in completed.stdout
     assert "backend" not in completed.stdout
     assert completed.stderr == ""
-    assert (state_home / "codex-usage" / "integration" / "account-usage-v1.json").is_file()
+    integration = state_home / "codex-usage" / "integration"
+    pointer = json.loads((integration / "current.json").read_bytes())
+    generation = integration / "generations" / pointer["current_generation_id"]
+    assert (generation / "account-usage-v2.json").read_bytes() == completed.stdout.encode()
+    assert (generation / "account-usage-v2.binding.json").is_file()
+    assert not (integration / "account-usage-v1.json").exists()
+
+
+def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts(tmp_path):
+    from codex_usage.app_server import fetch_account_usage_app_server
+    from codex_usage.history import usage_samples_from_usage
+    from codex_usage.integration_evidence import read_current_evidence
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        build_schema2_document,
+        read_current_usage_records,
+        serialize_schema2_document,
+    )
+    from codex_usage.models import Account, LimitWindow
+    from codex_usage.state import save_current_usage
+    from tests.test_app_server import _auth, _fake_codex
+
+    release, data_home, state_home = _install(tmp_path)
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
+    scalar_values = {
+        "absolute-a": "0",
+        "absolute-b": "12",
+        "absolute-c": "80",
+        "absolute-d": "100",
+        "absolute-e": "100.01",
+        "absolute-f": "794",
+    }
+    current_dir = data_home / "codex-usage" / "current"
+    fetched_by_id = {}
+    for account_id, source_value in scalar_values.items():
+        command = _fake_codex(
+            tmp_path / f"codex-{account_id}",
+            tmp_path / f"app-server-requests-{account_id}.json",
+            account_credits=source_value,
+        )
+        fetched = fetch_account_usage_app_server(
+            Account(
+                id=account_id,
+                label="Absolute credit",
+                profile_dir=str(tmp_path / f"profile-{account_id}"),
+                auth_json_path=str(auth_path),
+                backend="app-server",
+            ),
+            codex_command=command,
+        )
+        assert fetched.main is not None
+        assert len(fetched.main.windows) == 2
+        assert fetched.credits is not None
+        assert fetched.credits.remaining == float(source_value)
+        assert fetched.credits.limit is None
+        assert fetched.credits.percent is None
+        fetched_by_id[account_id] = fetched
+        save_current_usage(fetched, current_dir)
+    save_current_usage(
+        replace(
+            fetched_by_id["absolute-f"],
+            account_id="percent-credit",
+            label="Percent credit",
+            credits=LimitWindow(name="credits", percent=80.0),
+        ),
+        current_dir,
+    )
+    near_limit = math.nextafter(1.0, 0.0)
+    near_remaining = 1.0 - near_limit
+    near_percent = near_remaining * 100.0
+    boundary_command = _fake_codex(
+        tmp_path / "codex-near-endpoint-credit",
+        tmp_path / "app-server-requests-near-endpoint-credit.json",
+        account_credits_payload={
+            "used": near_limit,
+            "remaining": near_remaining,
+            "limit": 1.0,
+            "percent": near_percent,
+        },
+    )
+    boundary = fetch_account_usage_app_server(
+        Account(
+            id="near-endpoint-credit",
+            label="Near endpoint credit",
+            profile_dir=str(tmp_path / "profile-near-endpoint-credit"),
+            auth_json_path=str(auth_path),
+            backend="app-server",
+        ),
+        codex_command=boundary_command,
+    )
+    assert boundary.credits == LimitWindow(
+        name="credits",
+        used=near_limit,
+        remaining=near_remaining,
+        limit=1.0,
+        percent=near_percent,
+        source="json:credits",
+    )
+    save_current_usage(boundary, current_dir)
+    offset_reset_command = _fake_codex(
+        tmp_path / "codex-offset-reset-credit",
+        tmp_path / "app-server-requests-offset-reset-credit.json",
+        account_credits_payload={
+            "percent": 80,
+            "reset_at": "2026-09-01T00:00:00Z",
+            "resetAt": "2026-09-01T02:00:00+02:00",
+        },
+    )
+    offset_reset = fetch_account_usage_app_server(
+        Account(
+            id="offset-reset-credit",
+            label="Offset reset credit",
+            profile_dir=str(tmp_path / "profile-offset-reset-credit"),
+            auth_json_path=str(auth_path),
+            backend="app-server",
+        ),
+        codex_command=offset_reset_command,
+    )
+    assert offset_reset.credits == LimitWindow(
+        name="credits",
+        percent=80,
+        reset_at=datetime(2026, 9, 1, tzinfo=UTC),
+        source="json:credits",
+    )
+    save_current_usage(offset_reset, current_dir)
+    roundtrip = read_current_usage_records(current_dir)
+    roundtrip_by_id = {usage.account_id: usage for usage in roundtrip}
+    for account_id, source_value in scalar_values.items():
+        credit = roundtrip_by_id[account_id].credits
+        assert credit is not None
+        assert credit.remaining == float(source_value)
+        assert not any(
+            sample.pool == "credits"
+            for sample in usage_samples_from_usage(roundtrip_by_id[account_id])
+        )
+    boundary_roundtrip = roundtrip_by_id["near-endpoint-credit"]
+    assert boundary_roundtrip.credits == boundary.credits
+    assert [
+        sample.used_percent
+        for sample in usage_samples_from_usage(boundary_roundtrip)
+        if sample.pool == "credits"
+    ] == [pytest.approx(100.0 - near_percent)]
+    offset_reset_roundtrip = roundtrip_by_id["offset-reset-credit"]
+    assert offset_reset_roundtrip.credits == offset_reset.credits
+    assert [
+        sample.reset_generation
+        for sample in usage_samples_from_usage(offset_reset_roundtrip)
+        if sample.pool == "credits"
+    ] == ["2026-09-01T00:00:00+00:00"]
+
+    direct_error = None
+    direct_document = None
+    try:
+        direct_document = build_schema2_document(
+            roundtrip,
+            generated_at=datetime.now(UTC),
+        )
+    except IntegrationInvalidSource as exc:
+        direct_error = type(exc).__name__
+
+    completed = subprocess.run(
+        [
+            str(release.launcher_path),
+            "integration-snapshot",
+            "--schema",
+            "2",
+            "--format",
+            "json",
+        ],
+        env={"PATH": "/usr/bin:/bin"},
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert (direct_error, completed.returncode, completed.stderr) == (None, 0, "")
+    assert direct_document is not None
+    direct_payload = serialize_schema2_document(direct_document).decode("utf-8")
+    for payload_text in (direct_payload, completed.stdout):
+        payload = json.loads(payload_text)
+        accounts = {account["account_id"]: account for account in payload["accounts"]}
+        assert set(accounts) == set(scalar_values) | {
+            "near-endpoint-credit",
+            "offset-reset-credit",
+            "percent-credit",
+        }
+        for account_id in scalar_values:
+            assert {
+                limit["window_seconds"]
+                for limit in accounts[account_id]["limits"]
+                if limit["pool"] == "main"
+            } == {18_000, 604_800}
+            assert not any(
+                limit["pool"] == "credits"
+                for limit in accounts[account_id]["limits"]
+            )
+        assert [
+            limit
+            for limit in accounts["percent-credit"]["limits"]
+            if limit["pool"] == "credits"
+        ] == [
+            {
+                "pool": "credits",
+                "remaining_percent": 80.0,
+                "used_percent": 20.0,
+                "window_seconds": 2_592_000,
+            }
+        ]
+        assert [
+            limit
+            for limit in accounts["offset-reset-credit"]["limits"]
+            if limit["pool"] == "credits"
+        ] == [
+            {
+                "pool": "credits",
+                "remaining_percent": 80.0,
+                "reset_at": "2026-09-01T00:00:00Z",
+                "used_percent": 20.0,
+                "window_seconds": 2_592_000,
+            }
+        ]
+        assert [
+            limit
+            for limit in accounts["near-endpoint-credit"]["limits"]
+            if limit["pool"] == "credits"
+        ] == [
+            {
+                "pool": "credits",
+                "remaining_percent": near_percent,
+                "used_percent": 100.0 - near_percent,
+                "window_seconds": 2_592_000,
+            }
+        ]
+        assert all(
+            evidence["pool"] != "credits"
+            for account in accounts.values()
+            for evidence in account["tracker_evidence"]
+        )
+        assert '"remaining":' not in payload_text
+        assert '"limit":' not in payload_text
+        assert all(
+            value != 794.0
+            for limit in accounts["absolute-f"]["limits"]
+            for value in limit.values()
+            if type(value) in (int, float)
+        )
+
+    evidence, status = read_current_evidence(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=release.entrypoint_path,
+        now=datetime.now(UTC),
+    )
+    assert evidence == json.loads(completed.stdout)
+    assert status == "partial"
+
+
+def test_installed_launcher_invalid_real_credit_does_not_commit_current(tmp_path):
+    from codex_usage.app_server import fetch_account_usage_app_server
+    from codex_usage.integration_evidence import read_current_evidence
+    from codex_usage.integration_snapshot import read_current_usage_records
+    from codex_usage.models import Account, LimitWindow
+    from codex_usage.scheduler import _apply_watchdog_block
+    from codex_usage.state import save_current_usage
+    from tests.test_app_server import _auth, _fake_codex
+
+    release, data_home, state_home = _install(tmp_path)
+    auth_home = tmp_path / "codex-home-invalid"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
+    current_dir = data_home / "codex-usage" / "current"
+    healthy_command = _fake_codex(
+        tmp_path / "codex-healthy",
+        tmp_path / "app-server-requests-healthy.json",
+    )
+    healthy = fetch_account_usage_app_server(
+        Account(
+            id="healthy",
+            label="Healthy",
+            profile_dir=str(tmp_path / "profile-healthy"),
+            auth_json_path=str(auth_path),
+            backend="app-server",
+        ),
+        codex_command=healthy_command,
+    )
+    save_current_usage(healthy, current_dir)
+
+    argv = [
+        str(release.launcher_path),
+        "integration-snapshot",
+        "--schema",
+        "2",
+        "--format",
+        "json",
+    ]
+    baseline = subprocess.run(
+        argv,
+        env={"PATH": "/usr/bin:/bin"},
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert (baseline.returncode, baseline.stderr) == (0, "")
+    integration = state_home / "codex-usage" / "integration"
+    current_path = integration / "current.json"
+    current_before = current_path.read_bytes()
+    generations = integration / "generations"
+    generations_before = {path.name for path in generations.iterdir()}
+
+    conflict_command = _fake_codex(
+        tmp_path / "codex-invalid-cross-source",
+        tmp_path / "app-server-requests-invalid-cross-source.json",
+        account_credits_payload={"percent": 80},
+        rate_limits_extra_payload={"creditBalance": {"percent": 70}},
+    )
+    fetched_conflict = fetch_account_usage_app_server(
+        Account(
+            id="invalid-credit",
+            label="Invalid credit",
+            profile_dir=str(tmp_path / "profile-invalid"),
+            auth_json_path=str(auth_path),
+            backend="app-server",
+        ),
+        codex_command=conflict_command,
+    )
+    assert fetched_conflict.credits == LimitWindow(
+        name="credits",
+        source="invalid:credits",
+    )
+    save_current_usage(fetched_conflict, current_dir)
+    conflict_roundtrip = {
+        usage.account_id: usage
+        for usage in read_current_usage_records(current_dir)
+    }
+    assert conflict_roundtrip["invalid-credit"].credits == LimitWindow(
+        name="credits",
+        source="invalid:credits",
+    )
+    conflict_state = json.loads(
+        (current_dir / "invalid-credit.json").read_bytes()
+    )
+    assert conflict_state["credits"] == {
+        "duration_seconds": None,
+        "limit": None,
+        "name": "credits",
+        "percent": None,
+        "raw": None,
+        "remaining": None,
+        "reset_at": None,
+        "source": "invalid:credits",
+        "used": None,
+    }
+
+    conflict_completed = subprocess.run(
+        argv,
+        env={"PATH": "/usr/bin:/bin"},
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert (
+        conflict_completed.returncode,
+        conflict_completed.stdout,
+        conflict_completed.stderr,
+    ) == (65, "", "integration_snapshot_invalid_source\n")
+    assert current_path.read_bytes() == current_before
+    assert {path.name for path in generations.iterdir()} == generations_before
+
+    invalid_sources = (
+        ("negative", "-1", None),
+        ("nan", "NaN", None),
+        ("infinite", "Inf", None),
+        ("unparseable", "not-a-number", None),
+        (
+            "secondary-negative-alias",
+            None,
+            {"remaining": 0.0, "available": -math.ulp(0.0)},
+        ),
+        (
+            "secondary-percent-above-hundred",
+            None,
+            {
+                "percent": 100.0,
+                "remaining_percent": math.nextafter(100.0, math.inf),
+            },
+        ),
+        (
+            "secondary-zero-limit",
+            None,
+            {"used": 0.0, "limit": math.ulp(0.0), "total": 0.0},
+        ),
+        (
+            "conflicting-reset-aliases",
+            None,
+            {
+                "percent": 80,
+                "reset_at": "2026-09-01T00:00:00Z",
+                "resetAt": "2026-10-01T00:00:00Z",
+            },
+        ),
+        (
+            "malformed-plus-valid-reset-aliases",
+            None,
+            {
+                "percent": 80,
+                "reset_at": "not-a-timestamp",
+                "resetAt": "2026-09-01T00:00:00Z",
+            },
+        ),
+        ("pair-used-limit", None, {"used": 101, "limit": 100}),
+        ("pair-used-percent", None, {"used": 20, "percent": 70}),
+        (
+            "pair-used-remaining-without-denominator",
+            None,
+            {"used": 20, "remaining": 80},
+        ),
+        (
+            "triple-used-limit-remaining",
+            None,
+            {"used": 20, "limit": 100, "remaining": 70},
+        ),
+        (
+            "triple-used-limit-percent",
+            None,
+            {"used": 20, "limit": 100, "percent": 70},
+        ),
+        (
+            "triple-remaining-limit-percent",
+            None,
+            {"remaining": 80, "limit": 100, "percent": 70},
+        ),
+        (
+            "triple-without-limit",
+            None,
+            {"used": 20, "remaining": 70, "percent": 70},
+        ),
+        (
+            "quad",
+            None,
+            {"used": 20, "limit": 100, "remaining": 70, "percent": 70},
+        ),
+    )
+    for index, (case, source_value, source_payload) in enumerate(invalid_sources):
+        command = _fake_codex(
+            tmp_path / f"codex-invalid-{index}-{case}",
+            tmp_path / f"app-server-requests-invalid-{index}-{case}.json",
+            account_credits=source_value,
+            account_credits_payload=source_payload,
+        )
+        fetched = fetch_account_usage_app_server(
+            Account(
+                id="invalid-credit",
+                label="Invalid credit",
+                profile_dir=str(tmp_path / "profile-invalid"),
+                auth_json_path=str(auth_path),
+                backend="app-server",
+            ),
+            codex_command=command,
+        )
+        assert fetched.status.value == "ok"
+        assert fetched.main is not None and len(fetched.main.windows) == 2
+        assert fetched.credits == LimitWindow(
+            name="credits",
+            source="invalid:credits",
+        )
+        save_current_usage(fetched, current_dir)
+        roundtrip = {
+            usage.account_id: usage
+            for usage in read_current_usage_records(current_dir)
+        }
+        assert roundtrip["invalid-credit"].credits == LimitWindow(
+            name="credits",
+            source="invalid:credits",
+        )
+        state_payload = json.loads(
+            (current_dir / "invalid-credit.json").read_bytes()
+        )
+        assert state_payload["credits"] == {
+            "duration_seconds": None,
+            "limit": None,
+            "name": "credits",
+            "percent": None,
+            "raw": None,
+            "remaining": None,
+            "reset_at": None,
+            "source": "invalid:credits",
+            "used": None,
+        }
+
+        completed = subprocess.run(
+            argv,
+            env={"PATH": "/usr/bin:/bin"},
+            cwd=tmp_path,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        assert (completed.returncode, completed.stdout, completed.stderr) == (
+            65,
+            "",
+            "integration_snapshot_invalid_source\n",
+        )
+        assert current_path.read_bytes() == current_before
+        assert {path.name for path in generations.iterdir()} == generations_before
+
+    raw_pair = replace(
+        healthy,
+        account_id="invalid-credit",
+        label="Invalid cached credit",
+        captured_at=datetime.now(UTC),
+        credits=LimitWindow(name="credits", used=20, remaining=80),
+    )
+    save_current_usage(raw_pair, current_dir)
+    raw_pair_roundtrip = {
+        usage.account_id: usage for usage in read_current_usage_records(current_dir)
+    }["invalid-credit"]
+    assert raw_pair_roundtrip.credits == LimitWindow(
+        name="credits",
+        used=20,
+        remaining=80,
+    )
+
+    raw_pair_completed = subprocess.run(
+        argv,
+        env={"PATH": "/usr/bin:/bin"},
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert (
+        raw_pair_completed.returncode,
+        raw_pair_completed.stdout,
+        raw_pair_completed.stderr,
+    ) == (65, "", "integration_snapshot_invalid_source\n")
+    assert current_path.read_bytes() == current_before
+    assert {path.name for path in generations.iterdir()} == generations_before
+
+    blocked_command = _fake_codex(
+        tmp_path / "codex-invalid-blocked",
+        tmp_path / "app-server-requests-invalid-blocked.json",
+        account_credits="-1",
+        primary_used_percent=100,
+        primary_resets_at=4_102_444_800,
+    )
+    fetched_blocked = fetch_account_usage_app_server(
+        Account(
+            id="invalid-credit",
+            label="Invalid blocked credit",
+            profile_dir=str(tmp_path / "profile-invalid-blocked"),
+            auth_json_path=str(auth_path),
+            backend="app-server",
+        ),
+        codex_command=blocked_command,
+    )
+    blocked = _apply_watchdog_block(
+        fetched_blocked,
+        now=fetched_blocked.captured_at,
+    )
+    assert blocked.status.value == "blocked"
+    assert blocked.credits == LimitWindow(name="credits", source="invalid:credits")
+    save_current_usage(blocked, current_dir)
+    blocked_roundtrip = {
+        usage.account_id: usage for usage in read_current_usage_records(current_dir)
+    }["invalid-credit"]
+    assert blocked_roundtrip.status.value == "blocked"
+    assert blocked_roundtrip.credits == LimitWindow(
+        name="credits",
+        source="invalid:credits",
+    )
+
+    blocked_completed = subprocess.run(
+        argv,
+        env={"PATH": "/usr/bin:/bin"},
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert (
+        blocked_completed.returncode,
+        blocked_completed.stdout,
+        blocked_completed.stderr,
+    ) == (65, "", "integration_snapshot_invalid_source\n")
+    assert current_path.read_bytes() == current_before
+    assert {path.name for path in generations.iterdir()} == generations_before
+
+    evidence, status = read_current_evidence(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=release.entrypoint_path,
+        now=datetime.now(UTC),
+    )
+    assert evidence == json.loads(baseline.stdout)
+    assert status == "partial"
 
 
 def test_installer_module_has_no_network_import():
@@ -1414,7 +4457,7 @@ def test_temporary_launcher_keeps_final_release_tree_and_attestation_unchanged(t
             str(release.launcher_path),
             "integration-snapshot",
             "--schema",
-            "1",
+            "2",
             "--format",
             "json",
         ],
@@ -2802,42 +5845,704 @@ def test_first_install_bootstrap_converges_then_uses_one_zero_time_lock(tmp_path
     assert holder.exitcode == contender.exitcode == 0
 
 
-def test_installer_script_has_narrow_parser_and_no_general_cli_import():
-    spec = importlib.util.spec_from_file_location("synthetic_installer_script", SCRIPT_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    parser = module._parser()
-    parsed = parser.parse_args(
+def test_installer_script_has_narrow_parser_and_no_general_cli_import(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+
+    completed = _run_bootstrap_help(repo_root)
+
+    assert completed.returncode == 0
+    assert completed.stderr == ""
+    for option in (
+        "--rollback",
+        "--source-root",
+        "--state-home",
+        "--data-home",
+        "--python",
+        "--temporary-root",
+    ):
+        assert option in completed.stdout
+    rejected = subprocess.run(
         [
-            "--source-root",
-            "/tmp/source",
+            sys.executable,
+            "-B",
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+            "--rollback",
             "--state-home",
             "/tmp/state",
             "--data-home",
             "/tmp/data",
             "--python",
-            "/usr/bin/python3",
-            "--temporary-root",
-            "/tmp/temporary",
-        ]
+            "/tmp/python",
+        ],
+        cwd=repo_root,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
     )
-    assert parsed.source_root == "/tmp/source"
-    assert parsed.rollback is False
-    with pytest.raises(module._InstallerArgumentError):
-        parser.parse_args(
-            [
-                "--rollback",
-                "--state-home",
-                "/tmp/state",
-                "--data-home",
-                "/tmp/data",
-                "--python",
-                "/tmp/python",
-            ]
-        )
+    assert rejected.returncode == 64
+    assert rejected.stderr == "integration_producer_unavailable\n"
     source = SCRIPT_PATH.read_text(encoding="utf-8")
     assert "codex_usage.cli" not in source
+
+
+def test_installer_script_bootstraps_repo_source_ahead_of_ambient_package(
+    tmp_path, pytestconfig
+):
+    from codex_usage import private_io
+
+    source_root = _temporary_source_copy(tmp_path)
+    bootstrap_parent = tmp_path / "bootstrap"
+    bootstrap_parent.mkdir(mode=0o700)
+    repo_root = _temporary_bootstrap_repo(bootstrap_parent)
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    lock_root = private_io._private_lock_root()
+    production_lock_root = pytestconfig._private_lock_production_root
+    ambient = tmp_path / "ambient"
+    ambient_package = ambient / "codex_usage"
+    ambient_package.mkdir(parents=True)
+    (ambient_package / "__init__.py").write_text("", encoding="utf-8")
+    (ambient_package / "integration_installer.py").write_text(
+        """\
+from pathlib import Path
+
+class IntegrationCleanupError(Exception):
+    pass
+
+class IntegrationInstallError(Exception):
+    pass
+
+def install_release(**kwargs):
+    Path(kwargs["state_home"], "ambient-imported").write_text("0.6.532")
+
+def rollback_active_release(**kwargs):
+    Path(kwargs["state_home"], "ambient-imported").write_text("0.6.532")
+""",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "/usr/bin/bwrap",
+            "--bind",
+            "/",
+            "/",
+            "--dev",
+            "/dev",
+            "--dir",
+            str(production_lock_root),
+            "--bind",
+            str(lock_root),
+            str(production_lock_root),
+            "--",
+            sys.executable,
+            "-B",
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+            "--source-root",
+            str(source_root),
+            "--state-home",
+            str(state_home),
+            "--data-home",
+            str(data_home),
+            "--python",
+            sys.executable,
+            "--temporary-root",
+            str(temporary_root),
+        ],
+        cwd=tmp_path,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONPATH": str(ambient),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert not (state_home / "ambient-imported").exists()
+    assert completed.returncode == 0
+    assert completed.stdout == "integration_producer_install_ok\n"
+    assert completed.stderr == ""
+    active = json.loads(
+        (state_home / "codex-usage" / "integration" / "active.json").read_bytes()
+    )
+    assert active["version"] == "0.6.536"
+
+
+def test_installer_script_rejects_symlinked_entrypoint_before_ambient_import(tmp_path):
+    ambient = tmp_path / "ambient"
+    ambient_package = ambient / "codex_usage"
+    ambient_package.mkdir(parents=True)
+    marker = tmp_path / "ambient-imported"
+    (ambient_package / "__init__.py").write_text("", encoding="utf-8")
+    (ambient_package / "integration_installer.py").write_text(
+        """\
+import os
+from pathlib import Path
+
+Path(os.environ["AMBIENT_IMPORT_MARKER"]).write_text("imported")
+
+class IntegrationCleanupError(Exception):
+    pass
+
+class IntegrationInstallError(Exception):
+    pass
+
+def install_release(**kwargs):
+    pass
+
+def rollback_active_release(**kwargs):
+    pass
+""",
+        encoding="utf-8",
+    )
+    linked_script = tmp_path / SCRIPT_PATH.name
+    linked_script.symlink_to(SCRIPT_PATH)
+
+    completed = subprocess.run(
+        [sys.executable, "-B", str(linked_script), "--help"],
+        cwd=tmp_path,
+        env={
+            "AMBIENT_IMPORT_MARKER": str(marker),
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONPATH": str(ambient),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+    assert not marker.exists()
+
+
+_BOOTSTRAP_TRANSITIVE_MODULES = tuple(
+    Path(relative).name
+    for relative in TEST_SOURCE_MANIFEST_FILES
+    if relative.startswith("src/codex_usage/")
+    and relative != "src/codex_usage/__init__.py"
+)
+
+
+def _temporary_bootstrap_repo(destination_root: Path) -> Path:
+    repo_root = _temporary_source_copy(destination_root)
+    for path in repo_root.rglob("*"):
+        path.chmod(0o755 if path.is_dir() else 0o644)
+    scripts = repo_root / "scripts"
+    scripts.mkdir(mode=0o755)
+    shutil.copyfile(SCRIPT_PATH, scripts / SCRIPT_PATH.name)
+    shutil.copyfile(
+        PROJECT_ROOT / "src/codex_usage/integration_installer.py",
+        repo_root / "src/codex_usage/integration_installer.py",
+    )
+    (scripts / SCRIPT_PATH.name).chmod(0o644)
+    (repo_root / "src/codex_usage/integration_installer.py").chmod(0o644)
+    return repo_root
+
+
+def _run_bootstrap_help(
+    repo_root: Path,
+    *,
+    environment: dict[str, str] | None = None,
+    include_bytecode_environment: bool = True,
+    prefix: tuple[str, ...] = (),
+) -> subprocess.CompletedProcess[str]:
+    child_environment = {"PATH": os.environ.get("PATH", "")}
+    if include_bytecode_environment:
+        child_environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    child_environment.update(environment or {})
+    return subprocess.run(
+        [
+            *prefix,
+            sys.executable,
+            "-B",
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+            "--help",
+        ],
+        cwd=repo_root,
+        env=child_environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+
+def test_installer_script_rejects_preloaded_foreign_installer_before_call(tmp_path):
+    marker = tmp_path / "ambient-called"
+    wrapper = """\
+import os
+from pathlib import Path
+import runpy
+import sys
+import types
+
+package = types.ModuleType("codex_usage")
+package.__file__ = "/foreign/codex_usage/__init__.py"
+package.__path__ = ["/foreign/codex_usage"]
+installer = types.ModuleType("codex_usage.integration_installer")
+installer.__file__ = "/foreign/codex_usage/integration_installer.py"
+installer.IntegrationCleanupError = type("IntegrationCleanupError", (Exception,), {})
+installer.IntegrationInstallError = type("IntegrationInstallError", (Exception,), {})
+
+def ambient_install(**_kwargs):
+    Path(os.environ["AMBIENT_CALL_MARKER"]).write_text("called")
+
+installer.install_release = ambient_install
+installer.rollback_active_release = ambient_install
+sys.modules["codex_usage"] = package
+sys.modules["codex_usage.integration_installer"] = installer
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            wrapper,
+            str(SCRIPT_PATH),
+            "--source-root",
+            str(tmp_path / "source"),
+            "--state-home",
+            str(tmp_path / "state"),
+            "--data-home",
+            str(tmp_path / "data"),
+            "--python",
+            sys.executable,
+            "--temporary-root",
+            str(tmp_path / "temporary"),
+        ],
+        cwd=tmp_path,
+        env={
+            "AMBIENT_CALL_MARKER": str(marker),
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+    assert not marker.exists()
+
+
+def test_installer_script_rejects_preloaded_installer_spoofing_local_origins(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    marker = tmp_path / "spoofed-called"
+    wrapper = """\
+import os
+from pathlib import Path
+import runpy
+import sys
+import types
+
+script = Path(sys.argv[1])
+package_root = script.parents[1] / "src" / "codex_usage"
+package = types.ModuleType("codex_usage")
+package.__file__ = str(package_root / "__init__.py")
+package.__path__ = [str(package_root)]
+installer = types.ModuleType("codex_usage.integration_installer")
+installer.__file__ = str(package_root / "integration_installer.py")
+installer.IntegrationCleanupError = type("IntegrationCleanupError", (Exception,), {})
+installer.IntegrationInstallError = type("IntegrationInstallError", (Exception,), {})
+
+def spoofed_install(**_kwargs):
+    Path(os.environ["SPOOFED_CALL_MARKER"]).write_text("called")
+
+installer.install_release = spoofed_install
+installer.rollback_active_release = spoofed_install
+sys.modules["codex_usage"] = package
+sys.modules["codex_usage.integration_installer"] = installer
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            wrapper,
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+            "--source-root",
+            str(tmp_path / "source-root"),
+            "--state-home",
+            str(tmp_path / "state"),
+            "--data-home",
+            str(tmp_path / "data"),
+            "--python",
+            sys.executable,
+            "--temporary-root",
+            str(tmp_path / "temporary"),
+        ],
+        cwd=repo_root,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "SPOOFED_CALL_MARKER": str(marker),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+    assert not marker.exists()
+
+
+def test_installer_script_rejects_any_preloaded_package_namespace_key(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    wrapper = """\
+import runpy
+import sys
+import types
+
+sys.modules["codex_usage.unrelated"] = types.ModuleType("codex_usage.unrelated")
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            wrapper,
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+            "--help",
+        ],
+        cwd=repo_root,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+
+
+def test_installer_script_imports_never_reach_hostile_meta_path_finder(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    marker = tmp_path / "meta-finder-executed"
+    wrapper = """\
+import importlib.machinery
+import os
+from pathlib import Path
+import runpy
+import sys
+
+script = Path(sys.argv[1])
+package_root = script.parents[1] / "src" / "codex_usage"
+
+class HostileLoader:
+    def __init__(self, fullname, source_path):
+        self.fullname = fullname
+        self.source_path = source_path
+
+    def create_module(self, _spec):
+        return None
+
+    def exec_module(self, module):
+        Path(os.environ["META_FINDER_MARKER"]).write_text("executed")
+        module.__file__ = str(self.source_path)
+        if self.fullname == "codex_usage.integration_installer":
+            module.IntegrationCleanupError = type("IntegrationCleanupError", (Exception,), {})
+            module.IntegrationInstallError = type("IntegrationInstallError", (Exception,), {})
+            module.install_release = lambda **_kwargs: None
+            module.rollback_active_release = lambda **_kwargs: None
+
+class HostileFinder:
+    def find_spec(self, fullname, _path=None, _target=None):
+        if fullname != "codex_usage" and not fullname.startswith("codex_usage."):
+            return None
+        source_path = package_root / (
+            "__init__.py" if fullname == "codex_usage" else fullname.rsplit(".", 1)[1] + ".py"
+        )
+        loader = HostileLoader(fullname, source_path)
+        spec = importlib.machinery.ModuleSpec(
+            fullname,
+            loader,
+            origin=str(source_path),
+            is_package=fullname == "codex_usage",
+        )
+        spec.has_location = True
+        if fullname == "codex_usage":
+            spec.submodule_search_locations = [str(package_root)]
+        return spec
+
+sys.meta_path.insert(0, HostileFinder())
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            wrapper,
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+            "--help",
+        ],
+        cwd=repo_root,
+        env={
+            "META_FINDER_MARKER": str(marker),
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stderr == ""
+    assert not marker.exists()
+
+
+def test_installer_script_keeps_exact_loader_guard_for_complete_closure(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    marker = tmp_path / "restored-meta-finder-reached"
+    wrapper = """\
+import hashlib
+import importlib
+import os
+from pathlib import Path
+import runpy
+import sys
+
+class AmbientFinder:
+    def find_spec(self, fullname, _path=None, _target=None):
+        if fullname == "codex_usage" or fullname.startswith("codex_usage."):
+            Path(os.environ["RESTORED_META_FINDER_MARKER"]).write_text("reached")
+        return None
+
+ambient = AmbientFinder()
+sys.meta_path.insert(0, ambient)
+namespace = runpy.run_path(sys.argv[1], run_name="synthetic_installer")
+finder = namespace["_SOURCE_FINDER"]
+expected = namespace["_EXPECTED_MODULES"]
+loader_type = namespace["_ValidatedSourceLoader"]
+assert sys.meta_path[0] is finder
+assert sys.meta_path[1] is ambient
+for fullname, (expected_path, _identity) in expected.items():
+    module = sys.modules[fullname]
+    loader = module.__spec__.loader
+    assert type(loader) is loader_type
+    assert module.__loader__ is loader
+    assert loader is finder.loader_for(fullname)
+    assert loader.path == str(expected_path)
+    assert loader._digest == hashlib.sha256(loader._payload).digest()
+try:
+    importlib.import_module("codex_usage.undeclared")
+except ImportError:
+    pass
+else:
+    raise AssertionError("undeclared package import escaped trusted guard")
+assert not Path(os.environ["RESTORED_META_FINDER_MARKER"]).exists()
+"""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            wrapper,
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+        ],
+        cwd=repo_root,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "RESTORED_META_FINDER_MARKER": str(marker),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == ""
+    assert completed.stderr == ""
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("cache_kind", ("directory", "loose-pyc"))
+def test_installer_script_rejects_source_bytecode_cache_without_deleting_it(
+    tmp_path, cache_kind
+):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    package_root = repo_root / "src" / "codex_usage"
+    if cache_kind == "directory":
+        cache_path = package_root / "__pycache__"
+        cache_path.mkdir(mode=0o755)
+    else:
+        cache_path = package_root / "private_io.pyc"
+        cache_path.write_bytes(b"attacker-bytecode")
+        cache_path.chmod(0o644)
+
+    completed = _run_bootstrap_help(repo_root)
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+    assert cache_path.exists()
+
+
+def test_installer_script_never_executes_valid_timestamp_bytecode(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    marker = tmp_path / "bytecode-executed"
+    source = repo_root / "src" / "codex_usage" / "integration_attestation.py"
+    source_stat = source.stat()
+    attacker = compile(
+        "from pathlib import Path\n"
+        "import os\n"
+        'Path(os.environ["BYTECODE_EXECUTION_MARKER"]).write_text("executed")\n',
+        str(source),
+        "exec",
+    )
+    bytecode = (
+        importlib.util.MAGIC_NUMBER
+        + struct.pack(
+            "<III",
+            0,
+            int(source_stat.st_mtime) & 0xFFFFFFFF,
+            source_stat.st_size & 0xFFFFFFFF,
+        )
+        + marshal.dumps(attacker)
+    )
+    cache_path = Path(importlib.util.cache_from_source(str(source)))
+    cache_path.parent.mkdir(mode=0o755)
+    cache_path.write_bytes(bytecode)
+    cache_path.chmod(0o644)
+
+    completed = _run_bootstrap_help(
+        repo_root,
+        environment={"BYTECODE_EXECUTION_MARKER": str(marker)},
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+    assert not marker.exists()
+    assert cache_path.exists()
+
+
+def test_installer_script_requires_bytecode_environment_even_with_dash_b(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+
+    completed = _run_bootstrap_help(
+        repo_root,
+        include_bytecode_environment=False,
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+
+
+def test_installer_script_rejects_external_pycache_prefix(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    external_cache = tmp_path / "external-pycache"
+
+    completed = _run_bootstrap_help(
+        repo_root,
+        environment={"PYTHONPYCACHEPREFIX": str(external_cache)},
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+    assert not external_cache.exists()
+
+
+@pytest.mark.parametrize("module_name", _BOOTSTRAP_TRANSITIVE_MODULES)
+def test_installer_script_rejects_symlinked_import_closure_before_execution(
+    tmp_path, module_name
+):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    marker = tmp_path / "symlink-executed"
+    foreign = tmp_path / f"foreign-{module_name}"
+    foreign.write_text(
+        "from pathlib import Path\n"
+        "import os\n"
+        'Path(os.environ["SYMLINK_EXECUTION_MARKER"]).write_text("executed")\n',
+        encoding="utf-8",
+    )
+    target = repo_root / "src" / "codex_usage" / module_name
+    target.unlink()
+    target.symlink_to(foreign)
+
+    completed = _run_bootstrap_help(
+        repo_root,
+        environment={"SYMLINK_EXECUTION_MARKER": str(marker)},
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+    assert not marker.exists()
+
+
+def test_installer_script_rejects_world_writable_import_closure(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    (repo_root / "src/codex_usage/private_io.py").chmod(0o666)
+
+    completed = _run_bootstrap_help(repo_root)
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+
+
+def test_installer_script_rejects_foreign_uid_import_closure(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    root_owned_source = Path("/usr/lib64/python3.14/__future__.py")
+    root_owned_stat = root_owned_source.stat()
+    assert root_owned_stat.st_uid != os.geteuid()
+    assert stat.S_IMODE(root_owned_stat.st_mode) == 0o644
+    target = repo_root / "src/codex_usage/integration_entrypoint.py"
+    completed = _run_bootstrap_help(
+        repo_root,
+        prefix=(
+            "/usr/bin/bwrap",
+            "--bind",
+            "/",
+            "/",
+            "--dev",
+            "/dev",
+            "--ro-bind",
+            str(root_owned_source),
+            str(target),
+            "--",
+        ),
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
 
 
 def test_candidate_manifest_is_single_final_only_write_with_real_treehash(tmp_path, monkeypatch):
@@ -2872,6 +6577,33 @@ def test_candidate_manifest_is_single_final_only_write_with_real_treehash(tmp_pa
         assert ".staging-" not in candidate[key]
         assert "temporary" not in candidate[key]
     assert candidate["release_tree_sha256"] == release.release_tree_sha256
+
+
+@pytest.mark.parametrize("mutation", ["unknown", "secret-like", "missing"])
+def test_candidate_manifest_requires_exact_canonical_fields(
+    tmp_path,
+    monkeypatch,
+    mutation,
+):
+    from codex_usage import integration_installer
+
+    original_manifest = integration_installer._manifest
+    original_rename = integration_installer._rename_noreplace
+    staging_renames = []
+
+    def mutated_manifest(**kwargs):
+        return _mutate_manifest_fields(original_manifest(**kwargs), mutation)
+
+    def capture_rename(source_name, target_name, parent_fd):
+        if ".staging-" in source_name:
+            staging_renames.append((source_name, target_name))
+        return original_rename(source_name, target_name, parent_fd)
+
+    monkeypatch.setattr(integration_installer, "_manifest", mutated_manifest)
+    monkeypatch.setattr(integration_installer, "_rename_noreplace", capture_rename)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        _install(tmp_path)
+    assert staging_renames == []
 
 
 def test_preexisting_candidate_is_exclusive_and_untouched(tmp_path, monkeypatch):
@@ -4077,7 +7809,7 @@ def test_record_must_bind_nonempty_entrypoint_row(tmp_path):
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("release_id", "0.6.532-ffffffffffffffff"),
+        ("release_id", "0.6.536-ffffffffffffffff"),
         ("source_manifest_sha256", "f" * 64),
     ],
 )
@@ -4156,7 +7888,7 @@ def test_builder_rejects_wrong_wheel_basename_before_release_use(tmp_path, monke
     monkeypatch.setattr(integration_installer, "_require_offline_builder", lambda **_: None)
 
     def fake_builder(command, *, env, cwd):
-        (wheel_dir / "wrong-name-0.6.532-py3-none-any.whl").write_bytes(b"wheel")
+        (wheel_dir / "wrong-name-0.6.536-py3-none-any.whl").write_bytes(b"wheel")
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(integration_installer, "_run_builder_bounded", fake_builder)
@@ -4224,7 +7956,7 @@ def test_launcher_drops_marker_environment_before_runtime(tmp_path):
             str(release.launcher_path),
             "integration-snapshot",
             "--schema",
-            "1",
+            "2",
             "--format",
             "json",
         ],
@@ -4242,36 +7974,54 @@ def test_launcher_drops_marker_environment_before_runtime(tmp_path):
         timeout=5,
     )
     assert completed.returncode == 0
-    assert json.loads(completed.stdout)["schema_version"] == 1
+    assert json.loads(completed.stdout)["schema_version"] == 2
     assert completed.stderr == ""
 
 
-def test_installer_parser_errors_are_data_sparse(capsys):
-    spec = importlib.util.spec_from_file_location("synthetic_installer_parser", SCRIPT_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+def test_installer_parser_errors_are_data_sparse(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
 
-    result = module.main(["--unknown", "secret-marker"])
-    captured = capsys.readouterr()
-    assert result == 64
-    assert captured.out == ""
-    assert captured.err == "integration_producer_unavailable\n"
-    assert "secret-marker" not in captured.err
-
-
-def test_installer_cleanup_errors_have_distinct_data_sparse_result(tmp_path, monkeypatch, capsys):
-    spec = importlib.util.spec_from_file_location("synthetic_installer_cleanup", SCRIPT_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    def fail_install(**_kwargs):
-        raise module.IntegrationCleanupError()
-
-    monkeypatch.setattr(module, "install_release", fail_install)
-    result = module.main(
+    completed = subprocess.run(
         [
+            sys.executable,
+            "-B",
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+            "--unknown",
+            "secret-marker",
+        ],
+        cwd=repo_root,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 64
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+    assert "secret-marker" not in completed.stderr
+
+
+def test_installer_cleanup_errors_have_distinct_data_sparse_result(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    installer_path = repo_root / "src/codex_usage/integration_installer.py"
+    installer_path.write_text(
+        installer_path.read_text(encoding="utf-8")
+        + "\ndef install_release(**_kwargs):\n"
+        + "    raise IntegrationCleanupError()\n",
+        encoding="utf-8",
+    )
+    installer_path.chmod(0o644)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
             "--source-root",
             str(tmp_path / "source"),
             "--state-home",
@@ -4282,12 +8032,20 @@ def test_installer_cleanup_errors_have_distinct_data_sparse_result(tmp_path, mon
             str(tmp_path / "python"),
             "--temporary-root",
             str(tmp_path / "temporary"),
-        ]
+        ],
+        cwd=repo_root,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
     )
-    captured = capsys.readouterr()
-    assert result == 70
-    assert captured.out == ""
-    assert captured.err == "integration_producer_cleanup_failed\n"
+    assert completed.returncode == 70
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_cleanup_failed\n"
 
 
 def test_attestation_private_path_guards_reject_missing_and_wrong_types(tmp_path):
@@ -4907,7 +8665,7 @@ def test_attestation_manifest_rejects_version_and_home_mismatch(tmp_path, monkey
     monkeypatch.setattr(
         module,
         "_read_manifest",
-        lambda _path: {"schema_version": 1, "version": "wrong"},
+        lambda _path: {"schema_version": 2, "version": "wrong"},
     )
     with pytest.raises(module.IntegrationAttestationUnavailable):
         module._verify_manifest(
@@ -4921,7 +8679,7 @@ def test_attestation_manifest_rejects_version_and_home_mismatch(tmp_path, monkey
         module,
         "_read_manifest",
         lambda _path: {
-            "schema_version": 1,
+            "schema_version": 2,
             "version": module._EXPECTED_VERSION,
             "source_manifest_sha256": "a" * 64,
             "state_home": str(tmp_path / "other-state"),
@@ -6894,7 +10652,7 @@ def test_installer_release_entry_guards_and_public_wrapper(tmp_path, monkeypatch
     pyproject = bad_source_root / "pyproject.toml"
     pyproject.write_text(
         pyproject.read_text(encoding="utf-8").replace(
-            'version = "0.6.532"',
+            'version = "0.6.536"',
             'version = "0.0.0"',
         ),
         encoding="utf-8",

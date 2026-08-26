@@ -31,13 +31,15 @@ def _sample(
     used: float,
     *,
     account_id: str = "alpha",
+    pool: str = "main",
+    window_seconds: int = 18_000,
     generation: str = "a",
     reset_at=None,
 ):
     return UsageSample(
         account_id=account_id,
-        pool="main",
-        window_seconds=18_000,
+        pool=pool,
+        window_seconds=window_seconds,
         captured_at=BASE + timedelta(minutes=offset_minutes),
         used_percent=used,
         reset_generation=generation,
@@ -1224,3 +1226,455 @@ def test_consumption_ema_fails_closed_for_used_percent_property_hook():
         time_constant_seconds=300,
         max_gap_seconds=3_600,
     ) == 0.0
+def test_tracker_evidence_uses_ema60_rate_and_projects_to_reset():
+    reset_at = BASE + timedelta(hours=1)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(0, 10, generation="reset-1", reset_at=reset_at),
+            _sample(10, 20, generation="reset-1", reset_at=reset_at),
+        ],
+        now=BASE + timedelta(minutes=10),
+    )
+
+    assert result is not None
+    assert result.pool == "main"
+    assert result.limit_window_seconds == 18_000
+    assert result.reset_generation == "reset-1"
+    assert result.ema_time_constant_seconds == 3_600
+    assert result.rate_percentage_points_per_second == pytest.approx(1 / 60)
+    assert result.projected_used_percent_at_reset == 70.0
+    assert result.coverage == "complete"
+    assert result.sample_count == 2
+    assert result.first_sample_at == BASE
+    assert result.last_sample_at == BASE + timedelta(minutes=10)
+
+
+def test_tracker_evidence_time_weights_irregular_intervals():
+    reset_at = BASE + timedelta(hours=2)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(0, 0, generation="reset-1", reset_at=reset_at),
+            _sample(10, 10, generation="reset-1", reset_at=reset_at),
+            _sample(40, 70, generation="reset-1", reset_at=reset_at),
+        ],
+        now=BASE + timedelta(minutes=40),
+    )
+
+    assert result is not None
+    assert result.rate_percentage_points_per_second == pytest.approx(0.023224489004789)
+
+
+def test_tracker_evidence_cuts_history_before_latest_reset_generation():
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(
+                0,
+                90,
+                generation="reset-old",
+                reset_at=BASE + timedelta(minutes=30),
+            ),
+            _sample(
+                60,
+                5,
+                generation="reset-new",
+                reset_at=BASE + timedelta(hours=6),
+            ),
+            _sample(
+                90,
+                15,
+                generation="reset-new",
+                reset_at=BASE + timedelta(hours=6),
+            ),
+        ],
+        now=BASE + timedelta(minutes=90),
+    )
+
+    assert result is not None
+    assert result.reset_generation == "reset-new"
+    assert result.sample_count == 2
+    assert result.first_sample_at == BASE + timedelta(minutes=60)
+    assert result.rate_percentage_points_per_second == pytest.approx(1 / 180)
+
+
+def test_tracker_evidence_rejects_time_reversal_before_reset_cut():
+    reset_at = BASE + timedelta(hours=6)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(
+                30,
+                90,
+                generation="reset-old",
+                reset_at=BASE + timedelta(minutes=15),
+            ),
+            _sample(0, 5, generation="reset-new", reset_at=reset_at),
+            _sample(30, 15, generation="reset-new", reset_at=reset_at),
+        ],
+        now=BASE + timedelta(minutes=30),
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_rejects_unproven_counter_drop():
+    reset_at = BASE + timedelta(hours=6)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(0, 50, generation="reset-1", reset_at=reset_at),
+            _sample(30, 10, generation="reset-1", reset_at=reset_at),
+            _sample(60, 20, generation="reset-1", reset_at=reset_at),
+        ],
+        now=BASE + timedelta(minutes=60),
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_rejects_duplicate_timestamp():
+    reset_at = BASE + timedelta(hours=6)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(0, 10, generation="reset-1", reset_at=reset_at),
+            _sample(0, 20, generation="reset-1", reset_at=reset_at),
+            _sample(30, 30, generation="reset-1", reset_at=reset_at),
+        ],
+        now=BASE + timedelta(minutes=30),
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_rejects_time_reversal():
+    reset_at = BASE + timedelta(hours=6)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(30, 10, generation="reset-1", reset_at=reset_at),
+            _sample(0, 20, generation="reset-1", reset_at=reset_at),
+            _sample(60, 30, generation="reset-1", reset_at=reset_at),
+        ],
+        now=BASE + timedelta(minutes=60),
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_rejects_gapped_series():
+    reset_at = BASE + timedelta(hours=8)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(0, 10, generation="reset-1", reset_at=reset_at),
+            _sample(120, 20, generation="reset-1", reset_at=reset_at),
+            _sample(150, 30, generation="reset-1", reset_at=reset_at),
+        ],
+        now=BASE + timedelta(minutes=150),
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_keeps_main_and_spark_pools_separate():
+    reset_at = BASE + timedelta(hours=6)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(0, 10, generation="reset-1", reset_at=reset_at),
+            _sample(
+                30,
+                20,
+                pool="gpt-5.3-codex-spark",
+                generation="reset-1",
+                reset_at=reset_at,
+            ),
+        ],
+        now=BASE + timedelta(minutes=30),
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_rejects_unknown_pool():
+    reset_at = BASE + timedelta(hours=6)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(0, 10, pool="unknown", generation="reset-1", reset_at=reset_at),
+            _sample(30, 20, pool="unknown", generation="reset-1", reset_at=reset_at),
+        ],
+        now=BASE + timedelta(minutes=30),
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_rejects_unknown_pool_with_insufficient_series():
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(
+                0,
+                10,
+                pool="unknown",
+                generation="reset-1",
+                reset_at=BASE + timedelta(hours=6),
+            ),
+        ],
+        now=BASE,
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_rejects_multiple_accounts():
+    reset_at = BASE + timedelta(hours=6)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(0, 10, generation="reset-1", reset_at=reset_at),
+            _sample(
+                30,
+                20,
+                account_id="beta",
+                generation="reset-1",
+                reset_at=reset_at,
+            ),
+        ],
+        now=BASE + timedelta(minutes=30),
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_rejects_multiple_limit_windows():
+    reset_at = BASE + timedelta(hours=6)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(0, 10, generation="reset-1", reset_at=reset_at),
+            _sample(
+                30,
+                20,
+                window_seconds=604_800,
+                generation="reset-1",
+                reset_at=reset_at,
+            ),
+        ],
+        now=BASE + timedelta(minutes=30),
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_rejects_unsupported_limit_window():
+    reset_at = BASE + timedelta(hours=6)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(
+                0,
+                10,
+                window_seconds=1,
+                generation="reset-1",
+                reset_at=reset_at,
+            ),
+            _sample(
+                30,
+                20,
+                window_seconds=1,
+                generation="reset-1",
+                reset_at=reset_at,
+            ),
+        ],
+        now=BASE + timedelta(minutes=30),
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_rejects_unsupported_insufficient_window():
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(
+                0,
+                10,
+                window_seconds=1,
+                generation="reset-1",
+                reset_at=BASE + timedelta(hours=6),
+            ),
+        ],
+        now=BASE,
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_rejects_reset_target_change_within_generation():
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(
+                0,
+                10,
+                generation="reset-1",
+                reset_at=BASE + timedelta(hours=6),
+            ),
+            _sample(
+                30,
+                20,
+                generation="reset-1",
+                reset_at=BASE + timedelta(hours=7),
+            ),
+        ],
+        now=BASE + timedelta(minutes=30),
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_marks_single_current_sample_insufficient():
+    sample = _sample(
+        0,
+        10,
+        generation="reset-1",
+        reset_at=BASE + timedelta(hours=6),
+    )
+
+    result = consumption_module.calculate_tracker_evidence([sample], now=BASE)
+
+    assert result is not None
+    assert result.coverage == "insufficient"
+    assert result.rate_percentage_points_per_second == 0.0
+    assert result.projected_used_percent_at_reset == 10.0
+    assert result.sample_count == 1
+    assert result.first_sample_at == BASE
+    assert result.last_sample_at == BASE
+
+
+def test_tracker_evidence_rejects_insufficient_series_with_expired_reset():
+    result = consumption_module.calculate_tracker_evidence(
+        [_sample(0, 10, generation="reset-1", reset_at=BASE)],
+        now=BASE,
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_marks_old_complete_series_stale():
+    reset_at = BASE + timedelta(hours=6)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(0, 10, generation="reset-1", reset_at=reset_at),
+            _sample(30, 20, generation="reset-1", reset_at=reset_at),
+        ],
+        now=BASE + timedelta(minutes=60),
+    )
+
+    assert result is not None
+    assert result.coverage == "stale"
+
+
+def test_tracker_evidence_rejects_future_dated_samples():
+    reset_at = BASE + timedelta(hours=6)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(30, 10, generation="reset-1", reset_at=reset_at),
+            _sample(60, 20, generation="reset-1", reset_at=reset_at),
+        ],
+        now=BASE,
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_caps_reset_projection_at_100_percent():
+    reset_at = BASE + timedelta(hours=6)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(0, 0, generation="reset-1", reset_at=reset_at),
+            _sample(30, 50, generation="reset-1", reset_at=reset_at),
+        ],
+        now=BASE + timedelta(minutes=30),
+    )
+
+    assert result is not None
+    assert result.projected_used_percent_at_reset == 100.0
+
+
+def test_tracker_evidence_rejects_expired_reset_target():
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(0, 10, generation="reset-1", reset_at=BASE),
+            _sample(30, 20, generation="reset-1", reset_at=BASE),
+        ],
+        now=BASE + timedelta(minutes=30),
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_rejects_nonpositive_usage_transition():
+    reset_at = BASE + timedelta(hours=6)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(0, 10, generation="reset-1", reset_at=reset_at),
+            _sample(30, 10, generation="reset-1", reset_at=reset_at),
+            _sample(60, 20, generation="reset-1", reset_at=reset_at),
+        ],
+        now=BASE + timedelta(minutes=60),
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_rejects_iterators_over_sample_cap(monkeypatch):
+    monkeypatch.setattr(consumption_module, "MAX_CONSUMPTION_SAMPLES", 2)
+    reset_at = BASE + timedelta(hours=6)
+
+    with pytest.raises(ValueError, match="too many samples"):
+        consumption_module.calculate_tracker_evidence(
+            (
+                _sample(index * 30, 10 + index, generation="reset-1", reset_at=reset_at)
+                for index in range(3)
+            ),
+            now=BASE + timedelta(minutes=60),
+        )
+
+
+def test_tracker_evidence_rejects_naive_clock():
+    with pytest.raises(ValueError, match="now must be timezone-aware"):
+        consumption_module.calculate_tracker_evidence(
+            [],
+            now=datetime(2026, 8, 16, 10, 0),
+        )
+
+
+def test_tracker_evidence_rejects_non_iterable_samples():
+    with pytest.raises(ValueError, match="samples are invalid"):
+        consumption_module.calculate_tracker_evidence(None, now=BASE)  # type: ignore[arg-type]
+
+
+def test_tracker_evidence_rejects_invalid_sample_entry():
+    with pytest.raises(ValueError, match="samples are invalid"):
+        consumption_module.calculate_tracker_evidence([object()], now=BASE)  # type: ignore[list-item]
+
+
+def test_tracker_evidence_normalizes_clock_before_stale_arithmetic():
+    reset_at = BASE + timedelta(hours=6)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(0, 10, generation="reset-1", reset_at=reset_at),
+            _sample(30, 20, generation="reset-1", reset_at=reset_at),
+        ],
+        now=_BrokenNow(2026, 8, 16, 10, 30, tzinfo=UTC),
+    )
+
+    assert result is not None
+    assert result.coverage == "complete"

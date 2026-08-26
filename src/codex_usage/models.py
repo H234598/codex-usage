@@ -528,3 +528,83 @@ def _finite_number(value: Any) -> float | None:
 def _valid_percent(value: Any) -> float | None:
     number = _finite_number(value)
     return number if number is not None and 0 <= number <= 100 else None
+
+
+def credit_values_match(left: Any, right: Any) -> bool:
+    left_number = _finite_number(left)
+    right_number = _finite_number(right)
+    if left_number is None or right_number is None:
+        return False
+    try:
+        lower, upper = sorted((left_number, right_number))
+        for _ in range(4):
+            if lower == upper:
+                return True
+            lower = math.nextafter(lower, upper)
+        return lower == upper
+    except (OverflowError, TypeError, ValueError):
+        return False
+
+
+def credit_window_remaining_percent(window: LimitWindow) -> float | None:
+    """Return explicit/denominated credit percent; absolute balances return None."""
+    if not isinstance(window, LimitWindow):
+        raise ValueError("credit window is invalid")
+    values: dict[str, float | None] = {}
+    for field_name in ("used", "limit", "remaining", "percent"):
+        raw_value = getattr(window, field_name, None)
+        if raw_value is None:
+            values[field_name] = None
+            continue
+        value = _finite_number(raw_value)
+        if value is None or value < 0:
+            raise ValueError("credit window is invalid")
+        values[field_name] = value
+    used = values["used"]
+    limit = values["limit"]
+    remaining = values["remaining"]
+    percent = values["percent"]
+    if percent is not None and percent > 100:
+        raise ValueError("credit window is invalid")
+    if limit is None:
+        if percent is None:
+            if remaining is None or used is not None:
+                raise ValueError("credit window is invalid")
+            return None
+        if used is not None or (
+            remaining is not None and not credit_values_match(remaining, percent)
+        ):
+            raise ValueError("credit window is invalid")
+        return percent
+    if limit <= 0 or (used is None and remaining is None and percent is None):
+        raise ValueError("credit window is invalid")
+
+    derived: list[float] = []
+    if used is not None:
+        if used > limit:
+            if not credit_values_match(used, limit):
+                raise ValueError("credit window is invalid")
+            used = limit
+        derived.append((limit - used) / limit * 100.0)
+    if remaining is not None:
+        if remaining > limit:
+            if not credit_values_match(remaining, limit):
+                raise ValueError("credit window is invalid")
+            remaining = limit
+        derived.append(remaining / limit * 100.0)
+    if used is not None and remaining is not None:
+        try:
+            total = used + remaining
+        except (OverflowError, TypeError, ValueError):
+            raise ValueError("credit window is invalid") from None
+        if not credit_values_match(total, limit):
+            raise ValueError("credit window is invalid")
+    if percent is not None:
+        if any(not credit_values_match(value, percent) for value in derived):
+            raise ValueError("credit window is invalid")
+        return percent
+    if not derived or any(
+        not credit_values_match(value, derived[0]) for value in derived[1:]
+    ):
+        raise ValueError("credit window is invalid")
+    return derived[0]

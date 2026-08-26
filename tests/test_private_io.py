@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import multiprocessing
+import os
+import pwd
+import stat
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
 
+import codex_usage.config as config_module
 import codex_usage.private_io as private_io
 from codex_usage.private_io import (
     assert_no_symlink_ancestors,
@@ -24,6 +32,144 @@ INVALID_LOCK_TIMEOUTS = (
     "1",
     10**10_000,
 )
+
+
+def _evidence_lock_child(
+    state_home_text,
+    release_mode,
+    current_mode,
+    ready,
+    release,
+    result,
+):
+    from codex_usage.integration_evidence import IntegrationBusy, evidence_lock_set
+
+    ready.set()
+    try:
+        with evidence_lock_set(
+            state_home=Path(state_home_text),
+            release_mode=release_mode,
+            current_mode=current_mode,
+            timeout_seconds=0,
+            create=False,
+        ):
+            result.put("acquired")
+    except IntegrationBusy:
+        result.put("busy")
+    finally:
+        release.wait(10)
+
+
+def _evidence_lock_child_holds(
+    state_home_text,
+    release_mode,
+    current_mode,
+    ready,
+    release,
+    result,
+):
+    from codex_usage.integration_evidence import IntegrationBusy, evidence_lock_set
+
+    ready.set()
+    try:
+        with evidence_lock_set(
+            state_home=Path(state_home_text),
+            release_mode=release_mode,
+            current_mode=current_mode,
+            timeout_seconds=0,
+            create=False,
+        ):
+            result.put("acquired")
+            release.wait(10)
+    except IntegrationBusy:
+        result.put("busy")
+
+
+def _create_evidence_lock_inodes(state_home):
+    from codex_usage import integration_evidence
+
+    integration = state_home / "codex-usage" / "integration"
+    integration.mkdir(mode=0o700, parents=True)
+    integration.parent.chmod(0o700)
+    lock_root = private_io._private_lock_root()
+    ensure_private_directory(lock_root, label="test evidence lock root")
+    targets = (
+        state_home / "codex-usage" / "integration" / "producer-install",
+        state_home / "codex-usage" / "integration" / "current.json",
+    )
+    for target in targets:
+        lock_path = lock_root / integration_evidence._evidence_lock_name(target)
+        fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(fd)
+
+
+def test_private_lock_root_uses_passwd_home_for_effective_uid(
+    tmp_path, monkeypatch
+):
+    """Would fail if HOME, XDG, or the real UID selected the lock namespace."""
+    effective_uid = 12345
+    real_uid = 54321
+    passwd_home = tmp_path / "passwd-effective-home"
+    looked_up: list[int] = []
+
+    monkeypatch.setenv("HOME", str(tmp_path / "environment-home"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "environment-state"))
+    monkeypatch.setattr(private_io.os, "geteuid", lambda: effective_uid)
+    monkeypatch.setattr(private_io.os, "getuid", lambda: real_uid)
+
+    def passwd_entry(uid: int):
+        looked_up.append(uid)
+        return type("PasswdEntry", (), {"pw_dir": str(passwd_home)})()
+
+    monkeypatch.setattr(pwd, "getpwuid", passwd_entry)
+
+    assert private_io._private_lock_root_from_passwd() == (
+        passwd_home / ".local/state/codex-usage/locks"
+    )
+    assert looked_up == [effective_uid]
+
+
+def child_lock_attempt(tmp_path, *, held, requested):
+    from codex_usage.integration_evidence import evidence_lock_set
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    _create_evidence_lock_inodes(state_home)
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    release = context.Event()
+    result = context.Queue()
+    process = context.Process(
+        target=_evidence_lock_child_holds,
+        args=(
+            str(state_home),
+            requested[0],
+            requested[1],
+            ready,
+            release,
+            result,
+        ),
+    )
+    try:
+        with evidence_lock_set(
+            state_home=state_home,
+            release_mode=held[0],
+            current_mode=held[1],
+            timeout_seconds=0,
+            create=False,
+        ):
+            process.start()
+            assert ready.wait(10)
+            child_result = result.get(timeout=10)
+        release.set()
+        process.join(10)
+        assert process.exitcode == 0
+        return child_result
+    finally:
+        release.set()
+        if process.is_alive():
+            process.terminate()
+            process.join(10)
 
 
 def test_lock_deadline_rejects_non_finite_monotonic_result(monkeypatch):
@@ -598,7 +744,7 @@ def test_ensure_private_directory_rejects_foreign_owner(tmp_path, monkeypatch):
     target = tmp_path / "private"
     target.mkdir(mode=0o700)
     target.chmod(0o700)
-    monkeypatch.setattr(private_io.os, "getuid", lambda: 2**31 - 1)
+    monkeypatch.setattr(private_io.os, "geteuid", lambda: 2**31 - 1)
 
     with pytest.raises(ValueError):
         ensure_private_directory(target, label="private directory")
@@ -608,7 +754,7 @@ def test_read_private_text_rejects_foreign_owner(tmp_path, monkeypatch):
     path = tmp_path / "value.json"
     path.write_text("secret", encoding="utf-8")
     path.chmod(0o600)
-    monkeypatch.setattr(private_io.os, "getuid", lambda: 2**31 - 1)
+    monkeypatch.setattr(private_io.os, "geteuid", lambda: 2**31 - 1)
 
     with pytest.raises(ValueError):
         private_io.read_private_text(
@@ -623,7 +769,7 @@ def test_write_private_text_rejects_foreign_existing_owner(tmp_path, monkeypatch
     path = tmp_path / "value.json"
     path.write_text("old", encoding="utf-8")
     path.chmod(0o600)
-    monkeypatch.setattr(private_io.os, "getuid", lambda: 2**31 - 1)
+    monkeypatch.setattr(private_io.os, "geteuid", lambda: 2**31 - 1)
 
     with pytest.raises(ValueError):
         write_private_text(path, "new", label="value")
@@ -634,7 +780,7 @@ def test_private_path_lock_rejects_foreign_owner(tmp_path, monkeypatch):
     lock_path = path.with_name(path.name + ".lock")
     lock_path.write_text("", encoding="utf-8")
     lock_path.chmod(0o600)
-    monkeypatch.setattr(private_io.os, "getuid", lambda: 2**31 - 1)
+    monkeypatch.setattr(private_io.os, "geteuid", lambda: 2**31 - 1)
 
     with pytest.raises(ValueError):
         with private_path_lock(path, label="config lock"):
@@ -650,6 +796,226 @@ def test_write_private_text_replaces_atomically_and_keeps_mode(tmp_path):
     assert path.read_text(encoding="utf-8") == "new"
     assert oct(path.stat().st_mode & 0o777) == "0o600"
     assert list(tmp_path.glob(".value.json.tmp-*")) == []
+
+
+def test_write_private_text_keeps_live_target_single_linked_before_replace(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "value.json"
+    path.write_text("old", encoding="utf-8")
+    original_replace = private_io.os.replace
+    observed_link_counts: list[int] = []
+    observed_rollback_modes: list[int] = []
+
+    def observe_replace(source, target):
+        if Path(target) == path and ".tmp-" in Path(source).name:
+            observed_link_counts.append(path.stat().st_nlink)
+            rollbacks = list(tmp_path.glob(".value.json.rollback-*"))
+            assert len(rollbacks) == 1
+            observed_rollback_modes.append(rollbacks[0].stat().st_mode & 0o777)
+        return original_replace(source, target)
+
+    monkeypatch.setattr(private_io.os, "replace", observe_replace)
+
+    write_private_text(path, "new", label="value")
+
+    assert observed_link_counts == [1]
+    assert observed_rollback_modes == [0o600]
+    assert path.read_text(encoding="utf-8") == "new"
+
+
+@pytest.mark.parametrize("artifact_kind", ["hardlink", "copy"])
+def test_write_private_text_recovers_stale_rollback_artifact(
+    tmp_path,
+    artifact_kind,
+):
+    path = tmp_path / "value.json"
+    path.write_text("old", encoding="utf-8")
+    path.chmod(0o600)
+    rollback = tmp_path / (
+        ".value.json.rollback-crash"
+        if artifact_kind == "hardlink"
+        else ".value.json.rollback"
+    )
+    if artifact_kind == "hardlink":
+        rollback.hardlink_to(path)
+    else:
+        rollback.write_text("older", encoding="utf-8")
+        rollback.chmod(0o600)
+
+    write_private_text(path, "new", label="value")
+
+    assert path.read_text(encoding="utf-8") == "new"
+    assert path.stat().st_nlink == 1
+    assert not rollback.exists()
+
+
+def test_write_private_text_rejects_insecure_stale_rollback_artifact(tmp_path):
+    path = tmp_path / "value.json"
+    path.write_text("old", encoding="utf-8")
+    path.chmod(0o600)
+    rollback = tmp_path / ".value.json.rollback-crash"
+    rollback.write_text("older", encoding="utf-8")
+    rollback.chmod(0o640)
+
+    with pytest.raises(ValueError, match="private user-owned"):
+        write_private_text(path, "new", label="value")
+
+    assert path.read_text(encoding="utf-8") == "old"
+    assert path.stat().st_nlink == 1
+    assert rollback.read_text(encoding="utf-8") == "older"
+
+
+def test_write_private_text_rejects_hardlinked_rollback_without_restoring_it(tmp_path):
+    path = tmp_path / "value.json"
+    rollback = tmp_path / ".value.json.rollback-crash"
+    rollback.write_text("old", encoding="utf-8")
+    rollback.chmod(0o600)
+    alias = tmp_path / "rollback-alias"
+    alias.hardlink_to(rollback)
+
+    with pytest.raises(ValueError):
+        write_private_text(path, "new", label="value")
+
+    assert not path.exists()
+    assert rollback.read_text(encoding="utf-8") == "old"
+    assert alias.read_text(encoding="utf-8") == "old"
+    assert rollback.stat().st_nlink == 2
+
+
+@pytest.mark.parametrize("failure_stage", ["read", "write", "fsync"])
+def test_write_private_text_cleans_owned_partial_rollback_on_copy_failure(
+    tmp_path,
+    monkeypatch,
+    failure_stage,
+):
+    path = tmp_path / "value.json"
+    path.write_text("old", encoding="utf-8")
+    path.chmod(0o600)
+    original_open = private_io.os.open
+    original_read = private_io.os.read
+    original_write = private_io.os.write
+    original_fsync = private_io.os.fsync
+    source_fds: set[int] = set()
+    rollback_fds: set[int] = set()
+    first_source_read = True
+
+    def track_open(file, flags, mode=0o777):
+        fd = original_open(file, flags, mode)
+        opened_path = Path(file)
+        if opened_path == path:
+            source_fds.add(fd)
+        if opened_path.name.startswith(".value.json.rollback-"):
+            rollback_fds.add(fd)
+        return fd
+
+    def fail_read(fd, size):
+        nonlocal first_source_read
+        if failure_stage == "read" and fd in source_fds:
+            if not first_source_read:
+                raise OSError("synthetic rollback read failure")
+            first_source_read = False
+            return original_read(fd, min(size, 1))
+        return original_read(fd, size)
+
+    def fail_write(fd, value):
+        if failure_stage == "write" and fd in rollback_fds:
+            original_write(fd, value[:1])
+            raise OSError("synthetic rollback write failure")
+        return original_write(fd, value)
+
+    def fail_fsync(fd):
+        if failure_stage == "fsync" and fd in rollback_fds:
+            raise OSError("synthetic rollback fsync failure")
+        return original_fsync(fd)
+
+    monkeypatch.setattr(private_io.os, "open", track_open)
+    monkeypatch.setattr(private_io.os, "read", fail_read)
+    monkeypatch.setattr(private_io.os, "write", fail_write)
+    monkeypatch.setattr(private_io.os, "fsync", fail_fsync)
+
+    with pytest.raises(OSError, match=f"rollback {failure_stage} failure"):
+        write_private_text(path, "new", label="value")
+
+    assert path.read_text(encoding="utf-8") == "old"
+    assert path.stat().st_nlink == 1
+    assert list(tmp_path.glob(".value.json.rollback*")) == []
+
+
+def test_write_private_text_rejects_oversized_rollback_source_before_copy(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "value.json"
+    path.write_text("old-too-large", encoding="utf-8")
+    path.chmod(0o600)
+    monkeypatch.setattr(private_io, "_MAX_PRIVATE_ROLLBACK_BYTES", 3, raising=False)
+
+    with pytest.raises(ValueError, match="too large for rollback"):
+        write_private_text(path, "new", label="value")
+
+    assert path.read_text(encoding="utf-8") == "old-too-large"
+    assert list(tmp_path.glob(".value.json.rollback*")) == []
+
+
+def test_overlapping_write_private_text_transactions_preserve_each_other(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "value.json"
+    path.write_text("old", encoding="utf-8")
+    path.chmod(0o600)
+    original_copy = private_io._copy_private_file
+    first_owns_rollback = Event()
+    release_first = Event()
+    second_started = Event()
+    second_finished = Event()
+    copy_calls = 0
+
+    def overlap_copy(*args, **kwargs):
+        nonlocal copy_calls
+        original_copy(*args, **kwargs)
+        copy_calls += 1
+        if copy_calls == 1:
+            first_owns_rollback.set()
+            if not release_first.wait(5):
+                raise TimeoutError("test did not release first writer")
+
+    def second_write():
+        second_started.set()
+        try:
+            write_private_text(path, "second", label="value")
+        finally:
+            second_finished.set()
+
+    monkeypatch.setattr(private_io, "_copy_private_file", overlap_copy)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(write_private_text, path, "first", label="value")
+        assert first_owns_rollback.wait(5)
+        second = executor.submit(second_write)
+        assert second_started.wait(5)
+        second_blocked = not second_finished.wait(0.2)
+        release_first.set()
+        first.result(timeout=5)
+        second.result(timeout=5)
+
+    assert second_blocked
+    assert path.read_text(encoding="utf-8") == "second"
+    assert path.stat().st_nlink == 1
+    assert list(tmp_path.glob(".value.json.rollback*")) == []
+
+
+def test_write_private_text_reuses_same_thread_private_path_lock(tmp_path):
+    path = tmp_path / "value.json"
+    path.write_text("old", encoding="utf-8")
+    path.chmod(0o600)
+
+    with private_path_lock(path, timeout_seconds=0, label="outer lock"):
+        write_private_text(path, "new", label="value")
+
+    assert path.read_text(encoding="utf-8") == "new"
+    assert sorted(item.name for item in tmp_path.iterdir()) == ["value.json"]
 
 
 @pytest.mark.parametrize("mode", [0o640, True, "600", -1])
@@ -680,15 +1046,21 @@ def test_write_private_text_rejects_non_directory_parent(tmp_path):
 
 def test_write_private_text_rejects_invalid_temporary_descriptor(tmp_path, monkeypatch):
     path = tmp_path / "value"
-    monkeypatch.setattr(
-        private_io.os,
-        "fstat",
-        lambda _fd: SimpleNamespace(
+    original_fstat = private_io.os.fstat
+    fstat_calls = 0
+
+    def reject_temporary(fd):
+        nonlocal fstat_calls
+        fstat_calls += 1
+        if fstat_calls <= 2:
+            return original_fstat(fd)
+        return SimpleNamespace(
             st_mode=0,
             st_nlink=1,
             st_uid=private_io.os.getuid(),
-        ),
-    )
+        )
+
+    monkeypatch.setattr(private_io.os, "fstat", reject_temporary)
 
     with pytest.raises(ValueError, match="temporary value is not a private regular file"):
         write_private_text(path, "secret", label="value")
@@ -868,6 +1240,30 @@ def test_write_private_text_keeps_old_value_when_fsync_fails(tmp_path, monkeypat
     assert list(tmp_path.glob(".value.json.tmp-*")) == []
 
 
+def test_write_private_text_restores_old_value_when_directory_fsync_fails(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "value.json"
+    path.write_text("old", encoding="utf-8")
+    fsync_calls = 0
+
+    def fail_post_replace_fsync(_path):
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 2:
+            raise OSError("simulated directory fsync failure")
+
+    monkeypatch.setattr(private_io, "_fsync_directory", fail_post_replace_fsync)
+
+    with pytest.raises(OSError, match="directory fsync failure"):
+        write_private_text(path, "new", label="value")
+
+    assert path.read_text(encoding="utf-8") == "old"
+    assert fsync_calls >= 2
+    assert list(tmp_path.glob(".value.json.*-*")) == []
+
+
 @pytest.mark.parametrize("error_number", [private_io.errno.EINVAL, private_io.errno.EACCES])
 def test_fsync_directory_maps_open_errors(tmp_path, monkeypatch, error_number):
     def fail_open(*_args, **_kwargs):
@@ -894,7 +1290,7 @@ def test_private_path_lock_rejects_non_directory_parent(tmp_path):
 @pytest.mark.parametrize("kind", ["symlink", "directory"])
 def test_private_path_lock_rejects_invalid_lock_path(tmp_path, kind):
     path = tmp_path / "config"
-    lock_path = path.with_name(path.name + ".lock")
+    lock_path = private_io._private_lock_path(path)
     if kind == "symlink":
         target = tmp_path / "target"
         target.write_text("target", encoding="utf-8")
@@ -913,6 +1309,11 @@ def test_private_path_lock_maps_open_errors(tmp_path, monkeypatch, error_number)
         raise OSError(error_number, "synthetic lock open failure")
 
     monkeypatch.setattr(private_io.os, "open", fail_open)
+    monkeypatch.setattr(
+        private_io,
+        "_private_lock_path",
+        lambda path: path.with_name(path.name + ".lock"),
+    )
 
     if error_number == private_io.errno.ELOOP:
         with pytest.raises(ValueError, match="must be a regular file"):
@@ -947,6 +1348,323 @@ def test_private_path_lock_retries_after_transient_contention(tmp_path, monkeypa
 
     assert sleeps == [0.05]
     assert flock_calls[-1] == private_io.fcntl.LOCK_UN
+
+
+def test_private_path_lock_records_only_lock_file_created_by_transaction(tmp_path):
+    path = tmp_path / "config"
+    created_lock_files = []
+
+    with private_path_lock(
+        path,
+        label="config lock",
+        created_lock_files=created_lock_files,
+    ):
+        pass
+
+    lock_path = created_lock_files[0][0]
+    lock_stat = lock_path.lstat()
+    assert created_lock_files == [
+        (lock_path, lock_stat.st_dev, lock_stat.st_ino)
+    ]
+
+    preexisting_lock_files = []
+    with private_path_lock(
+        path,
+        label="config lock",
+        created_lock_files=preexisting_lock_files,
+    ):
+        pass
+
+    assert preexisting_lock_files == []
+
+
+def test_private_path_lock_no_create_does_not_create_missing_lock_root(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "profile" / "profile.json"
+    target.parent.mkdir()
+    missing_lock_root = tmp_path / "missing-lock-root"
+    monkeypatch.setattr(private_io, "_private_lock_root", lambda: missing_lock_root)
+
+    with pytest.raises(FileNotFoundError):
+        with private_path_lock(target, label="profile lock", create=False):
+            pass
+
+    assert not missing_lock_root.exists()
+
+
+def test_private_path_lock_no_create_reuses_same_thread_lock(tmp_path):
+    target = tmp_path / "profile" / "profile.json"
+    target.parent.mkdir()
+
+    with private_path_lock(target, label="outer profile lock"):
+        with private_path_lock(target, label="nested profile lock", create=False):
+            pass
+
+
+def _lock_metadata(path: Path, *, follow_symlinks: bool = True) -> tuple[int, ...]:
+    item = path.stat() if follow_symlinks else path.lstat()
+    return (
+        item.st_dev,
+        item.st_ino,
+        item.st_mode,
+        item.st_uid,
+        item.st_gid,
+        item.st_nlink,
+        item.st_size,
+        item.st_mtime_ns,
+        item.st_ctime_ns,
+    )
+
+
+def _existing_private_lock(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    root_mode: int = 0o700,
+    lock_mode: int = 0o600,
+    payload: bytes = b"",
+) -> tuple[Path, Path, Path]:
+    target = tmp_path / "profile" / "profile.json"
+    target.parent.mkdir()
+    lock_root = tmp_path / "lock-root"
+    lock_root.mkdir(mode=0o700)
+    lock_root.chmod(root_mode)
+    lock_path = lock_root / private_io._private_lock_name(target)
+    fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, lock_mode)
+    try:
+        os.write(fd, payload)
+    finally:
+        os.close(fd)
+    lock_path.chmod(lock_mode)
+    monkeypatch.setattr(private_io, "_private_lock_root", lambda: lock_root)
+    return target, lock_root, lock_path
+
+
+@pytest.mark.parametrize(
+    ("root_mode", "lock_mode", "payload"),
+    [
+        pytest.param(0o777, 0o600, b"", id="world-writable-root"),
+        pytest.param(0o700, 0o644, b"", id="wrong-lock-mode"),
+        pytest.param(0o700, 0o600, b"x" * 5000, id="oversized-lock"),
+    ],
+)
+def test_private_path_lock_no_create_rejects_unsafe_namespace_without_mutation(
+    tmp_path, monkeypatch, root_mode, lock_mode, payload
+):
+    target, lock_root, lock_path = _existing_private_lock(
+        tmp_path,
+        monkeypatch,
+        root_mode=root_mode,
+        lock_mode=lock_mode,
+        payload=payload,
+    )
+    root_before = _lock_metadata(lock_root)
+    lock_before = _lock_metadata(lock_path)
+
+    with pytest.raises(ValueError):
+        with private_path_lock(target, label="profile lock", create=False):
+            pass
+
+    assert _lock_metadata(lock_root) == root_before
+    assert _lock_metadata(lock_path) == lock_before
+    assert stat.S_IMODE(lock_path.stat().st_mode) == lock_mode
+    assert lock_path.read_bytes() == payload
+
+
+def test_private_path_lock_no_create_rejects_symlink_root_without_mutation(
+    tmp_path, monkeypatch
+):
+    target, real_root, lock_path = _existing_private_lock(tmp_path, monkeypatch)
+    linked_root = tmp_path / "linked-lock-root"
+    linked_root.symlink_to(real_root, target_is_directory=True)
+    monkeypatch.setattr(private_io, "_private_lock_root", lambda: linked_root)
+    link_before = _lock_metadata(linked_root, follow_symlinks=False)
+    root_before = _lock_metadata(real_root)
+    lock_before = _lock_metadata(lock_path)
+
+    with pytest.raises(ValueError):
+        with private_path_lock(target, label="profile lock", create=False):
+            pass
+
+    assert _lock_metadata(linked_root, follow_symlinks=False) == link_before
+    assert _lock_metadata(real_root) == root_before
+    assert _lock_metadata(lock_path) == lock_before
+
+
+def test_private_path_lock_no_create_revalidates_named_inode_after_flock(
+    tmp_path, monkeypatch
+):
+    target, lock_root, lock_path = _existing_private_lock(tmp_path, monkeypatch)
+    old_lock_path = lock_root / f".{lock_path.name}.old"
+    real_flock = private_io.fcntl.flock
+    replaced = False
+
+    def replace_after_acquire(fd, operation):
+        nonlocal replaced
+        result = real_flock(fd, operation)
+        if operation & private_io.fcntl.LOCK_EX and not replaced:
+            replaced = True
+            lock_path.rename(old_lock_path)
+            replacement_fd = os.open(
+                lock_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            os.close(replacement_fd)
+        return result
+
+    monkeypatch.setattr(private_io.fcntl, "flock", replace_after_acquire)
+    entered = False
+    with pytest.raises(ValueError):
+        with private_path_lock(target, label="profile lock", create=False):
+            entered = True
+
+    assert replaced
+    assert not entered
+    assert old_lock_path.is_file()
+    assert lock_path.is_file()
+    assert old_lock_path.stat().st_ino != lock_path.stat().st_ino
+
+
+def test_private_path_lock_keeps_waiter_before_acquire_on_persistent_inode(tmp_path):
+    path = tmp_path / "profile" / "profile.json"
+    path.parent.mkdir()
+    created_lock_files = []
+    waiter_started = Event()
+
+    def contend_for_lock():
+        waiter_started.set()
+        with private_path_lock(path, timeout_seconds=0, label="profile lock"):
+            pass
+
+    with private_path_lock(
+        path,
+        label="profile lock",
+        created_lock_files=created_lock_files,
+    ):
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(contend_for_lock)
+            assert waiter_started.wait(1)
+            with pytest.raises(TimeoutError, match="already in use"):
+                future.result()
+            config_module._cleanup_created_private_files(
+                created_lock_files,
+                label="created profile lock file",
+            )
+
+    lock_path = created_lock_files[0][0]
+    assert lock_path.parent != path.parent
+    assert lock_path.exists()
+
+
+def test_private_path_lock_namespace_is_stable_across_home_environment_changes(
+    tmp_path, pytestconfig
+):
+    target = tmp_path / "shared" / "config.toml"
+    target.parent.mkdir()
+    source_root = Path(__file__).resolve().parents[1] / "src"
+    lock_root = private_io._private_lock_root()
+    production_lock_root = pytestconfig._private_lock_production_root
+    isolation_prefix = [
+        "/usr/bin/bwrap",
+        "--bind",
+        "/",
+        "/",
+        "--dir",
+        str(production_lock_root),
+        "--bind",
+        str(lock_root),
+        str(production_lock_root),
+        "--",
+    ]
+    holder_code = "\n".join(
+        (
+            "from pathlib import Path",
+            "import sys, time",
+            "from codex_usage.private_io import private_path_lock",
+            "with private_path_lock(Path(sys.argv[1]), timeout_seconds=5):",
+            "    print('held', flush=True)",
+            "    time.sleep(2)",
+        )
+    )
+    contender_code = "\n".join(
+        (
+            "from pathlib import Path",
+            "import sys",
+            "from codex_usage.private_io import private_path_lock",
+            "try:",
+            "    with private_path_lock(Path(sys.argv[1]), timeout_seconds=0.2):",
+            "        print('acquired', flush=True)",
+            "except TimeoutError:",
+            "    print('timeout', flush=True)",
+        )
+    )
+    env_a = os.environ.copy()
+    env_b = os.environ.copy()
+    env_a["HOME"] = str(tmp_path / "home-a")
+    env_b["HOME"] = str(tmp_path / "home-b")
+    env_a["PYTHONPATH"] = str(source_root)
+    env_b["PYTHONPATH"] = str(source_root)
+    (tmp_path / "home-a").mkdir()
+    (tmp_path / "home-b").mkdir()
+    holder = subprocess.Popen(
+        [*isolation_prefix, sys.executable, "-c", holder_code, str(target)],
+        env=env_a,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "held"
+        contender = subprocess.run(
+            [*isolation_prefix, sys.executable, "-c", contender_code, str(target)],
+            env=env_b,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert contender.stdout.strip() == "timeout"
+    finally:
+        holder.terminate()
+        holder.wait(timeout=5)
+
+
+def test_created_lock_cleanup_does_not_unlink_post_unlock_waiter_inode(tmp_path):
+    path = tmp_path / "profile" / "profile.json"
+    path.parent.mkdir()
+    created_lock_files = []
+    waiter_started = Event()
+    waiter_entered = Event()
+    release_waiter = Event()
+
+    def wait_for_lock():
+        waiter_started.set()
+        with private_path_lock(path, timeout_seconds=2, label="profile lock"):
+            waiter_entered.set()
+            assert release_waiter.wait(2)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with private_path_lock(
+            path,
+            label="profile lock",
+            created_lock_files=created_lock_files,
+        ):
+            future = executor.submit(wait_for_lock)
+            assert waiter_started.wait(1)
+            assert not waiter_entered.wait(0.1)
+        assert waiter_entered.wait(1)
+
+        config_module._cleanup_created_private_files(
+            created_lock_files,
+            label="created profile lock file",
+        )
+        assert created_lock_files[0][0].exists()
+        with pytest.raises(TimeoutError, match="already in use"):
+            with private_path_lock(path, timeout_seconds=0, label="profile lock"):
+                pass
+        release_waiter.set()
+        future.result()
 
 
 def test_private_path_lock_ignores_unlock_error(tmp_path, monkeypatch):
@@ -1022,3 +1740,455 @@ def test_private_path_lock_serializes_same_path(tmp_path):
     with private_path_lock(path, label="config lock"):
         entered.append("after")
     assert entered == ["after"]
+
+
+def test_release_shared_lock_blocks_child_release_exclusive(tmp_path):
+    assert child_lock_attempt(
+        tmp_path,
+        held=("shared", "shared"),
+        requested=("exclusive", "shared"),
+    ) == "busy"
+
+
+def test_current_shared_lock_blocks_child_current_exclusive(tmp_path):
+    assert child_lock_attempt(
+        tmp_path,
+        held=("shared", "shared"),
+        requested=("shared", "exclusive"),
+    ) == "busy"
+
+
+def test_same_target_lock_upgrade_and_downgrade_are_rejected(tmp_path):
+    from codex_usage.integration_evidence import IntegrationBusy, evidence_lock_set
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    _create_evidence_lock_inodes(state_home)
+    with evidence_lock_set(
+        state_home=state_home,
+        release_mode="shared",
+        current_mode="shared",
+        timeout_seconds=0,
+        create=False,
+    ):
+        with pytest.raises(IntegrationBusy):
+            with evidence_lock_set(
+                state_home=state_home,
+                release_mode="exclusive",
+                current_mode="shared",
+                timeout_seconds=0,
+                create=False,
+            ):
+                pass
+    with evidence_lock_set(
+        state_home=state_home,
+        release_mode="exclusive",
+        current_mode="exclusive",
+        timeout_seconds=0,
+        create=False,
+    ):
+        with pytest.raises(IntegrationBusy):
+            with evidence_lock_set(
+                state_home=state_home,
+                release_mode="shared",
+                current_mode="exclusive",
+                timeout_seconds=0,
+                create=False,
+            ):
+                pass
+
+
+def test_evidence_lock_set_rejects_current_before_release(tmp_path):
+    from codex_usage import integration_evidence
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    _create_evidence_lock_inodes(state_home)
+    integration_evidence._EVIDENCE_LOCK_STATE.held = {
+        "current": ("shared", 1),
+    }
+    try:
+        with pytest.raises(integration_evidence.IntegrationBusy):
+            with integration_evidence.evidence_lock_set(
+                state_home=state_home,
+                release_mode="shared",
+                current_mode="shared",
+                timeout_seconds=0,
+                create=False,
+            ):
+                pass
+    finally:
+        integration_evidence._EVIDENCE_LOCK_STATE.held = {}
+
+
+def test_runtime_missing_lock_inode_is_unavailable(tmp_path):
+    from codex_usage.integration_evidence import (
+        IntegrationEvidenceUnavailable,
+        evidence_lock_set,
+    )
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    integration = state_home / "codex-usage" / "integration"
+    integration.mkdir(mode=0o700, parents=True)
+    integration.parent.chmod(0o700)
+    ensure_private_directory(
+        private_io._private_lock_root(),
+        label="test evidence lock root",
+    )
+    with pytest.raises(IntegrationEvidenceUnavailable):
+        with evidence_lock_set(
+            state_home=state_home,
+            release_mode="shared",
+            current_mode="shared",
+            timeout_seconds=0,
+            create=False,
+        ):
+            pass
+
+
+def test_evidence_lock_set_rejects_missing_integration_parent(tmp_path):
+    from codex_usage.integration_evidence import (
+        IntegrationEvidenceUnavailable,
+        evidence_lock_set,
+    )
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    with pytest.raises(IntegrationEvidenceUnavailable):
+        with evidence_lock_set(
+            state_home=state_home,
+            release_mode="shared",
+            current_mode="shared",
+            timeout_seconds=0,
+            create=False,
+        ):
+            pass
+
+
+def test_partial_evidence_lock_failure_does_not_poison_thread_state(tmp_path):
+    from codex_usage import integration_evidence
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    lock_root = private_io._private_lock_root()
+    ensure_private_directory(lock_root, label="test evidence lock root")
+    integration = state_home / "codex-usage" / "integration"
+    for path in (integration.parent, integration):
+        path.mkdir(mode=0o700)
+    release_target = integration / "producer-install"
+    release_lock = lock_root / integration_evidence._evidence_lock_name(release_target)
+    release_fd = os.open(
+        release_lock,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    os.close(release_fd)
+    with pytest.raises(integration_evidence.IntegrationEvidenceUnavailable):
+        with integration_evidence.evidence_lock_set(
+            state_home=state_home,
+            release_mode="shared",
+            current_mode="shared",
+            timeout_seconds=0,
+            create=False,
+        ):
+            pass
+    current_target = integration / "current.json"
+    current_lock = lock_root / integration_evidence._evidence_lock_name(current_target)
+    current_fd = os.open(
+        current_lock,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    os.close(current_fd)
+    with integration_evidence.evidence_lock_set(
+        state_home=state_home,
+        release_mode="shared",
+        current_mode="shared",
+        timeout_seconds=0,
+        create=False,
+    ):
+        pass
+
+
+def test_same_mode_nested_different_state_home_acquires_distinct_child_locks(
+    tmp_path,
+):
+    from codex_usage.integration_evidence import evidence_lock_set
+
+    first_state_home = tmp_path / "first-state"
+    second_state_home = tmp_path / "second-state"
+    for state_home in (first_state_home, second_state_home):
+        state_home.mkdir(mode=0o700)
+        _create_evidence_lock_inodes(state_home)
+
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    release = context.Event()
+    result = context.Queue()
+    process = context.Process(
+        target=_evidence_lock_child,
+        args=(
+            str(second_state_home),
+            "exclusive",
+            "exclusive",
+            ready,
+            release,
+            result,
+        ),
+    )
+    try:
+        with evidence_lock_set(
+            state_home=first_state_home,
+            release_mode="shared",
+            current_mode="shared",
+            timeout_seconds=0,
+            create=False,
+        ):
+            with evidence_lock_set(
+                state_home=second_state_home,
+                release_mode="shared",
+                current_mode="shared",
+                timeout_seconds=0,
+                create=False,
+            ):
+                process.start()
+                assert ready.wait(10)
+                child_result = result.get(timeout=10)
+        release.set()
+        process.join(10)
+        assert process.exitcode == 0
+        assert child_result == "busy"
+    finally:
+        release.set()
+        if process.is_alive():
+            process.terminate()
+            process.join(10)
+
+
+def test_lock_entry_replacement_after_flock_fails_before_independent_domain(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_evidence
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    _create_evidence_lock_inodes(state_home)
+    lock_root = private_io._private_lock_root()
+    release_target = (
+        state_home / "codex-usage" / "integration" / "producer-install"
+    )
+    release_lock = lock_root / integration_evidence._evidence_lock_name(
+        release_target
+    )
+    old_lock = lock_root / ".replaced-release-old"
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    release = context.Event()
+    result = context.Queue()
+    process = context.Process(
+        target=_evidence_lock_child_holds,
+        args=(
+            str(state_home),
+            "exclusive",
+            "exclusive",
+            ready,
+            release,
+            result,
+        ),
+    )
+    original_acquire = integration_evidence._acquire_lock
+    replaced = False
+    child_result = None
+
+    def acquire_then_replace(fd, *, mode, deadline):
+        nonlocal replaced, child_result
+        original_acquire(fd, mode=mode, deadline=deadline)
+        if replaced:
+            return
+        replaced = True
+        os.rename(release_lock, old_lock)
+        replacement_fd = os.open(
+            release_lock,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        os.close(replacement_fd)
+        process.start()
+        assert ready.wait(10)
+        child_result = result.get(timeout=10)
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_acquire_lock",
+        acquire_then_replace,
+    )
+    entered = False
+    try:
+        with pytest.raises(integration_evidence.IntegrationEvidenceInvalid):
+            with integration_evidence.evidence_lock_set(
+                state_home=state_home,
+                release_mode="exclusive",
+                current_mode="exclusive",
+                timeout_seconds=0,
+                create=False,
+            ):
+                entered = True
+    finally:
+        release.set()
+        if process.pid is not None:
+            process.join(10)
+        if process.is_alive():
+            process.terminate()
+            process.join(10)
+    assert not entered
+    assert child_result == "acquired"
+    assert process.exitcode == 0
+    with integration_evidence.evidence_lock_set(
+        state_home=state_home,
+        release_mode="exclusive",
+        current_mode="exclusive",
+        timeout_seconds=0,
+        create=False,
+    ):
+        pass
+
+
+def test_lock_root_replacement_after_flock_fails_before_independent_domain(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_evidence
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    _create_evidence_lock_inodes(state_home)
+    lock_root = private_io._private_lock_root()
+    old_root = lock_root.with_name(f"{lock_root.name}-old")
+    integration = state_home / "codex-usage" / "integration"
+    lock_names = (
+        integration_evidence._evidence_lock_name(integration / "producer-install"),
+        integration_evidence._evidence_lock_name(integration / "current.json"),
+    )
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    release = context.Event()
+    result = context.Queue()
+    process = context.Process(
+        target=_evidence_lock_child_holds,
+        args=(
+            str(state_home),
+            "exclusive",
+            "exclusive",
+            ready,
+            release,
+            result,
+        ),
+    )
+    original_acquire = integration_evidence._acquire_lock
+    acquisitions = 0
+    child_result = None
+
+    def acquire_then_replace_root(fd, *, mode, deadline):
+        nonlocal acquisitions, child_result
+        original_acquire(fd, mode=mode, deadline=deadline)
+        acquisitions += 1
+        if acquisitions != 2:
+            return
+        os.rename(lock_root, old_root)
+        lock_root.mkdir(mode=0o700)
+        for lock_name in lock_names:
+            replacement_fd = os.open(
+                lock_root / lock_name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            os.close(replacement_fd)
+        process.start()
+        assert ready.wait(10)
+        child_result = result.get(timeout=10)
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_acquire_lock",
+        acquire_then_replace_root,
+    )
+    entered = False
+    try:
+        with pytest.raises(integration_evidence.IntegrationEvidenceInvalid):
+            with integration_evidence.evidence_lock_set(
+                state_home=state_home,
+                release_mode="exclusive",
+                current_mode="exclusive",
+                timeout_seconds=0,
+                create=False,
+            ):
+                entered = True
+    finally:
+        release.set()
+        if process.pid is not None:
+            process.join(10)
+        if process.is_alive():
+            process.terminate()
+            process.join(10)
+    assert not entered
+    assert child_result == "acquired"
+    assert process.exitcode == 0
+    with integration_evidence.evidence_lock_set(
+        state_home=state_home,
+        release_mode="exclusive",
+        current_mode="exclusive",
+        timeout_seconds=0,
+        create=False,
+    ):
+        pass
+
+
+def test_nested_same_logical_target_rejects_replaced_lock_inodes(tmp_path):
+    from codex_usage import integration_evidence
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    _create_evidence_lock_inodes(state_home)
+    lock_root = private_io._private_lock_root()
+    integration = state_home / "codex-usage" / "integration"
+    lock_names = (
+        integration_evidence._evidence_lock_name(integration / "producer-install"),
+        integration_evidence._evidence_lock_name(integration / "current.json"),
+    )
+
+    with integration_evidence.evidence_lock_set(
+        state_home=state_home,
+        release_mode="exclusive",
+        current_mode="exclusive",
+        timeout_seconds=0,
+        create=False,
+    ):
+        for lock_name in lock_names:
+            lock_path = lock_root / lock_name
+            os.rename(lock_path, lock_root / f".{lock_name}.old")
+            replacement_fd = os.open(
+                lock_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            os.close(replacement_fd)
+        entered = False
+        with pytest.raises(integration_evidence.IntegrationEvidenceInvalid):
+            with integration_evidence.evidence_lock_set(
+                state_home=state_home,
+                release_mode="exclusive",
+                current_mode="exclusive",
+                timeout_seconds=0,
+                create=False,
+            ):
+                entered = True
+        assert not entered
+
+    with integration_evidence.evidence_lock_set(
+        state_home=state_home,
+        release_mode="exclusive",
+        current_mode="exclusive",
+        timeout_seconds=0,
+        create=False,
+    ):
+        pass

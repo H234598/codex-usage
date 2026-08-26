@@ -1,29 +1,32 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
-from .consumption import ConsumptionWindow, calculate_consumption
-from .history import (
-    CREDIT_HISTORY_WINDOW_SECONDS,
-    MAX_CONSUMPTION_WINDOWS,
-    HistoryStore,
+from .history import HistoryStore, usage_samples_from_usage
+from .integration_attestation import VerifiedActiveManifest
+from .integration_evidence import (
+    IntegrationBusy as EvidenceBusy,
+)
+from .integration_evidence import (
+    _publish_evidence_generation_locked,
+    evidence_lock_set,
 )
 from .integration_snapshot import (
     IntegrationSnapshotError,
     IntegrationUnavailable,
-    build_schema1_document,
-    publish_schema1_cache,
+    build_schema2_document,
     read_current_usage_records,
-    serialize_schema1_document,
+    serialize_schema2_document,
 )
-from .private_io import private_path_lock
+from .private_io import IntegrationEvidenceInvalid, IntegrationEvidenceUnavailable
 
-_EXPECTED_ARGV = ("integration-snapshot", "--schema", "1", "--format", "json")
+_EXPECTED_ARGV = ("integration-snapshot", "--schema", "2", "--format", "json")
 _ERROR_TOKENS = {
     64: b"integration_snapshot_invalid_arguments\n",
     65: b"integration_snapshot_invalid_source\n",
@@ -40,8 +43,6 @@ class RuntimePaths:
     current_dir: Path
     history_path: Path
     integration_dir: Path
-    cache_path: Path
-    release_lock_target: Path
 
 
 @dataclass(frozen=True)
@@ -67,8 +68,6 @@ def _runtime_paths(environ: Mapping[str, str]) -> RuntimePaths:
         current_dir=data_home / "codex-usage" / "current",
         history_path=data_home / "codex-usage" / "usage-history.sqlite3",
         integration_dir=integration_dir,
-        cache_path=integration_dir / "account-usage-v1.json",
-        release_lock_target=integration_dir / "producer-install",
     )
 
 
@@ -92,15 +91,12 @@ def _error_result(code: int) -> CommandResult:
     return CommandResult(code, b"", _ERROR_TOKENS[code])
 
 
-def _default_verifier() -> Callable[[Path, Path, Path], object]:
+def _default_verifier() -> Callable[[Path, Path, Path], VerifiedActiveManifest]:
     try:
-        from .integration_attestation import (
-            IntegrationAttestationUnavailable,
-            verify_active_release,
-        )
+        from .integration_attestation import verify_active_manifest_at
     except Exception:
 
-        def unavailable(_: Path, __: Path, ___: Path) -> None:
+        def unavailable(_: Path, __: Path, ___: Path) -> VerifiedActiveManifest:
             raise IntegrationUnavailable()
 
         return unavailable
@@ -109,15 +105,12 @@ def _default_verifier() -> Callable[[Path, Path, Path], object]:
         state_home: Path,
         data_home: Path,
         expected_entrypoint_path: Path,
-    ) -> object:
-        try:
-            return verify_active_release(
-                state_home=state_home,
-                data_home=data_home,
-                expected_entrypoint_path=expected_entrypoint_path,
-            )
-        except IntegrationAttestationUnavailable:
-            raise IntegrationUnavailable() from None
+    ) -> VerifiedActiveManifest:
+        return verify_active_manifest_at(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=expected_entrypoint_path,
+        )
 
     return verify
 
@@ -128,7 +121,7 @@ def execute(
     environ: Mapping[str, str],
     clock: Callable[[], datetime],
     expected_entrypoint_path: Path,
-    verifier: Callable[[Path, Path, Path], object],
+    verifier: Callable[[Path, Path, Path], VerifiedActiveManifest],
 ) -> CommandResult:
     try:
         normalized_argv = tuple(argv)
@@ -142,24 +135,50 @@ def execute(
         return _error_result(64)
     try:
         paths = _runtime_paths(environ)
-        with private_path_lock(
-            paths.release_lock_target,
+        with evidence_lock_set(
+            state_home=paths.state_home,
+            release_mode="exclusive",
+            current_mode="exclusive",
             timeout_seconds=0,
-            label="integration producer lock",
+            create=False,
         ):
-            verifier(paths.state_home, paths.data_home, expected_entrypoint_path)
+            first = verifier(
+                paths.state_home,
+                paths.data_home,
+                expected_entrypoint_path,
+            )
             generated_at = _require_aware_utc(clock())
             usages = read_current_usage_records(paths.current_dir)
-            costs = _load_cost_windows(paths.history_path, usages, generated_at)
-            document = build_schema1_document(
+            tracker_samples = _load_tracker_samples(
+                paths.history_path,
+                usages,
+                generated_at,
+            )
+            document = build_schema2_document(
                 usages,
                 generated_at=generated_at,
-                cost_windows_by_account=costs or None,
+                tracker_samples=tracker_samples or None,
             )
-            payload = serialize_schema1_document(document)
-            verifier(paths.state_home, paths.data_home, expected_entrypoint_path)
-            publish_schema1_cache(payload, cache_path=paths.cache_path)
+            payload = serialize_schema2_document(document)
+            second = verifier(
+                paths.state_home,
+                paths.data_home,
+                expected_entrypoint_path,
+            )
+            _require_matching_verified_manifests(first, second)
+            _publish_evidence_generation_locked(
+                payload,
+                state_home=paths.state_home,
+                data_home=paths.data_home,
+                verified_active_manifest=second,
+            )
         return CommandResult(0, payload, b"")
+    except EvidenceBusy:
+        return _error_result(75)
+    except IntegrationEvidenceUnavailable:
+        return _error_result(69)
+    except IntegrationEvidenceInvalid:
+        return _error_result(70)
     except IntegrationSnapshotError as exc:
         return _error_result(exc.exit_code)
     except TimeoutError:
@@ -170,74 +189,44 @@ def execute(
         return _error_result(69)
 
 
-def _load_cost_windows(
+def _require_matching_verified_manifests(
+    first: object,
+    second: object,
+) -> None:
+    if (
+        type(first) is not VerifiedActiveManifest
+        or type(second) is not VerifiedActiveManifest
+        or first.active_manifest_sha256
+        != hashlib.sha256(first.active_manifest_bytes).hexdigest()
+        or second.active_manifest_sha256
+        != hashlib.sha256(second.active_manifest_bytes).hexdigest()
+        or first != second
+    ):
+        raise IntegrationEvidenceUnavailable()
+
+
+def _load_tracker_samples(
     history_path: Path,
     usages: tuple,
     now: datetime,
-) -> dict[str, tuple[ConsumptionWindow, ...]]:
+) -> dict[tuple[str, str, int], tuple]:
     if not history_path.is_file():
         return {}
-    try:
-        lookback_start = now - timedelta(hours=1)
-    except (OverflowError, TypeError, ValueError) as exc:
-        raise ValueError("now is out of range") from exc
-    result: dict[str, tuple[ConsumptionWindow, ...]] = {}
+    result: dict[tuple[str, str, int], tuple] = {}
     with HistoryStore(history_path) as store:
         for usage in usages:
-            windows: list[ConsumptionWindow] = []
-            stored_durations = store.consumption_window_seconds(
-                usage.account_id,
-                pool="main",
-                start=lookback_start,
-                end=now,
-            )
-            durations = tuple(
-                dict.fromkeys(
-                    (
-                        18_000,
-                        604_800,
-                        CREDIT_HISTORY_WINDOW_SECONDS,
-                        *stored_durations,
-                    )
-                )
-            )[:MAX_CONSUMPTION_WINDOWS]
-            for duration in durations:
-                samples = store.samples_for_consumption(
-                    usage.account_id,
-                    pool="main",
-                    window_seconds=duration,
-                    start=lookback_start,
+            for sample in usage_samples_from_usage(usage):
+                key = (sample.account_id, sample.pool, sample.window_seconds)
+                if key in result:
+                    continue
+                samples = store.samples(
+                    sample.account_id,
+                    pool=sample.pool,
+                    window_seconds=sample.window_seconds,
                     end=now,
                 )
-                cost = calculate_consumption(
-                    samples,
-                    amount=1,
-                    unit="hours",
-                    now=now,
-                )
-                if cost.limit_window_seconds == 0:
-                    cost = replace(cost, limit_window_seconds=duration)
-                windows.append(cost)
-            credit = getattr(usage, "credits", None)
-            if credit is not None:
-                duration = credit.duration_seconds or CREDIT_HISTORY_WINDOW_SECONDS
-                samples = store.samples_for_consumption(
-                    usage.account_id,
-                    pool="credits",
-                    window_seconds=duration,
-                    start=lookback_start,
-                    end=now,
-                )
-                cost = calculate_consumption(
-                    samples,
-                    amount=1,
-                    unit="hours",
-                    now=now,
-                )
-                if cost.limit_window_seconds == 0:
-                    cost = replace(cost, pool="credits", limit_window_seconds=duration)
-                windows.append(cost)
-            result[usage.account_id] = tuple(windows)
+                if samples:
+                    result[key] = samples
     return result
 
 

@@ -5,6 +5,7 @@ import binascii
 import csv
 import hashlib
 import io
+import json
 import os
 import stat
 from collections.abc import Mapping
@@ -12,17 +13,65 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .json_utils import loads_strict
-from .private_io import read_private_text
+from .private_io import (
+    FileIdentity,
+    IntegrationEvidenceInvalid,
+    IntegrationEvidenceUnavailable,
+    open_private_dir_at,
+    open_verified_state_home,
+    read_private_bytes_at,
+    read_private_text,
+)
 
 _MANIFEST_MAX_BYTES = 128 * 1024
 MAX_ATTESTATION_FILE_BYTES = 4 * 1024 * 1024
 MAX_RELEASE_TREE_ENTRIES = 4096
 MAX_RELEASE_TREE_BYTES = 128 * 1024 * 1024
-_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.532.dist-info"
-_EXPECTED_VERSION = "0.6.532"
+_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.536.dist-info"
+_EXPECTED_VERSION = "0.6.536"
 _EXPECTED_DISTRIBUTION = "codex-usage-integration-producer"
-
-
+_PREVIOUS_SCHEMA2_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.534.dist-info"
+_PREVIOUS_SCHEMA2_VERSION = "0.6.534"
+_CURRENT_SCHEMA2_MANIFEST_FIELDS = frozenset(
+    {
+        "data_home",
+        "entrypoint_path",
+        "entrypoint_sha256",
+        "launcher_path",
+        "launcher_sha256",
+        "record_path",
+        "record_sha256",
+        "release_dir",
+        "release_id",
+        "release_tree_sha256",
+        "schema_version",
+        "source_manifest_sha256",
+        "state_home",
+        "version",
+        "wheel_path",
+        "wheel_sha256",
+    }
+)
+_PREVIOUS_SCHEMA2_MANIFEST_FIELDS = frozenset(
+    {
+        "data_home",
+        "entrypoint_path",
+        "entrypoint_sha256",
+        "launcher_path",
+        "launcher_sha256",
+        "record_path",
+        "record_sha256",
+        "release_dir",
+        "release_id",
+        "release_tree_sha256",
+        "schema_version",
+        "source_manifest_sha256",
+        "state_home",
+        "version",
+        "wheel_path",
+        "wheel_sha256",
+    }
+)
 class IntegrationAttestationUnavailable(Exception):
     pass
 
@@ -38,6 +87,41 @@ class ActiveRelease:
     record_sha256: str
     launcher_sha256: str
     release_tree_sha256: str
+
+
+@dataclass(frozen=True)
+class VerifiedActiveManifest:
+    active_release: ActiveRelease
+    release_id: str
+    source_manifest_sha256: str
+    active_manifest_bytes: bytes
+    active_manifest_sha256: str
+    state_home_identity: FileIdentity
+    integration_parent_identity: FileIdentity
+    active_file_identity: FileIdentity
+
+
+@dataclass(frozen=True)
+class _ReleaseTreeEvidence:
+    releases_identity: FileIdentity
+    entries: tuple[_ReleaseEntryEvidence, ...]
+    rows: tuple[bytes, ...]
+
+
+@dataclass(frozen=True)
+class _ReleaseEntryEvidence:
+    relative: str
+    is_directory: bool
+    identity: FileIdentity
+    uid: int
+    nlink: int
+    size: int
+    mtime_ns: int
+    ctime_ns: int
+
+
+def _before_release_namespace_recheck(_release_fd: int) -> None:
+    return None
 
 
 def _unavailable() -> IntegrationAttestationUnavailable:
@@ -199,9 +283,21 @@ def _release_tree_rows(*, release_dir: Path) -> list[bytes]:
                                     raise _unavailable()
                                 entries_seen += 1
                                 name = entry.name
-                                if not name or name in {".", ".."} or "\\" in name:
-                                    raise _unavailable()
                                 child_item = entry.stat(follow_symlinks=False)
+                                if (
+                                    not name
+                                    or name in {".", ".."}
+                                    or "\\" in name
+                                    or (
+                                        stat.S_ISDIR(child_item.st_mode)
+                                        and name == "__pycache__"
+                                    )
+                                    or (
+                                        stat.S_ISREG(child_item.st_mode)
+                                        and name.endswith(".pyc")
+                                    )
+                                ):
+                                    raise _unavailable()
                                 if stat.S_ISLNK(child_item.st_mode) or not (
                                     stat.S_ISDIR(child_item.st_mode)
                                     or stat.S_ISREG(child_item.st_mode)
@@ -276,6 +372,352 @@ def _release_tree_rows(*, release_dir: Path) -> list[bytes]:
     finally:
         for directory_fd, _, _ in stack:
             os.close(directory_fd)
+
+
+def _release_entry_evidence(
+    relative: str,
+    item: os.stat_result,
+) -> _ReleaseEntryEvidence:
+    return _ReleaseEntryEvidence(
+        relative=relative,
+        is_directory=stat.S_ISDIR(item.st_mode),
+        identity=FileIdentity(
+            item.st_dev,
+            item.st_ino,
+            stat.S_IMODE(item.st_mode),
+        ),
+        uid=item.st_uid,
+        nlink=item.st_nlink,
+        size=item.st_size,
+        mtime_ns=item.st_mtime_ns,
+        ctime_ns=item.st_ctime_ns,
+    )
+
+
+def _scan_release_tree_at(
+    release_anchor_fd: int,
+) -> tuple[list[_ReleaseEntryEvidence], list[bytes]]:
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    file_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    stack: list[tuple[int, str, os.stat_result]] = []
+    try:
+        root_fd = os.open(".", directory_flags, dir_fd=release_anchor_fd)
+        stack.append((root_fd, ".", os.fstat(root_fd)))
+        rows: list[bytes] = []
+        entries: list[_ReleaseEntryEvidence] = []
+        entries_seen = 1
+        file_bytes = 0
+        while stack:
+            item_fd, relative, initial = stack.pop()
+            try:
+                mode = stat.S_IMODE(initial.st_mode)
+                entries.append(_release_entry_evidence(relative, initial))
+                if stat.S_ISDIR(initial.st_mode):
+                    if initial.st_uid != os.getuid():
+                        raise _unavailable()
+                    rows.append(f"D {relative}\0{mode:04o}\n".encode())
+                    children: list[tuple[str, int, os.stat_result]] = []
+                    try:
+                        with os.scandir(item_fd) as directory_entries:
+                            for entry in directory_entries:
+                                if entries_seen >= MAX_RELEASE_TREE_ENTRIES:
+                                    raise _unavailable()
+                                entries_seen += 1
+                                name = entry.name
+                                child_initial = entry.stat(follow_symlinks=False)
+                                if (
+                                    not name
+                                    or name in {".", ".."}
+                                    or "/" in name
+                                    or "\\" in name
+                                    or "\x00" in name
+                                    or (
+                                        stat.S_ISDIR(child_initial.st_mode)
+                                        and name == "__pycache__"
+                                    )
+                                    or (
+                                        stat.S_ISREG(child_initial.st_mode)
+                                        and name.endswith(".pyc")
+                                    )
+                                ):
+                                    raise _unavailable()
+                                if stat.S_ISDIR(child_initial.st_mode):
+                                    child_flags = directory_flags
+                                elif stat.S_ISREG(child_initial.st_mode):
+                                    child_flags = file_flags
+                                else:
+                                    raise _unavailable()
+                                child_fd = -1
+                                try:
+                                    child_fd = os.open(
+                                        name,
+                                        child_flags,
+                                        dir_fd=item_fd,
+                                    )
+                                    opened = os.fstat(child_fd)
+                                    if (
+                                        stat.S_IFMT(opened.st_mode)
+                                        != stat.S_IFMT(child_initial.st_mode)
+                                        or opened.st_dev != child_initial.st_dev
+                                        or opened.st_ino != child_initial.st_ino
+                                        or opened.st_uid != os.getuid()
+                                        or opened.st_mode != child_initial.st_mode
+                                        or (
+                                            stat.S_ISREG(opened.st_mode)
+                                            and (
+                                                opened.st_nlink != 1
+                                                or opened.st_size
+                                                > MAX_ATTESTATION_FILE_BYTES
+                                            )
+                                        )
+                                    ):
+                                        raise _unavailable()
+                                    children.append((name, child_fd, opened))
+                                    child_fd = -1
+                                finally:
+                                    if child_fd >= 0:
+                                        os.close(child_fd)
+                        children.sort(key=lambda child: child[0], reverse=True)
+                        stack.extend(
+                            (
+                                child_fd,
+                                f"{relative}/{name}",
+                                child_item,
+                            )
+                            for name, child_fd, child_item in children
+                        )
+                        children.clear()
+                    finally:
+                        for _, child_fd, _ in children:
+                            os.close(child_fd)
+                    final = os.fstat(item_fd)
+                    if (
+                        final.st_dev != initial.st_dev
+                        or final.st_ino != initial.st_ino
+                        or final.st_mode != initial.st_mode
+                        or final.st_uid != initial.st_uid
+                        or final.st_nlink != initial.st_nlink
+                        or final.st_size != initial.st_size
+                        or final.st_mtime_ns != initial.st_mtime_ns
+                        or final.st_ctime_ns != initial.st_ctime_ns
+                    ):
+                        raise _unavailable()
+                    continue
+                if not stat.S_ISREG(initial.st_mode):
+                    raise _unavailable()
+                if (
+                    initial.st_uid != os.getuid()
+                    or initial.st_nlink != 1
+                    or initial.st_size > MAX_ATTESTATION_FILE_BYTES
+                    or file_bytes + initial.st_size > MAX_RELEASE_TREE_BYTES
+                ):
+                    raise _unavailable()
+                payload = bytearray()
+                while len(payload) <= MAX_ATTESTATION_FILE_BYTES:
+                    chunk = os.read(
+                        item_fd,
+                        min(
+                            65_536,
+                            MAX_ATTESTATION_FILE_BYTES + 1 - len(payload),
+                        ),
+                    )
+                    if not chunk:
+                        break
+                    payload.extend(chunk)
+                if len(payload) > MAX_ATTESTATION_FILE_BYTES:
+                    raise _unavailable()
+                final = os.fstat(item_fd)
+                if (
+                    final.st_dev != initial.st_dev
+                    or final.st_ino != initial.st_ino
+                    or final.st_mode != initial.st_mode
+                    or final.st_uid != initial.st_uid
+                    or final.st_nlink != initial.st_nlink
+                    or final.st_size != initial.st_size
+                    or final.st_mtime_ns != initial.st_mtime_ns
+                    or final.st_ctime_ns != initial.st_ctime_ns
+                ):
+                    raise _unavailable()
+                file_bytes += len(payload)
+                if file_bytes > MAX_RELEASE_TREE_BYTES:
+                    raise _unavailable()
+                rows.append(
+                    f"F {relative}\0{mode:04o}\0{len(payload)}\0".encode()
+                    + _sha256_bytes(bytes(payload)).encode("ascii")
+                    + b"\n"
+                )
+            finally:
+                os.close(item_fd)
+        return entries, rows
+    except IntegrationAttestationUnavailable:
+        raise
+    except (OSError, ValueError):
+        raise _unavailable() from None
+    finally:
+        for item_fd, _, _ in stack:
+            os.close(item_fd)
+
+
+def _release_tree_evidence_at(
+    *,
+    integration_fd: int,
+    release_id: str,
+) -> _ReleaseTreeEvidence:
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    releases_fd = -1
+    release_fd = -1
+    release_anchor_fd = -1
+    try:
+        releases_fd = open_private_dir_at(integration_fd, "releases")
+        releases_item = os.fstat(releases_fd)
+        releases_identity = _fd_identity(releases_fd)
+        release_fd = open_private_dir_at(releases_fd, release_id)
+        release_item = os.fstat(release_fd)
+        release_anchor_fd = os.open(".", directory_flags, dir_fd=release_fd)
+        entries, rows = _scan_release_tree_at(release_anchor_fd)
+        _before_release_namespace_recheck(release_anchor_fd)
+        _verify_release_namespace_at(
+            integration_fd=integration_fd,
+            releases_identity=releases_identity,
+            release_id=release_id,
+            release_identity=FileIdentity(
+                release_item.st_dev,
+                release_item.st_ino,
+                stat.S_IMODE(release_item.st_mode),
+            ),
+            release_anchor_fd=release_anchor_fd,
+            entries=entries,
+        )
+        repeated_entries, repeated_rows = _scan_release_tree_at(release_anchor_fd)
+        if repeated_entries != entries or repeated_rows != rows:
+            raise _unavailable()
+        _verify_release_namespace_at(
+            integration_fd=integration_fd,
+            releases_identity=releases_identity,
+            release_id=release_id,
+            release_identity=FileIdentity(
+                release_item.st_dev,
+                release_item.st_ino,
+                stat.S_IMODE(release_item.st_mode),
+            ),
+            release_anchor_fd=release_anchor_fd,
+            entries=repeated_entries,
+        )
+        current_releases = os.fstat(releases_fd)
+        if (
+            current_releases.st_dev != releases_item.st_dev
+            or current_releases.st_ino != releases_item.st_ino
+            or current_releases.st_mode != releases_item.st_mode
+            or current_releases.st_uid != releases_item.st_uid
+        ):
+            raise _unavailable()
+        return _ReleaseTreeEvidence(
+            releases_identity=releases_identity,
+            entries=tuple(entries),
+            rows=tuple(rows),
+        )
+    except IntegrationAttestationUnavailable:
+        raise
+    except (OSError, ValueError):
+        raise _unavailable() from None
+    finally:
+        if release_fd >= 0:
+            os.close(release_fd)
+        if release_anchor_fd >= 0:
+            os.close(release_anchor_fd)
+        if releases_fd >= 0:
+            os.close(releases_fd)
+
+
+def _verify_release_entry_at(
+    *,
+    release_anchor_fd: int,
+    expected: _ReleaseEntryEvidence,
+) -> None:
+    relative = expected.relative
+    if relative == ".":
+        item = os.fstat(release_anchor_fd)
+    else:
+        if not relative.startswith("./"):
+            raise _unavailable()
+        components = relative[2:].split("/")
+        if not components or any(
+            not component
+            or component in {".", ".."}
+            or "\\" in component
+            or "\x00" in component
+            for component in components
+        ):
+            raise _unavailable()
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_flags |= getattr(os, "O_NOFOLLOW", 0)
+        directory_flags |= getattr(os, "O_CLOEXEC", 0)
+        file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        file_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+        current_fd = os.dup(release_anchor_fd)
+        try:
+            for index, component in enumerate(components):
+                final = index == len(components) - 1
+                flags = (
+                    file_flags
+                    if final and not expected.is_directory
+                    else directory_flags
+                )
+                next_fd = os.open(component, flags, dir_fd=current_fd)
+                os.close(current_fd)
+                current_fd = next_fd
+            item = os.fstat(current_fd)
+        finally:
+            os.close(current_fd)
+    identity = FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
+    if (
+        identity != expected.identity
+        or item.st_uid != expected.uid
+        or item.st_nlink != expected.nlink
+        or item.st_size != expected.size
+        or item.st_mtime_ns != expected.mtime_ns
+        or item.st_ctime_ns != expected.ctime_ns
+        or item.st_uid != os.getuid()
+        or (expected.is_directory and not stat.S_ISDIR(item.st_mode))
+        or (
+            not expected.is_directory
+            and (not stat.S_ISREG(item.st_mode) or item.st_nlink != 1)
+        )
+    ):
+        raise _unavailable()
+
+
+def _verify_release_namespace_at(
+    *,
+    integration_fd: int,
+    releases_identity: FileIdentity,
+    release_id: str,
+    release_identity: FileIdentity,
+    release_anchor_fd: int,
+    entries: list[_ReleaseEntryEvidence],
+) -> None:
+    bound_releases_fd = -1
+    bound_release_fd = -1
+    try:
+        bound_releases_fd = open_private_dir_at(integration_fd, "releases")
+        if _fd_identity(bound_releases_fd) != releases_identity:
+            raise _unavailable()
+        bound_release_fd = open_private_dir_at(bound_releases_fd, release_id)
+        if _fd_identity(bound_release_fd) != release_identity:
+            raise _unavailable()
+        for entry in entries:
+            _verify_release_entry_at(
+                release_anchor_fd=release_anchor_fd,
+                expected=entry,
+            )
+    finally:
+        if bound_release_fd >= 0:
+            os.close(bound_release_fd)
+        if bound_releases_fd >= 0:
+            os.close(bound_releases_fd)
 
 
 def _read_nofollow_fd(fd: int) -> bytes:
@@ -390,6 +832,33 @@ def _read_manifest(path: Path) -> dict[str, object]:
     return value
 
 
+def _manifest_from_canonical_bytes(payload: bytes) -> dict[str, object]:
+    try:
+        text = payload.decode("utf-8")
+        value = loads_strict(text)
+    except (UnicodeDecodeError, ValueError):
+        raise _unavailable() from None
+    if not isinstance(value, dict):
+        raise _unavailable()
+    canonical = (
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+    if canonical != payload:
+        raise _unavailable()
+    return value
+
+
+def _require_manifest_fields(
+    manifest: dict[str, object],
+    *,
+    expected_fields: frozenset[str],
+) -> dict[str, object]:
+    if set(manifest) != expected_fields:
+        raise _unavailable()
+    return manifest
+
+
 def _manifest_string(manifest: Mapping[str, object], key: str) -> str:
     value = manifest.get(key)
     if not isinstance(value, str) or not value:
@@ -471,18 +940,31 @@ def _record_rows(record_path: Path, release_dir: Path) -> dict[str, tuple[str, i
     return validated
 
 
-def _verify_manifest(
+def _verify_manifest_contract(
     *,
     manifest_path: Path,
     state_home: Path,
     data_home: Path,
     expected_entrypoint_path: Path | None,
+    expected_schema_version: int,
+    expected_version: str,
+    expected_dist_info_prefix: str,
+    expected_fields: frozenset[str],
+    require_bytecode_environment: bool = True,
+    manifest_payload: bytes | None = None,
 ) -> ActiveRelease:
-    manifest = _read_manifest(manifest_path)
+    manifest = _require_manifest_fields(
+        (
+            _read_manifest(manifest_path)
+            if manifest_payload is None
+            else _manifest_from_canonical_bytes(manifest_payload)
+        ),
+        expected_fields=expected_fields,
+    )
     schema_version = manifest.get("schema_version")
-    if type(schema_version) is not int or schema_version != 1:
+    if type(schema_version) is not int or schema_version != expected_schema_version:
         raise _unavailable()
-    if manifest.get("version") != _EXPECTED_VERSION:
+    if manifest.get("version") != expected_version:
         raise _unavailable()
     source_manifest_digest = _valid_hash(manifest.get("source_manifest_sha256"))
     manifest_state = _absolute_path(manifest.get("state_home"))
@@ -500,7 +982,7 @@ def _verify_manifest(
     _private_directory(releases_dir)
     _contained(release_dir, releases_dir)
     _private_directory(release_dir)
-    release_id = f"{_EXPECTED_VERSION}-{source_manifest_digest[:16]}"
+    release_id = f"{expected_version}-{source_manifest_digest[:16]}"
     if (
         release_dir.parent != releases_dir
         or release_dir.name != release_id
@@ -514,6 +996,26 @@ def _verify_manifest(
     record_path = _absolute_path(manifest.get("record_path"))
     for path in (launcher_path, entrypoint_path, wheel_path, record_path):
         _contained(path, release_dir)
+    site_packages = record_path.parent.parent
+    try:
+        site_packages_parts = site_packages.relative_to(release_dir).parts
+    except ValueError:
+        raise _unavailable() from None
+    python_directory = site_packages_parts[2] if len(site_packages_parts) == 4 else ""
+    if (
+        len(site_packages_parts) != 4
+        or site_packages_parts[:2] != ("venv", "lib")
+        or site_packages_parts[3] != "site-packages"
+        or not python_directory.startswith("python3.")
+        or not python_directory.removeprefix("python3.").isdecimal()
+        or launcher_path != release_dir / "venv" / "bin" / "codex-usage"
+        or wheel_path != release_dir / "producer.whl"
+        or record_path
+        != site_packages / expected_dist_info_prefix / "RECORD"
+        or entrypoint_path
+        != site_packages / "codex_usage" / "integration_entrypoint.py"
+    ):
+        raise _unavailable()
     if expected_entrypoint_path is not None:
         if not isinstance(expected_entrypoint_path, Path):
             raise _unavailable()
@@ -539,7 +1041,13 @@ def _verify_manifest(
         or _sha256_bytes(launcher_payload) != launcher_hash
     ):
         raise _unavailable()
-    if b" -B -I -m codex_usage.integration_entrypoint" not in launcher_payload:
+    if (
+        b" -B -I -m codex_usage.integration_entrypoint" not in launcher_payload
+        or (
+            require_bytecode_environment
+            and b" PYTHONDONTWRITEBYTECODE=1 XDG_DATA_HOME=" not in launcher_payload
+        )
+    ):
         raise _unavailable()
     record_rows = _record_rows(record_path, release_dir)
     entrypoint_relative = entrypoint_path.relative_to(record_path.parent.parent).as_posix()
@@ -557,14 +1065,14 @@ def _verify_manifest(
     except (UnicodeDecodeError, IntegrationAttestationUnavailable):
         raise _unavailable() from None
     if (
-        f"Version: {_EXPECTED_VERSION}\n" not in metadata
+        f"Version: {expected_version}\n" not in metadata
         or f"Name: {_EXPECTED_DISTRIBUTION}\n" not in metadata
     ):
         raise _unavailable()
     if _release_tree_sha256(release_dir=release_dir) != tree_hash:
         raise _unavailable()
     return ActiveRelease(
-        version=_EXPECTED_VERSION,
+        version=expected_version,
         release_dir=release_dir,
         launcher_path=launcher_path,
         entrypoint_path=entrypoint_path,
@@ -573,6 +1081,48 @@ def _verify_manifest(
         record_sha256=record_hash,
         launcher_sha256=launcher_hash,
         release_tree_sha256=tree_hash,
+    )
+
+
+def _verify_manifest(
+    *,
+    manifest_path: Path,
+    state_home: Path,
+    data_home: Path,
+    expected_entrypoint_path: Path | None,
+    manifest_payload: bytes | None = None,
+) -> ActiveRelease:
+    return _verify_manifest_contract(
+        manifest_path=manifest_path,
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=expected_entrypoint_path,
+        expected_schema_version=2,
+        expected_version=_EXPECTED_VERSION,
+        expected_dist_info_prefix=_DIST_INFO_PREFIX,
+        expected_fields=_CURRENT_SCHEMA2_MANIFEST_FIELDS,
+        manifest_payload=manifest_payload,
+    )
+
+
+def _verify_previous_schema2_manifest_for_upgrade(
+    *,
+    manifest_path: Path,
+    state_home: Path,
+    data_home: Path,
+    manifest_payload: bytes | None = None,
+) -> ActiveRelease:
+    return _verify_manifest_contract(
+        manifest_path=manifest_path,
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=None,
+        expected_schema_version=2,
+        expected_version=_PREVIOUS_SCHEMA2_VERSION,
+        expected_dist_info_prefix=_PREVIOUS_SCHEMA2_DIST_INFO_PREFIX,
+        expected_fields=_PREVIOUS_SCHEMA2_MANIFEST_FIELDS,
+        require_bytecode_environment=False,
+        manifest_payload=manifest_payload,
     )
 
 
@@ -593,3 +1143,155 @@ def verify_active_release(
         raise
     except Exception:
         raise _unavailable() from None
+
+
+def _before_active_identity_recheck(_integration_fd: int) -> None:
+    return None
+
+
+def _fd_identity(fd: int) -> FileIdentity:
+    item = os.fstat(fd)
+    return FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
+
+
+def verify_active_manifest_at(
+    *,
+    state_home: Path,
+    data_home: Path,
+    expected_entrypoint_path: Path,
+) -> VerifiedActiveManifest:
+    state_fd = -1
+    app_fd = -1
+    integration_fd = -1
+    try:
+        try:
+            state_fd = open_verified_state_home(state_home)
+            state_identity = _fd_identity(state_fd)
+            app_fd = open_private_dir_at(state_fd, "codex-usage")
+            integration_fd = open_private_dir_at(app_fd, "integration")
+            integration_identity = _fd_identity(integration_fd)
+            active_payload, active_identity = read_private_bytes_at(
+                integration_fd,
+                "active.json",
+                maximum=_MANIFEST_MAX_BYTES,
+                mode=0o600,
+            )
+        except FileNotFoundError as exc:
+            raise IntegrationEvidenceUnavailable() from exc
+        except OSError as exc:
+            raise IntegrationEvidenceUnavailable() from exc
+        except ValueError as exc:
+            raise IntegrationEvidenceInvalid() from exc
+
+        try:
+            active_release = _verify_manifest_contract(
+                manifest_path=(
+                    state_home / "codex-usage" / "integration" / "active.json"
+                ),
+                state_home=state_home,
+                data_home=data_home,
+                expected_entrypoint_path=expected_entrypoint_path,
+                expected_schema_version=2,
+                expected_version=_EXPECTED_VERSION,
+                expected_dist_info_prefix=_DIST_INFO_PREFIX,
+                expected_fields=_CURRENT_SCHEMA2_MANIFEST_FIELDS,
+                manifest_payload=active_payload,
+            )
+            manifest = _manifest_from_canonical_bytes(active_payload)
+            release_id = _manifest_string(manifest, "release_id")
+            source_manifest_sha256 = _valid_hash(
+                manifest.get("source_manifest_sha256")
+            )
+            release_evidence = _release_tree_evidence_at(
+                integration_fd=integration_fd,
+                release_id=release_id,
+            )
+            if (
+                hashlib.sha256(b"".join(release_evidence.rows)).hexdigest()
+                != active_release.release_tree_sha256
+            ):
+                raise _unavailable()
+        except IntegrationAttestationUnavailable as exc:
+            raise IntegrationEvidenceUnavailable() from exc
+        except Exception as exc:
+            raise IntegrationEvidenceUnavailable() from exc
+
+        try:
+            _before_active_identity_recheck(integration_fd)
+            repeated_payload, repeated_identity = read_private_bytes_at(
+                integration_fd,
+                "active.json",
+                maximum=_MANIFEST_MAX_BYTES,
+                mode=0o600,
+            )
+            if (
+                _fd_identity(state_fd) != state_identity
+                or _fd_identity(integration_fd) != integration_identity
+                or repeated_identity != active_identity
+                or repeated_payload != active_payload
+            ):
+                raise IntegrationEvidenceInvalid()
+            if (
+                _release_tree_evidence_at(
+                    integration_fd=integration_fd,
+                    release_id=release_id,
+                )
+                != release_evidence
+            ):
+                raise IntegrationEvidenceInvalid()
+
+            fresh_state_fd = open_verified_state_home(state_home)
+            fresh_app_fd = -1
+            fresh_integration_fd = -1
+            try:
+                fresh_app_fd = open_private_dir_at(fresh_state_fd, "codex-usage")
+                fresh_integration_fd = open_private_dir_at(
+                    fresh_app_fd,
+                    "integration",
+                )
+                fresh_payload, fresh_active_identity = read_private_bytes_at(
+                    fresh_integration_fd,
+                    "active.json",
+                    maximum=_MANIFEST_MAX_BYTES,
+                    mode=0o600,
+                )
+                if (
+                    _fd_identity(fresh_state_fd) != state_identity
+                    or _fd_identity(fresh_integration_fd) != integration_identity
+                    or fresh_active_identity != active_identity
+                    or fresh_payload != active_payload
+                    or _release_tree_evidence_at(
+                        integration_fd=fresh_integration_fd,
+                        release_id=release_id,
+                    )
+                    != release_evidence
+                ):
+                    raise IntegrationEvidenceInvalid()
+            finally:
+                if fresh_integration_fd >= 0:
+                    os.close(fresh_integration_fd)
+                if fresh_app_fd >= 0:
+                    os.close(fresh_app_fd)
+                os.close(fresh_state_fd)
+        except IntegrationEvidenceInvalid:
+            raise
+        except Exception as exc:
+            raise IntegrationEvidenceInvalid() from exc
+
+        return VerifiedActiveManifest(
+            active_release=active_release,
+            release_id=release_id,
+            source_manifest_sha256=source_manifest_sha256,
+            active_manifest_bytes=active_payload,
+            active_manifest_sha256=_sha256_bytes(active_payload),
+            state_home_identity=state_identity,
+            integration_parent_identity=integration_identity,
+            active_file_identity=active_identity,
+        )
+    finally:
+        if integration_fd >= 0:
+            os.close(integration_fd)
+        if app_fd >= 0:
+            os.close(app_fd)
+        if state_fd >= 0:
+            os.close(state_fd)
