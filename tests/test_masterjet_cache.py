@@ -799,6 +799,68 @@ def test_constructor_root_close_failure_is_code_only(
     assert caught.value.__context__ is None
 
 
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("operation", ["init", "save", "load"])
+def test_close_baseexception_is_exact_primary_across_public_operations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    interruption: type[BaseException],
+) -> None:
+    cache = ControlSnapshotCache.for_test(tmp_path)
+    cache.save(valid_snapshot(), observed_at=1.0)
+    if operation == "load":
+        cache_path(tmp_path).replace(rollback_path(tmp_path))
+    original_close = cache_module.os.close
+    primary = interruption("close primary")
+    later_closed: list[Path] = []
+    failed = False
+    target = (
+        tmp_path
+        if operation == "init"
+        else temp_path(tmp_path)
+        if operation == "save"
+        else rollback_path(tmp_path)
+    )
+
+    def interrupt_owned_close(fd: int) -> None:
+        nonlocal failed
+        descriptor = Path(os.readlink(f"/proc/self/fd/{fd}"))
+        original_close(fd)
+        if not failed and descriptor == target:
+            failed = True
+            raise primary
+        if failed:
+            later_closed.append(descriptor)
+
+    monkeypatch.setattr(cache_module.os, "close", interrupt_owned_close)
+
+    with pytest.raises(interruption) as caught:
+        if operation == "init":
+            ControlSnapshotCache.for_test(tmp_path)
+        elif operation == "save":
+            cache.save(valid_snapshot(), observed_at=2.0)
+        else:
+            cache.load(max_age_seconds=10**10)
+
+    assert caught.value is primary
+    assert failed is True
+    assert not temp_path(tmp_path).exists()
+    if operation != "init":
+        assert tmp_path in later_closed
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
+def test_close_helper_returns_exact_nonexception_primary(
+    monkeypatch: pytest.MonkeyPatch,
+    interruption: type[BaseException],
+) -> None:
+    primary = interruption("close primary")
+    monkeypatch.setattr(cache_module.os, "close", lambda _fd: (_ for _ in ()).throw(primary))
+
+    assert ControlSnapshotCache._close_owned_fd(123, None) is primary
+
+
 @pytest.mark.parametrize("operation", ["save", "load"])
 def test_public_root_close_failure_is_code_only(
     tmp_path: Path,
@@ -917,6 +979,12 @@ def test_recovery_read_close_failure_is_code_only_and_root_is_closed(
         "accesstoken=topsecret",
         "refreshtoken=topsecret",
         "SeSsIoNiD=topsecret",
+        "header apikey topsecret",
+        "auth sessionid topsecret",
+        "authorization clientsecret topsecret",
+        "cookie setcookie topsecret",
+        "error clientsecret topsecret",
+        "diagnostic accesstoken topsecret",
     ],
 )
 def test_common_secret_header_cookie_and_error_markers_are_not_cached(

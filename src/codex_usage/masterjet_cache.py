@@ -689,13 +689,13 @@ class ControlSnapshotCache:
         fd: int,
         primary: BaseException | None,
     ) -> BaseException | None:
-        close_failed = False
         try:
             os.close(fd)
-        except BaseException:
-            close_failed = True
-        if close_failed and primary is None:
-            return ControlCacheError("control.cache_unavailable")
+        except BaseException as close_error:
+            if primary is None:
+                if not isinstance(close_error, Exception):
+                    return close_error
+                return ControlCacheError("control.cache_unavailable")
         return primary
 
     @staticmethod
@@ -904,6 +904,15 @@ class ControlSnapshotCache:
         compound_assignment = has_assignment and bool(
             _PRIVATE_COMPOUND_IDENTIFIERS & normalized_identifiers
         )
+        compound_context = any(
+            token in _PRIVATE_COMPOUND_IDENTIFIERS
+            and index + 1 < len(tokens)
+            and bool(
+                {"auth", "authorization", "cookie", "diagnostic", "error", "header"}
+                & set(tokens[:index])
+            )
+            for index, token in enumerate(tokens)
+        )
         structured_header = "header" in tokens and bool(
             {"authorization", "cookie", "private", "secret", "token", "value"} & set(tokens)
         )
@@ -923,6 +932,7 @@ class ControlSnapshotCache:
             any(item in _CREDENTIAL_WORDS for item in tokens)
             or bool(_CREDENTIAL_PAIRS & pairs)
             or compound_assignment
+            or compound_context
             or assignment_marker
             or structured_header
             or structured_error
