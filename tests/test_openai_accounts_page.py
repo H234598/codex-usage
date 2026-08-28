@@ -674,6 +674,46 @@ def test_openai_page_does_not_restart_a_failed_process() -> None:
     assert page._status.get_text() == "Fehler: control.step_up_required"
 
 
+def test_bounded_runner_accepts_one_fragmented_step_up_sentinel() -> None:
+    module = _module()
+    prompts = []
+    sentinel = "CODEX_USAGE_STEP_UP_REQUIRED\n"
+    script = (
+        "import sys; "
+        f"sys.stderr.write({sentinel[:12]!r}); sys.stderr.flush(); "
+        f"sys.stderr.write({sentinel[12:]!r}); sys.stderr.flush(); "
+        "assert sys.stdin.buffer.readline() == b'739104\\n'; "
+        "sys.stdout.write('{\"ok\":true}')"
+    )
+    runner = module.BoundedJsonRunner(prompt_dispatcher=lambda callback: callback())
+
+    result = runner._run(
+        (sys.executable, "-c", script),
+        None,
+        lambda: prompts.append("prompt") or "739104",
+    )
+
+    assert result.ok is True
+    assert prompts == ["prompt"]
+
+
+def test_bounded_runner_rejects_duplicate_step_up_sentinel_without_second_prompt() -> None:
+    module = _module()
+    prompts = []
+    sentinel = "CODEX_USAGE_STEP_UP_REQUIRED\n"
+    script = f"import sys; sys.stderr.write({sentinel!r} * 2); sys.stderr.flush()"
+    runner = module.BoundedJsonRunner(prompt_dispatcher=lambda callback: callback())
+
+    result = runner._run(
+        (sys.executable, "-c", script),
+        None,
+        lambda: prompts.append("prompt") or "739104",
+    )
+
+    assert result.ok is False
+    assert prompts == []
+
+
 def test_openai_action_guard_checks_current_projection_before_mutation_argv() -> None:
     calls = []
 

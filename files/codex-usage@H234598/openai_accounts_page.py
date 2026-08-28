@@ -327,7 +327,12 @@ class BoundedJsonRunner:
                         raise ValueError("control output too large")
                     if STEP_UP_SENTINEL not in control:
                         continue
-                    if prompted or challenge_callback is None or process.stdin is None:
+                    if (
+                        control.count(STEP_UP_SENTINEL) != 1
+                        or prompted
+                        or challenge_callback is None
+                        or process.stdin is None
+                    ):
                         raise ValueError("invalid step-up control")
                     prompted = True
                     value = self._request_step_up(challenge_callback, deadline)
