@@ -193,13 +193,16 @@ class FakeCallbackProvider:
 
 
 class FakeCallbackTimer:
-    def __init__(self, delay: float, callback) -> None:
+    def __init__(self, delay: float, callback, *, start_failure: bool = False) -> None:
         self.delay = delay
         self.callback = callback
         self.cancel_count = 0
         self.started = False
+        self.start_failure = start_failure
 
     def start(self) -> None:
+        if self.start_failure:
+            raise OSError("timer start failed")
         self.started = True
 
     def cancel(self) -> None:
@@ -212,11 +215,16 @@ class FakeCallbackTimer:
 
 
 class FakeCallbackTimerFactory:
-    def __init__(self) -> None:
+    def __init__(self, *, failing_starts: tuple[int, ...] = ()) -> None:
         self.timers: list[FakeCallbackTimer] = []
+        self.failing_starts = failing_starts
 
     def __call__(self, delay: float, callback) -> FakeCallbackTimer:
-        timer = FakeCallbackTimer(delay, callback)
+        timer = FakeCallbackTimer(
+            delay,
+            callback,
+            start_failure=len(self.timers) + 1 in self.failing_starts,
+        )
         self.timers.append(timer)
         return timer
 
@@ -526,6 +534,95 @@ def test_oauth_close_failure_keeps_ownership_until_bound_retry_succeeds() -> Non
 
     subject.oauth_begin("google-one", browser="firefox")
     assert provider.acquire_count == 2
+
+
+def test_oauth_permanent_close_failure_stops_retrying_and_quarantines_mutations() -> None:
+    client = FakeControlClient()
+    provider = FakeCallbackProvider(close_failures=99)
+    timers = FakeCallbackTimerFactory()
+    subject = GoogleAccountsController(
+        client,
+        clock=lambda: NOW,
+        idempotency_key_factory=lambda: "idem-1",
+        callback_provider=provider,
+        callback_timer_factory=timers,
+    )
+    subject.oauth_begin("google-one", browser="firefox")
+
+    timers.timers[0].fire()
+    assert timers.timers[-1].delay == 1
+    timers.timers[-1].fire()
+    assert timers.timers[-1].delay == 2
+    timers.timers[-1].fire()
+
+    assert provider.lease.close_count == 3
+    assert len(timers.timers) == 3
+    calls_before_blocked_mutation = list(client.calls)
+    with pytest.raises(GoogleAccountsError, match=r"oauth\.callback_cleanup_failed"):
+        subject.inventory_refresh("google-one")
+    assert client.calls == calls_before_blocked_mutation
+
+
+def test_oauth_retry_timer_start_failure_reaps_synchronously_or_quarantines() -> None:
+    client = FakeControlClient()
+    provider = FakeCallbackProvider(close_failures=99)
+    timers = FakeCallbackTimerFactory(failing_starts=(2,))
+    subject = GoogleAccountsController(
+        client,
+        clock=lambda: NOW,
+        idempotency_key_factory=lambda: "idem-1",
+        callback_provider=provider,
+        callback_timer_factory=timers,
+    )
+    subject.oauth_begin("google-one", browser="firefox")
+
+    timers.timers[0].fire()
+
+    assert provider.lease.close_count == 3
+    assert len(timers.timers) == 2
+    assert not timers.timers[1].started
+    calls_before_blocked_mutation = list(client.calls)
+    with pytest.raises(GoogleAccountsError, match=r"oauth\.callback_cleanup_failed"):
+        subject.provision_plan("google-one")
+    assert client.calls == calls_before_blocked_mutation
+
+
+def test_oauth_complete_is_terminal_before_cleanup_and_replay_skips_remote_call() -> None:
+    client = FakeControlClient()
+    provider = FakeCallbackProvider(close_failures=99)
+    timers = FakeCallbackTimerFactory()
+    key_calls = [0]
+
+    def key() -> str:
+        key_calls[0] += 1
+        return f"idem-{key_calls[0]}"
+
+    subject = GoogleAccountsController(
+        client,
+        clock=lambda: NOW,
+        idempotency_key_factory=key,
+        callback_provider=provider,
+        callback_timer_factory=timers,
+    )
+    transaction = subject.oauth_begin("google-one", browser="firefox")
+
+    completed = subject.oauth_complete(transaction)
+    replayed = subject.oauth_complete(transaction)
+
+    assert replayed is completed
+    assert completed.state == "succeeded"
+    assert key_calls == [2]
+    assert sum(call[0] == "google.oauth.complete" for call in client.calls) == 1
+
+    timers.timers[-1].fire()
+    timers.timers[-1].fire()
+    assert provider.lease.close_count == 3
+    assert len(timers.timers) == 3
+
+    replayed_after_quarantine = subject.oauth_complete(transaction)
+    assert replayed_after_quarantine is completed
+    assert key_calls == [2]
+    assert sum(call[0] == "google.oauth.complete" for call in client.calls) == 1
 
 
 @pytest.mark.parametrize(
