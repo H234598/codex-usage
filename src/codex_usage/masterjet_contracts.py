@@ -40,7 +40,6 @@ _OAUTH_QUERY_NAMES = frozenset(
         "code_challenge_method",
         "hd",
         "include_granted_scopes",
-        "login_hint",
         "prompt",
         "redirect_uri",
         "response_type",
@@ -757,6 +756,7 @@ def _authorization_url(value: object) -> str:
     except (UnicodeError, ValueError):
         _invalid("authorization_url")
     seen: set[str] = set()
+    redirect_uri: str | None = None
     for name, query_value in query:
         normalized_name = name.casefold()
         if normalized_name not in _OAUTH_QUERY_NAMES or normalized_name in seen:
@@ -773,28 +773,65 @@ def _authorization_url(value: object) -> str:
         ):
             _invalid("authorization_url")
         if normalized_name == "redirect_uri":
-            _loopback_redirect_uri(query_value)
+            redirect_uri = validate_google_oauth_redirect_uri(query_value)
+    if redirect_uri is None:
+        _invalid("authorization_url")
     return value
 
 
-def _loopback_redirect_uri(value: str) -> None:
+def validate_google_oauth_redirect_uri(value: object) -> str:
+    if type(value) is not str or not value:
+        _invalid("redirect_uri")
     try:
+        encoded = value.encode("ascii")
         parsed = urlsplit(value)
         port = parsed.port
-    except ValueError:
-        _invalid("authorization_url")
+    except (UnicodeError, ValueError):
+        _invalid("redirect_uri")
+    host = parsed.hostname
+    canonical_host = f"[{host}]" if host == "::1" else host
+    canonical = (
+        f"http://{canonical_host}:{port}{parsed.path}"
+        if canonical_host is not None and port is not None
+        else ""
+    )
     if (
-        parsed.scheme != "http"
-        or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}
+        len(encoded) > _MAX_URL_BYTES
+        or any(not 0x21 <= byte <= 0x7E for byte in encoded)
+        or parsed.scheme != "http"
+        or host not in {"127.0.0.1", "::1"}
         or parsed.username is not None
         or parsed.password is not None
-        or (port is not None and not 1 <= port <= 65_535)
+        or port is None
+        or not 1 <= port <= 65_535
         or not parsed.path.startswith("/")
+        or parsed.path == "/"
+        or "//" in parsed.path
         or "%" in parsed.path
+        or any(part in {".", ".."} for part in parsed.path.split("/"))
         or parsed.query
         or parsed.fragment
+        or value != canonical
     ):
+        _invalid("redirect_uri")
+    return value
+
+
+def google_oauth_redirect_uri(authorization_url: object) -> str:
+    value = _authorization_url(authorization_url)
+    try:
+        query = parse_qsl(
+            urlsplit(value).query,
+            keep_blank_values=True,
+            strict_parsing=True,
+            max_num_fields=32,
+        )
+    except (UnicodeError, ValueError):
         _invalid("authorization_url")
+    matches = [item for name, item in query if name.casefold() == "redirect_uri"]
+    if len(matches) != 1:
+        _invalid("authorization_url")
+    return validate_google_oauth_redirect_uri(matches[0])
 
 
 def _bool(value: object, field: str) -> bool:

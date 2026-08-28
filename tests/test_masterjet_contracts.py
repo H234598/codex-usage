@@ -92,7 +92,10 @@ def valid_google_oauth_transaction() -> dict[str, object]:
         "schema_version": 1,
         "id": "oauth-1",
         "account_ref": "google-1",
-        "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "authorization_url": (
+            "https://accounts.google.com/o/oauth2/v2/auth?"
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback"
+        ),
         "expires_at": "2026-08-28T12:05:00Z",
         "generation": 4,
     }
@@ -120,7 +123,10 @@ def test_google_oauth_transaction_is_typed_redacted_and_immutable():
     assert transaction == GoogleOAuthTransactionV1(
         id="oauth-1",
         account_ref="google-1",
-        authorization_url="https://accounts.google.com/o/oauth2/v2/auth",
+        authorization_url=(
+            "https://accounts.google.com/o/oauth2/v2/auth?"
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback"
+        ),
         expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=UTC),
         generation=4,
     )
@@ -148,10 +154,22 @@ def test_google_oauth_transaction_rejects_untrusted_or_private_values(field, val
 @pytest.mark.parametrize(
     "authorization_url",
     [
-        "https://accounts.google.com/o/oauth2/v2/auth?client%5Fsecret=private",
-        "https://accounts.google.com/o/oauth2/v2/auth?ClIeNt_SeCrEt=private",
-        "https://accounts.google.com/o/oauth2/v2/auth?scope=openid&ScOpE=email",
-        "https://accounts.google.com/o/oauth2/v2/auth?state=GOCSPX%2Dprivate",
+        (
+            "https://accounts.google.com/o/oauth2/v2/auth?client%5Fsecret=private&"
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback"
+        ),
+        (
+            "https://accounts.google.com/o/oauth2/v2/auth?ClIeNt_SeCrEt=private&"
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback"
+        ),
+        (
+            "https://accounts.google.com/o/oauth2/v2/auth?scope=openid&ScOpE=email&"
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback"
+        ),
+        (
+            "https://accounts.google.com/o/oauth2/v2/auth?state=GOCSPX%2Dprivate&"
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback"
+        ),
         (
             "https://accounts.google.com/o/oauth2/v2/auth?redirect_uri="
             "http%3A%2F%2Fattacker.invalid%2Fcallback"
@@ -164,8 +182,14 @@ def test_google_oauth_transaction_rejects_untrusted_or_private_values(field, val
             "https://accounts.google.com/o/oauth2/v2/auth?redirect_uri="
             "http%3A%2F%2Flocalhost%3A8765%2Fcallback%3Fprivate%3D1"
         ),
-        "https://accounts.google.com/o/oauth2/v2/auth?unknown=value",
-        "https://accounts.google.com/o/oauth2/auth?scope=openid",
+        (
+            "https://accounts.google.com/o/oauth2/v2/auth?unknown=value&"
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback"
+        ),
+        (
+            "https://accounts.google.com/o/oauth2/auth?scope=openid&"
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback"
+        ),
     ],
 )
 def test_google_oauth_transaction_rejects_encoded_or_ambiguous_auth_parameters(
@@ -192,6 +216,31 @@ def test_google_oauth_transaction_accepts_strict_loopback_callback():
     )
 
     assert parsed.authorization_url == authorization_url
+
+
+@pytest.mark.parametrize(
+    "authorization_url",
+    [
+        (
+            "https://accounts.google.com/o/oauth2/v2/auth?"
+            "login_hint=owner%40example.test&"
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback"
+        ),
+        (
+            "https://accounts.google.com/o/oauth2/v2/auth?"
+            "redirect_uri=http%3A%2F%2Flocalhost%3A8765%2Foauth%2Fcallback"
+        ),
+        "https://accounts.google.com/o/oauth2/v2/auth?scope=openid",
+    ],
+)
+def test_google_oauth_transaction_rejects_login_hint_unbound_host_or_missing_callback(
+    authorization_url,
+):
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_google_oauth_transaction(
+            valid_google_oauth_transaction()
+            | {"authorization_url": authorization_url}
+        )
 
 
 def test_google_oauth_transaction_rejects_unknown_fields():

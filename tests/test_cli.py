@@ -1350,7 +1350,12 @@ def test_google_provision_apply_requires_confirm_before_config_or_request(
 
     assert main(["google", "provision-apply", "google-one", "plan-1", "--json"]) == 2
 
-    assert capsys.readouterr().err.strip() == "Fehler: confirmation_required"
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "ok": False,
+        "code": "confirmation_required",
+    }
+    assert captured.err == ""
 
 
 def test_google_cli_fixed_commands_forward_only_redacted_values(monkeypatch, capsys):
@@ -1423,9 +1428,24 @@ def test_google_cli_fixed_commands_forward_only_redacted_values(monkeypatch, cap
             )
 
     monkeypatch.setattr(cli_module, "_new_google_controller", lambda _path: Controller())
+    monkeypatch.setattr(
+        cli_module, "_new_google_oauth_controller", lambda _path: Controller()
+    )
 
     assert main(["google", "accounts", "--json"]) == 0
-    assert main(["google", "oauth-begin", "google-one", "--browser", "firefox"]) == 0
+    assert (
+        main(
+            [
+                "google",
+                "oauth-begin",
+                "google-one",
+                "--browser",
+                "firefox",
+                "--json",
+            ]
+        )
+        == 0
+    )
     assert main(["google", "inventory-refresh", "google-one", "--json"]) == 0
     assert main(["google", "provision-plan", "google-one", "--json"]) == 0
     assert (
@@ -1620,7 +1640,73 @@ def test_google_production_cli_fails_closed_before_client_construction(monkeypat
 
     assert main(["google", "accounts", "--json"]) == 2
 
-    assert capsys.readouterr().err.strip() == "Fehler: control.authentication_required"
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "ok": False,
+        "code": "control.authentication_required",
+    }
+    assert captured.err == ""
+
+
+def test_google_oauth_begin_without_productive_callback_is_json_fail_closed(
+    monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        cli_module,
+        "MasterjetControlClient",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("client constructed")
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "google",
+                "oauth-begin",
+                "google-one",
+                "--browser",
+                "firefox",
+                "--json",
+            ]
+        )
+        == 2
+    )
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "ok": False,
+        "code": "oauth.callback_unavailable",
+    }
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["google", "accounts", "--json"],
+        ["google", "inventory-refresh", "google-one", "--json"],
+        ["google", "provision-plan", "google-one", "--json"],
+    ],
+)
+def test_google_json_sanitizes_unexpected_controller_or_transport_error(
+    monkeypatch, capsys, command
+):
+    monkeypatch.setattr(
+        cli_module,
+        "_new_google_controller",
+        lambda _path: (_ for _ in ()).throw(RuntimeError("Bearer topsecret")),
+    )
+
+    assert main(command) == 2
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "ok": False,
+        "code": "control.transport_unavailable",
+    }
+    assert captured.err == ""
+    assert "topsecret" not in captured.out
 
 
 def test_masterjet_status_reports_auth_wiring_fail_closed(capsys):

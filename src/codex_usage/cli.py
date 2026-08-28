@@ -166,7 +166,7 @@ Masterjet und Google:
   codex-usage masterjet status --json
   codex-usage google accounts --json
   codex-usage google add ACCOUNT --oauth-client-json PATH --json
-  codex-usage google oauth-begin ACCOUNT --browser BROWSER
+  codex-usage google oauth-begin ACCOUNT --browser BROWSER --json
   codex-usage google inventory-refresh ACCOUNT --json
   codex-usage google provision-plan ACCOUNT --json
   codex-usage google provision-apply ACCOUNT PLAN_ID --confirm --json
@@ -476,6 +476,7 @@ def _build_parser() -> argparse.ArgumentParser:
     google_oauth_begin = google_sub.add_parser("oauth-begin", help="Google-OAuth starten")
     google_oauth_begin.add_argument("account")
     google_oauth_begin.add_argument("--browser", choices=SUPPORTED_BROWSERS, required=True)
+    google_oauth_begin.add_argument("--json", action="store_true")
     google_oauth_begin.set_defaults(func=_cmd_google_oauth_begin)
     google_inventory = google_sub.add_parser(
         "inventory-refresh", help="Google-Inventar aktualisieren"
@@ -1461,6 +1462,11 @@ def _new_google_controller(_config_path: Path | None) -> GoogleAccountsControlle
     raise GoogleAccountsError("control.authentication_required")
 
 
+def _new_google_oauth_controller(_config_path: Path | None) -> GoogleAccountsController:
+    # Productive bound callback provider arrives with Task 8 callback integration.
+    raise GoogleAccountsError("oauth.callback_unavailable")
+
+
 def _cmd_masterjet_status(args: argparse.Namespace) -> int:
     payload = {"ok": False, "code": "control.authentication_required"}
     if args.json:
@@ -1473,8 +1479,8 @@ def _cmd_masterjet_status(args: argparse.Namespace) -> int:
 def _cmd_google_accounts(args: argparse.Namespace) -> int:
     try:
         rows = _new_google_controller(args.config).list()
-    except GoogleAccountsError as exc:
-        return _print_google_error(exc)
+    except Exception as exc:
+        return _print_google_error(exc, json_output=args.json)
     if args.json:
         payload = [_google_account_json(row) for row in rows]
         print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
@@ -1492,8 +1498,8 @@ def _cmd_google_add(args: argparse.Namespace) -> int:
     try:
         controller = _new_google_controller(args.config)
         imported = controller.import_oauth_client(args.account, args.oauth_client_json)
-    except GoogleAccountsError as exc:
-        return _print_google_error(exc)
+    except Exception as exc:
+        return _print_google_error(exc, json_output=args.json)
     payload: dict[str, object] = {
         "account_ref": imported.account_ref,
         "generation": imported.generation,
@@ -1508,18 +1514,14 @@ def _cmd_google_add(args: argparse.Namespace) -> int:
 
 def _cmd_google_oauth_begin(args: argparse.Namespace) -> int:
     try:
-        transaction = _new_google_controller(args.config).oauth_begin(
+        transaction = _new_google_oauth_controller(args.config).oauth_begin(
             args.account, browser=args.browser
         )
-    except GoogleAccountsError as exc:
-        return _print_google_error(exc)
-    print(
-        json.dumps(
-            _google_oauth_json(transaction),
-            ensure_ascii=False,
-            indent=2,
-            allow_nan=False,
-        )
+    except Exception as exc:
+        return _print_google_error(exc, json_output=args.json)
+    _print_google_payload(
+        _google_oauth_json(transaction),
+        json_output=args.json,
     )
     return 0
 
@@ -1527,16 +1529,16 @@ def _cmd_google_oauth_begin(args: argparse.Namespace) -> int:
 def _cmd_google_inventory_refresh(args: argparse.Namespace) -> int:
     try:
         operation = _new_google_controller(args.config).inventory_refresh(args.account)
-    except GoogleAccountsError as exc:
-        return _print_google_error(exc)
+    except Exception as exc:
+        return _print_google_error(exc, json_output=args.json)
     return _print_google_operation(operation, json_output=args.json)
 
 
 def _cmd_google_provision_plan(args: argparse.Namespace) -> int:
     try:
         plan = _new_google_controller(args.config).provision_plan(args.account)
-    except GoogleAccountsError as exc:
-        return _print_google_error(exc)
+    except Exception as exc:
+        return _print_google_error(exc, json_output=args.json)
     payload = {
         "account_ref": plan.account_ref,
         "plan_id": plan.plan_id,
@@ -1550,14 +1552,16 @@ def _cmd_google_provision_plan(args: argparse.Namespace) -> int:
 
 def _cmd_google_provision_apply(args: argparse.Namespace) -> int:
     if args.confirm is not True:
-        print("Fehler: confirmation_required", file=sys.stderr)
-        return 2
+        return _print_google_error(
+            GoogleAccountsError("confirmation_required"),
+            json_output=args.json,
+        )
     try:
         operation = _new_google_controller(args.config).provision_apply(
             args.plan_id, account_ref=args.account
         )
-    except GoogleAccountsError as exc:
-        return _print_google_error(exc)
+    except Exception as exc:
+        return _print_google_error(exc, json_output=args.json)
     return _print_google_operation(operation, json_output=args.json)
 
 
@@ -1618,8 +1622,16 @@ def _control_timestamp(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _print_google_error(exc: GoogleAccountsError) -> int:
-    print(f"Fehler: {exc.code}", file=sys.stderr)
+def _print_google_error(exc: Exception, *, json_output: bool) -> int:
+    code = (
+        exc.code
+        if isinstance(exc, GoogleAccountsError)
+        else "control.transport_unavailable"
+    )
+    if json_output:
+        print(json.dumps({"ok": False, "code": code}, ensure_ascii=False, allow_nan=False))
+    else:
+        print(f"Fehler: {code}", file=sys.stderr)
     return 2
 
 

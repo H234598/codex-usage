@@ -27,6 +27,12 @@ from codex_usage.masterjet_client import (
     MasterjetControlClient,
 )
 
+REDIRECT_URI = "http://127.0.0.1:8765/oauth/callback"
+AUTHORIZATION_URL = (
+    "https://accounts.google.com/o/oauth2/v2/auth?"
+    "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback"
+)
+
 
 def google_accounts_payload() -> dict[str, object]:
     return {
@@ -74,7 +80,7 @@ def google_oauth_transaction_payload() -> dict[str, object]:
         "schema_version": 1,
         "id": "oauth-1",
         "account_ref": "google-1",
-        "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "authorization_url": AUTHORIZATION_URL,
         "expires_at": "2026-08-28T12:05:00Z",
         "generation": 4,
     }
@@ -718,7 +724,11 @@ def test_oauth_begin_decodes_bound_typed_transaction(monkeypatch):
         step_up_provider=lambda: "123456",
     ).call(
         "google.oauth.begin",
-        {"account_ref": "google-1", "browser": "firefox"},
+        {
+            "account_ref": "google-1",
+            "browser": "firefox",
+            "redirect_uri": REDIRECT_URI,
+        },
         expected_generation=4,
         idempotency_key="idem-1",
     )
@@ -742,10 +752,42 @@ def test_oauth_begin_rejects_transaction_for_another_account(monkeypatch):
             step_up_provider=lambda: "123456",
         ).call(
             "google.oauth.begin",
-            {"account_ref": "google-1", "browser": "firefox"},
+            {
+                "account_ref": "google-1",
+                "browser": "firefox",
+                "redirect_uri": REDIRECT_URI,
+            },
             expected_generation=4,
             idempotency_key="idem-1",
         )
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"account_ref": "google-1", "browser": "firefox"},
+        {
+            "account_ref": "google-1",
+            "browser": "firefox",
+            "redirect_uri": "http://localhost:8765/oauth/callback",
+        },
+        {
+            "account_ref": "google-1",
+            "browser": "firefox",
+            "redirect_uri": "http://127.0.0.1/oauth/callback",
+        },
+    ],
+)
+def test_oauth_begin_rejects_missing_or_unbound_redirect_before_transport(arguments):
+    with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "google.oauth.begin",
+            arguments,
+            expected_generation=4,
+            idempotency_key="idem-1",
+        )
+
+    assert FakeHTTPSConnection.instances == []
 
 
 def test_operations_get_binds_returned_operation_id(monkeypatch):
@@ -829,7 +871,11 @@ def test_https_uses_verified_tls_fixed_target_and_transient_auth_headers(monkeyp
     )
     client.call(
         "google.oauth.begin",
-        {"account_ref": "google-1", "browser": "firefox"},
+        {
+            "account_ref": "google-1",
+            "browser": "firefox",
+            "redirect_uri": REDIRECT_URI,
+        },
         expected_generation=4,
         idempotency_key="idem-1",
     )
@@ -845,7 +891,9 @@ def test_https_uses_verified_tls_fixed_target_and_transient_auth_headers(monkeyp
     assert connection.context.check_hostname is True
     assert connection.context.verify_mode == ssl.CERT_REQUIRED
     assert (method, target) == ("POST", "/control")
-    assert json.loads(body)["operation"] == "google.oauth.begin"
+    request = json.loads(body)
+    assert request["operation"] == "google.oauth.begin"
+    assert request["arguments"]["redirect_uri"] == REDIRECT_URI
     assert headers["Authorization"] == "Bearer remote-bearer"
     assert headers["X-Masterjet-Step-Up"] == "123456"
     assert headers["Cache-Control"] == "no-store"
@@ -1188,7 +1236,11 @@ def test_local_sensitive_json_operation_requires_step_up(tmp_path):
                 local_attestation_verifier=lambda _pid, _uid, _gid, _socket: True,
             ).call(
                 "google.oauth.begin",
-                {"account_ref": "google-1", "browser": "firefox"},
+                {
+                    "account_ref": "google-1",
+                    "browser": "firefox",
+                    "redirect_uri": REDIRECT_URI,
+                },
                 expected_generation=4,
                 idempotency_key="idem-1",
             )
@@ -1207,7 +1259,11 @@ def test_local_sensitive_json_operation_sends_step_up_only_by_fd(tmp_path):
             step_up_provider=lambda: "123456",
         ).call(
             "google.oauth.begin",
-            {"account_ref": "google-1", "browser": "firefox"},
+            {
+                "account_ref": "google-1",
+                "browser": "firefox",
+                "redirect_uri": REDIRECT_URI,
+            },
             expected_generation=4,
             idempotency_key="idem-1",
         )
@@ -1216,6 +1272,7 @@ def test_local_sensitive_json_operation_sends_step_up_only_by_fd(tmp_path):
     assert request["arguments"] == {
         "account_ref": "google-1",
         "browser": "firefox",
+        "redirect_uri": REDIRECT_URI,
         "step_up_fd": 0,
         "step_up_size": 6,
     }
@@ -1317,7 +1374,11 @@ def test_step_up_rejects_non_ascii_header_values_before_request(monkeypatch, val
             step_up_provider=lambda: value,
         ).call(
             "google.oauth.begin",
-            {"account_ref": "google-1", "browser": "firefox"},
+            {
+                "account_ref": "google-1",
+                "browser": "firefox",
+                "redirect_uri": REDIRECT_URI,
+            },
             expected_generation=4,
             idempotency_key="idem-1",
         )

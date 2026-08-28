@@ -10,11 +10,14 @@ from typing import Protocol, TypeVar
 
 from .masterjet_client import MasterjetClientError
 from .masterjet_contracts import (
+    ControlContractError,
     ControlOperation,
     GoogleControlAccount,
     GoogleOAuthTransactionV1,
     SecretIngressReceipt,
     SecretIngressSession,
+    google_oauth_redirect_uri,
+    validate_google_oauth_redirect_uri,
 )
 from .private_io import open_verified_state_home, read_private_bytes_at
 
@@ -39,6 +42,15 @@ class AuthenticatedGoogleClient(Protocol):
         expected_generation: int | None = None,
         idempotency_key: str | None = None,
     ) -> object: ...
+
+
+class GoogleOAuthCallbackLease(Protocol):
+    @property
+    def redirect_uri(self) -> str: ...
+
+
+class GoogleOAuthCallbackProvider(Protocol):
+    def acquire(self) -> GoogleOAuthCallbackLease: ...
 
 
 class GoogleAccountsError(RuntimeError):
@@ -66,7 +78,13 @@ class GoogleOAuthClientImportResult:
 
 
 class GoogleAccountsController:
-    __slots__ = ("_client", "_clock", "_idempotency_key_factory")
+    __slots__ = (
+        "_callback_lease",
+        "_callback_provider",
+        "_client",
+        "_clock",
+        "_idempotency_key_factory",
+    )
 
     def __init__(
         self,
@@ -74,12 +92,15 @@ class GoogleAccountsController:
         *,
         clock: Callable[[], datetime] | None = None,
         idempotency_key_factory: Callable[[], str] | None = None,
+        callback_provider: GoogleOAuthCallbackProvider | None = None,
     ) -> None:
         self._client = client
         self._clock = clock if clock is not None else _utc_now
         self._idempotency_key_factory = (
             idempotency_key_factory if idempotency_key_factory is not None else _uuid_key
         )
+        self._callback_provider = callback_provider
+        self._callback_lease: GoogleOAuthCallbackLease | None = None
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"
@@ -138,10 +159,23 @@ class GoogleAccountsController:
         return matches[0]
 
     def _oauth_begin(self, account_ref: str, browser: str) -> GoogleOAuthTransactionV1:
+        provider = self._callback_provider
+        if provider is None:
+            raise MasterjetClientError("oauth.callback_unavailable")
+        try:
+            lease = provider.acquire()
+            redirect_uri = validate_google_oauth_redirect_uri(lease.redirect_uri)
+        except Exception:
+            raise MasterjetClientError("oauth.callback_unavailable") from None
+        self._callback_lease = lease
         account = self._account(account_ref)
         result = self._client.call(
             "google.oauth.begin",
-            {"account_ref": account.ref, "browser": browser},
+            {
+                "account_ref": account.ref,
+                "browser": browser,
+                "redirect_uri": redirect_uri,
+            },
             expected_generation=account.inventory_generation,
             idempotency_key=self._idempotency_key(),
         )
@@ -152,6 +186,12 @@ class GoogleAccountsController:
             transaction.account_ref != account.ref
             or transaction.generation != account.inventory_generation
         ):
+            raise MasterjetClientError("control.response_invalid")
+        try:
+            transaction_redirect_uri = google_oauth_redirect_uri(transaction.authorization_url)
+        except ControlContractError:
+            raise MasterjetClientError("control.response_invalid") from None
+        if transaction_redirect_uri != redirect_uri:
             raise MasterjetClientError("control.response_invalid")
         _require_unexpired(transaction.expires_at, self._clock, "oauth.transaction_expired")
         return transaction

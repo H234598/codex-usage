@@ -16,6 +16,11 @@ from codex_usage.masterjet_contracts import (
 
 NOW = datetime(2026, 8, 28, 12, tzinfo=UTC)
 DIGEST = "sha256:" + "a" * 64
+REDIRECT_URI = "http://127.0.0.1:8765/oauth/callback"
+AUTHORIZATION_URL = (
+    "https://accounts.google.com/o/oauth2/v2/auth?"
+    "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback"
+)
 
 
 def account(ref: str, generation: int) -> GoogleControlAccount:
@@ -67,6 +72,7 @@ class FakeControlClient:
         self.secret_views: list[bytearray] = []
         self.stored_plan = operation("google.provision.plan")
         self.stored_plan_account_ref = "google-one"
+        self.authorization_url = AUTHORIZATION_URL
 
     def call(
         self,
@@ -82,7 +88,7 @@ class FakeControlClient:
             return GoogleOAuthTransactionV1(
                 id="oauth-1",
                 account_ref="google-one",
-                authorization_url="https://accounts.google.com/o/oauth2/v2/auth",
+                authorization_url=self.authorization_url,
                 expires_at=NOW + timedelta(minutes=5),
                 generation=4,
             )
@@ -154,8 +160,28 @@ class FakeControlClient:
         )
 
 
+class FakeCallbackLease:
+    def __init__(self, redirect_uri: str = REDIRECT_URI) -> None:
+        self.redirect_uri = redirect_uri
+
+
+class FakeCallbackProvider:
+    def __init__(self, redirect_uri: str = REDIRECT_URI) -> None:
+        self.lease = FakeCallbackLease(redirect_uri)
+        self.acquired = False
+
+    def acquire(self) -> FakeCallbackLease:
+        self.acquired = True
+        return self.lease
+
+
 def controller(client: FakeControlClient, *, clock=lambda: NOW) -> GoogleAccountsController:
-    return GoogleAccountsController(client, clock=clock, idempotency_key_factory=lambda: "idem-1")
+    return GoogleAccountsController(
+        client,
+        clock=clock,
+        idempotency_key_factory=lambda: "idem-1",
+        callback_provider=FakeCallbackProvider(),
+    )
 
 
 def test_list_keeps_google_accounts_separate() -> None:
@@ -180,7 +206,11 @@ def test_oauth_begin_and_complete_bind_account_generation_and_transaction() -> N
     assert completed.kind == "google.oauth.complete"
     assert client.calls[1] == (
         "google.oauth.begin",
-        {"account_ref": "google-one", "browser": "firefox"},
+        {
+            "account_ref": "google-one",
+            "browser": "firefox",
+            "redirect_uri": REDIRECT_URI,
+        },
         4,
         "idem-1",
     )
@@ -190,6 +220,68 @@ def test_oauth_begin_and_complete_bind_account_generation_and_transaction() -> N
         4,
         "idem-1",
     )
+
+
+def test_oauth_begin_without_bound_callback_provider_makes_no_request() -> None:
+    client = FakeControlClient()
+    subject = GoogleAccountsController(
+        client, clock=lambda: NOW, idempotency_key_factory=lambda: "idem-1"
+    )
+
+    with pytest.raises(GoogleAccountsError, match=r"oauth\.callback_unavailable"):
+        subject.oauth_begin("google-one", browser="firefox")
+
+    assert client.calls == []
+
+
+def test_oauth_begin_sends_exact_bound_redirect_from_acquired_lease() -> None:
+    client = FakeControlClient()
+    provider = FakeCallbackProvider()
+    subject = GoogleAccountsController(
+        client,
+        clock=lambda: NOW,
+        idempotency_key_factory=lambda: "idem-1",
+        callback_provider=provider,
+    )
+
+    transaction = subject.oauth_begin("google-one", browser="firefox")
+
+    assert transaction.authorization_url == AUTHORIZATION_URL
+    assert client.calls[-1][1] == {
+        "account_ref": "google-one",
+        "browser": "firefox",
+        "redirect_uri": REDIRECT_URI,
+    }
+    assert provider.acquired is True
+
+
+@pytest.mark.parametrize(
+    "authorization_url",
+    [
+        (
+            "https://accounts.google.com/o/oauth2/v2/auth?"
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A8766%2Foauth%2Fcallback"
+        ),
+        (
+            "https://accounts.google.com/o/oauth2/v2/auth?"
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Fother"
+        ),
+        (
+            "https://accounts.google.com/o/oauth2/v2/auth?"
+            "redirect_uri=http%3A%2F%2F%5B%3A%3A1%5D%3A8765%2Foauth%2Fcallback"
+        ),
+    ],
+)
+def test_oauth_begin_rejects_callback_host_port_or_path_mismatch(
+    authorization_url,
+) -> None:
+    client = FakeControlClient()
+    client.authorization_url = authorization_url
+
+    with pytest.raises(GoogleAccountsError, match=r"control\.response_invalid"):
+        controller(client).oauth_begin("google-one", browser="firefox")
+
+    assert not any(call[0] == "google.oauth.complete" for call in client.calls)
 
 
 def test_provision_apply_reloads_plan_and_rejects_wrong_account_before_apply() -> None:
@@ -417,7 +509,7 @@ def test_oauth_expiry_is_rechecked_after_idempotency_key_before_complete() -> No
     transaction = GoogleOAuthTransactionV1(
         id="oauth-1",
         account_ref="google-one",
-        authorization_url="https://accounts.google.com/o/oauth2/v2/auth",
+        authorization_url=AUTHORIZATION_URL,
         expires_at=NOW + timedelta(minutes=5),
         generation=4,
     )

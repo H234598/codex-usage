@@ -31,6 +31,7 @@ from .masterjet_contracts import (
     parse_openai_accounts,
     parse_secret_ingress_receipt,
     parse_secret_ingress_session,
+    validate_google_oauth_redirect_uri,
 )
 from .private_io import assert_no_symlink_ancestors
 
@@ -53,7 +54,11 @@ _OPERATION_ARGUMENT_FIELDS = {
     "google.accounts.list": ({}, frozenset()),
     "google.projects.list": ({"account_ref": "token"}, frozenset()),
     "google.oauth.begin": (
-        {"account_ref": "token", "browser": "token"},
+        {
+            "account_ref": "token",
+            "browser": "token",
+            "redirect_uri": "redirect_uri",
+        },
         frozenset(),
     ),
     "google.oauth.complete": (
@@ -1214,6 +1219,12 @@ def _argument_value_valid(value: object, kind: str) -> bool:
             )
             and len(set(value)) == len(value)
         )
+    if kind == "redirect_uri":
+        try:
+            validate_google_oauth_redirect_uri(value)
+        except ControlContractError:
+            return False
+        return True
     return False
 
 
