@@ -91,6 +91,12 @@ def _count(value: object, field: str) -> int:
     return value
 
 
+def _boolean(value: object, field: str) -> bool:
+    if type(value) is not bool:
+        raise ValueError(f"invalid {field}")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class GoogleProjectRow:
     ref: str
@@ -160,7 +166,7 @@ class GoogleAccountsModel:
         elif isinstance(payload, Mapping) and set(payload) == {"accounts", "projects", "stale"}:
             accounts = payload["accounts"]
             projects = payload["projects"]
-            stale = payload["stale"] is True
+            stale = _boolean(payload["stale"], "stale")
             details_available = True
         else:
             raise ValueError("private or invalid Google response fields")
@@ -168,7 +174,7 @@ class GoogleAccountsModel:
             raise ValueError("private or invalid Google response fields")
         cards: list[GoogleAccountCard] = []
         seen: set[str] = set()
-        mutations_enabled = details_available and not stale
+        mutations_enabled = details_available and stale is False
         for value in accounts:
             account = _mapping(value, _ACCOUNT_FIELDS, "Google account")
             account_ref = _text(account["ref"], "ref")
@@ -180,8 +186,8 @@ class GoogleAccountsModel:
                 GoogleAccountCard(
                     ref=account_ref,
                     label=_text(account["label"], "label"),
-                    enabled=account["enabled"] is True,
-                    subject_bound=account["subject_bound"] is True,
+                    enabled=_boolean(account["enabled"], "enabled"),
+                    subject_bound=_boolean(account["subject_bound"], "subject_bound"),
                     oauth_state=_text(account["oauth_state"], "oauth_state", maximum=64),
                     inventory_generation=_count(
                         account["inventory_generation"], "inventory_generation"

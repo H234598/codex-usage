@@ -111,6 +111,62 @@ def test_google_model_starts_unknown_and_fail_closed() -> None:
     assert model.cards == ()
 
 
+@pytest.mark.parametrize(
+    "invalid_stale",
+    [None, 0, 1, "false", {}, []],
+    ids=["none", "zero", "one", "string", "mapping", "list"],
+)
+def test_non_boolean_stale_projection_is_rejected_fail_closed(invalid_stale) -> None:
+    module = _module()
+    payload = _payload()
+    payload["stale"] = invalid_stale
+    model = module.GoogleAccountsModel()
+    calls = []
+
+    class Runner:
+        def submit(self, argv, *, stdin_data=None, callback=None):
+            calls.append(tuple(argv))
+
+    actions = module.GoogleActions(Runner())
+
+    with pytest.raises(ValueError, match="stale"):
+        model.render(payload)
+    with pytest.raises(RuntimeError, match="STALE"):
+        actions.provision_plan("google-one")
+
+    assert model.stale is True
+    assert model.cards == ()
+    assert calls == []
+
+
+def test_missing_stale_projection_is_rejected_fail_closed() -> None:
+    payload = _payload()
+    del payload["stale"]
+    model = _module().GoogleAccountsModel()
+
+    with pytest.raises(ValueError):
+        model.render(payload)
+
+    assert model.stale is True
+    assert model.cards == ()
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [("enabled", 1), ("subject_bound", "true")],
+)
+def test_non_boolean_account_projection_is_rejected(field, invalid_value) -> None:
+    payload = _payload()
+    payload["accounts"][0][field] = invalid_value
+    model = _module().GoogleAccountsModel()
+
+    with pytest.raises(ValueError, match=field):
+        model.render(payload)
+
+    assert model.stale is True
+    assert model.cards == ()
+
+
 def test_google_widget_never_persists_secret_or_provider_id_fields() -> None:
     page = _module().GoogleAccountsModel()
     payload = _payload()

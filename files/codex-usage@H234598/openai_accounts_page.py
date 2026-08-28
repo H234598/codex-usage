@@ -299,7 +299,19 @@ class BoundedJsonRunner:
 
 
 def _safe_environment() -> dict[str, str]:
-    allowed = ("HOME", "PATH", "LANG", "LC_ALL", "XDG_CONFIG_HOME", "XDG_STATE_HOME")
+    allowed = (
+        "HOME",
+        "PATH",
+        "LANG",
+        "LC_ALL",
+        "XDG_CONFIG_HOME",
+        "XDG_STATE_HOME",
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XAUTHORITY",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "XDG_RUNTIME_DIR",
+    )
     return {name: os.environ[name] for name in allowed if name in os.environ}
 
 
@@ -389,14 +401,21 @@ def default_masterjet_socket(
 
 
 class OpenAIActions:
-    __slots__ = ("_executable", "_runner")
+    __slots__ = ("_executable", "_reauth_runner", "_runner")
 
-    def __init__(self, runner: BoundedJsonRunner, *, executable: str | None = None) -> None:
+    def __init__(
+        self,
+        runner: BoundedJsonRunner,
+        *,
+        reauth_runner: BoundedJsonRunner | None = None,
+        executable: str | None = None,
+    ) -> None:
         self._runner = runner
+        self._reauth_runner = reauth_runner or runner
         self._executable = executable or str(Path.home() / ".local/bin/codex-usage")
 
     def reauthenticate(self, account_ref: str, *, callback=None) -> None:
-        self._runner.submit(
+        self._reauth_runner.submit(
             [
                 self._executable,
                 "reactivate",
@@ -481,7 +500,10 @@ class OpenAIAccountsPage(SettingsWidget):
         self.set_orientation(Gtk.Orientation.VERTICAL)
         self.set_spacing(6)
         self.model = OpenAIAccountsModel()
-        self._actions = OpenAIActions(BoundedJsonRunner(timeout_seconds=REAUTH_TIMEOUT_SECONDS))
+        self._actions = OpenAIActions(
+            BoundedJsonRunner(),
+            reauth_runner=BoundedJsonRunner(timeout_seconds=REAUTH_TIMEOUT_SECONDS),
+        )
         self._status = Gtk.Label(label="OpenAI-Control nicht geladen")
         self._status.set_xalign(0.0)
         self.pack_start(self._status, False, False, 0)

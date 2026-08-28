@@ -163,6 +163,39 @@ def test_openai_actions_use_only_bounded_own_cli_commands() -> None:
     ]
 
 
+def test_openai_actions_keep_interactive_and_control_runners_separate() -> None:
+    control_calls = []
+    interactive_calls = []
+
+    class Runner:
+        def __init__(self, calls):
+            self.calls = calls
+
+        def submit(self, argv, *, stdin_data=None, callback=None):
+            self.calls.append(tuple(argv))
+
+    actions = _module().OpenAIActions(
+        Runner(control_calls),
+        reauth_runner=Runner(interactive_calls),
+        executable="/opt/codex-usage",
+    )
+
+    actions.reauthenticate("BW_Work")
+    actions.sync_auth("BW_Work")
+
+    assert interactive_calls == [("/opt/codex-usage", "reactivate", "BW_Work", "--format", "json")]
+    assert control_calls == [
+        (
+            "/opt/codex-usage",
+            "account",
+            "auth-sync",
+            "BW_Work",
+            "--format",
+            "json",
+        )
+    ]
+
+
 def test_reauthentication_has_bounded_interactive_timeout() -> None:
     assert _module().REAUTH_TIMEOUT_SECONDS == 15 * 60
 
@@ -358,6 +391,39 @@ else:
     finally:
         if _process_running(child_pid):
             os.kill(child_pid, signal.SIGKILL)
+
+
+def test_bounded_runner_passes_only_audited_gui_session_environment(monkeypatch) -> None:
+    module = _module()
+    allowed = {
+        "DISPLAY": ":88",
+        "WAYLAND_DISPLAY": "wayland-7",
+        "XAUTHORITY": "/run/user/4242/Xauthority",
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/4242/bus",
+        "XDG_RUNTIME_DIR": "/run/user/4242",
+        "LANG": "de_DE.UTF-8",
+        "LC_ALL": "C.UTF-8",
+    }
+    blocked = {
+        "OPENAI_API_KEY": "private-api-marker",
+        "MASTERJET_BEARER": "private-bearer-marker",
+        "TOTP_CODE": "739104",
+        "UNRELATED_SETTING": "private-unrelated-marker",
+    }
+    for name, value in {**allowed, **blocked}.items():
+        monkeypatch.setenv(name, value)
+    names = [*allowed, *blocked]
+    helper = (
+        "import json,os,sys; "
+        "print(json.dumps({name: os.environ.get(name) for name in sys.argv[1:]}))"
+    )
+
+    result = module.BoundedJsonRunner(dispatcher=lambda *args: args)._run(
+        (sys.executable, "-c", helper, *names), None
+    )
+
+    assert result.ok is True
+    assert result.payload == {**allowed, **dict.fromkeys(blocked)}
 
 
 def test_masterjet_schema_has_no_bearer_or_totp_settings() -> None:
