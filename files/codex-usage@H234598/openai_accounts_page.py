@@ -474,6 +474,25 @@ class OpenAIActions:
             callback=callback,
         )
 
+    def with_step_up(self, argv: list[str], provider: Callable[[], object], *, callback=None):
+        if not argv or argv[0] != self._executable:
+            raise ValueError("step-up command must use the configured Codex Usage CLI")
+        value = provider()
+        if not isinstance(value, str) or not value.isascii() or not value.isdigit():
+            raise ValueError("invalid step-up code")
+        if len(value) not in {6, 7, 8}:
+            raise ValueError("invalid step-up code")
+        secret = bytearray(value.encode("ascii") + b"\n")
+        try:
+            self._runner.submit(
+                [self._executable, "--step-up-stdin", *argv[1:]],
+                stdin_data=secret,
+                callback=callback,
+            )
+        finally:
+            secret[:] = b"\x00" * len(secret)
+            secret.clear()
+
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"
 

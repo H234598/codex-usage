@@ -84,6 +84,12 @@ from .masterjet_contracts import (
     GoogleOAuthTransactionV1,
     OpenAIControlAccount,
 )
+from .masterjet_credentials import (
+    bearer_provider_from_systemd_credentials,
+    stdin_step_up_provider,
+    tty_step_up_provider,
+    unavailable_step_up_provider,
+)
 from .models import AccountStatus, AccountUsage
 from .private_io import (
     assert_no_symlink_ancestors,
@@ -357,6 +363,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--config", type=Path, default=None, help="Pfad zur config.toml")
+    parser.add_argument("--step-up-stdin", action="store_true", help=argparse.SUPPRESS)
     sub = parser.add_subparsers(dest="command", required=True)
 
     account = sub.add_parser("account", help="Accounts verwalten")
@@ -1506,9 +1513,38 @@ def _parse_history_datetime(value: str, label: str) -> datetime:
         raise ValueError(f"{label} is out of range") from exc
 
 
-def _new_google_controller(config_path: Path | None) -> GoogleAccountsController:
+def _new_masterjet_client(
+    connection: MasterjetConnection, *, step_up_stdin: bool = False
+) -> MasterjetControlClient:
+    if connection.transport == "local":
+        return MasterjetControlClient(connection)
+    step_up = (
+        stdin_step_up_provider(getattr(sys.stdin, "buffer", sys.stdin))
+        if step_up_stdin
+        else tty_step_up_provider()
+        if sys.stdin.isatty() and sys.stderr.isatty()
+        else unavailable_step_up_provider()
+    )
+    return MasterjetControlClient(
+        connection,
+        bearer_provider=bearer_provider_from_systemd_credentials(),
+        step_up_provider=step_up,
+    )
+
+
+def _new_google_controller(
+    config_path: Path | None, *, step_up_stdin: bool = False
+) -> GoogleAccountsController:
     config = load_config(config_path)
-    return GoogleAccountsController(MasterjetControlClient(config.masterjet))
+    return GoogleAccountsController(
+        _new_masterjet_client(config.masterjet, step_up_stdin=step_up_stdin)
+    )
+
+
+def _new_google_controller_for_args(args: argparse.Namespace) -> GoogleAccountsController:
+    if bool(getattr(args, "step_up_stdin", False)):
+        return _new_google_controller(args.config, step_up_stdin=True)
+    return _new_google_controller(args.config)
 
 
 def _new_google_oauth_controller(_config_path: Path | None) -> GoogleAccountsController:
@@ -1557,7 +1593,9 @@ def _cmd_masterjet_connection_show(args: argparse.Namespace) -> int:
 def _cmd_masterjet_connection_test(args: argparse.Namespace) -> int:
     try:
         connection = load_config(args.config).masterjet
-        accounts = MasterjetControlClient(connection).call("openai.accounts.list", {})
+        accounts = _new_masterjet_client(
+            connection, step_up_stdin=bool(getattr(args, "step_up_stdin", False))
+        ).call("openai.accounts.list", {})
         if type(accounts) is not tuple or any(
             type(account) is not OpenAIControlAccount for account in accounts
         ):
@@ -1660,7 +1698,9 @@ def _cmd_masterjet_openai_accounts(args: argparse.Namespace) -> int:
         config = load_config(args.config)
         stale = False
         try:
-            value = MasterjetControlClient(config.masterjet).call("openai.accounts.list", {})
+            value = _new_masterjet_client(
+                config.masterjet, step_up_stdin=bool(getattr(args, "step_up_stdin", False))
+            ).call("openai.accounts.list", {})
             if type(value) is not tuple or any(
                 type(account) is not OpenAIControlAccount for account in value
             ):
@@ -1695,7 +1735,9 @@ def _cmd_masterjet_openai_routing_options(args: argparse.Namespace) -> int:
         config = load_config(args.config)
         stale = False
         try:
-            accounts = MasterjetControlClient(config.masterjet).call("openai.accounts.list", {})
+            accounts = _new_masterjet_client(
+                config.masterjet, step_up_stdin=bool(getattr(args, "step_up_stdin", False))
+            ).call("openai.accounts.list", {})
         except MasterjetClientError as live_error:
             try:
                 cached = load_control_snapshot(default_state_dir(), 30.0)
@@ -1743,7 +1785,7 @@ def _cmd_google_accounts(args: argparse.Namespace) -> int:
     try:
         stale = False
         try:
-            details = _new_google_controller(args.config).account_details()
+            details = _new_google_controller_for_args(args).account_details()
             _save_google_projection(details)
         except Exception as live_error:
             cached_details = _load_google_projection_cache()
@@ -1769,7 +1811,7 @@ def _cmd_google_accounts(args: argparse.Namespace) -> int:
 
 def _cmd_google_add(args: argparse.Namespace) -> int:
     try:
-        controller = _new_google_controller(args.config)
+        controller = _new_google_controller_for_args(args)
         imported = controller.import_oauth_client(args.account, args.oauth_client_json)
     except Exception as exc:
         return _print_google_error(exc, json_output=args.json)
@@ -1801,7 +1843,7 @@ def _cmd_google_oauth_begin(args: argparse.Namespace) -> int:
 
 def _cmd_google_inventory_refresh(args: argparse.Namespace) -> int:
     try:
-        operation = _new_google_controller(args.config).inventory_refresh(args.account)
+        operation = _new_google_controller_for_args(args).inventory_refresh(args.account)
     except Exception as exc:
         return _print_google_error(exc, json_output=args.json)
     return _print_google_operation(operation, json_output=args.json)
@@ -1809,7 +1851,7 @@ def _cmd_google_inventory_refresh(args: argparse.Namespace) -> int:
 
 def _cmd_google_provision_plan(args: argparse.Namespace) -> int:
     try:
-        plan = _new_google_controller(args.config).provision_plan(args.account)
+        plan = _new_google_controller_for_args(args).provision_plan(args.account)
     except Exception as exc:
         return _print_google_error(exc, json_output=args.json)
     payload = {
@@ -1835,7 +1877,7 @@ def _cmd_google_provision_apply(args: argparse.Namespace) -> int:
         )
     try:
         plan_digest = validate_google_plan_digest(args.plan_digest)
-        operation = _new_google_controller(args.config).provision_apply(
+        operation = _new_google_controller_for_args(args).provision_apply(
             args.plan_id, account_ref=args.account, plan_digest=plan_digest
         )
     except Exception as exc:
@@ -1992,7 +2034,9 @@ def _cmd_login(args: argparse.Namespace) -> int:
 def _cmd_account_auth_sync(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     account = resolve_account(config, args.account)
-    client = MasterjetControlClient(config.masterjet)
+    client = _new_masterjet_client(
+        config.masterjet, step_up_stdin=bool(getattr(args, "step_up_stdin", False))
+    )
     try:
         result = sync_account_auth(account, client)
     except AuthSyncError as exc:

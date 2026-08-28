@@ -396,7 +396,7 @@ class GoogleActions:
             raise ValueError("invalid step-up code")
         secret = bytearray(value.encode("ascii") + b"\n")
         try:
-            self._submit(argv[1:], stdin_data=secret, callback=callback)
+            self._submit(["--step-up-stdin", *argv[1:]], stdin_data=secret, callback=callback)
         finally:
             secret[:] = b"\x00" * len(secret)
             secret.clear()

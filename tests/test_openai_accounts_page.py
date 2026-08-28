@@ -545,6 +545,26 @@ def test_openai_live_projection_refresh_uses_complete_bounded_command() -> None:
     assert actions.projection_ready is False
 
 
+def test_openai_step_up_uses_explicit_transient_stdin_channel() -> None:
+    calls = []
+
+    class Runner:
+        def submit(self, argv, *, stdin_data=None, callback=None):
+            calls.append((tuple(argv), bytes(stdin_data), callback))
+
+    actions = _module().OpenAIActions(Runner(), executable="/opt/codex-usage")
+    actions.set_projection_ready(True)
+    actions.with_step_up(
+        ["/opt/codex-usage", "account", "auth-sync", "openai-one", "--format", "json"],
+        lambda: "739104",
+    )
+
+    argv, stdin_data, _callback = calls[0]
+    assert "--step-up-stdin" in argv
+    assert "739104" not in " ".join(argv)
+    assert stdin_data == b"739104\n"
+
+
 def test_openai_action_guard_checks_current_projection_before_mutation_argv() -> None:
     calls = []
 

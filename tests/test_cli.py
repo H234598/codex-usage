@@ -1215,7 +1215,7 @@ def test_account_auth_sync_uses_resolved_account_and_authenticated_client(
     persisted = []
     monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
     monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: account)
-    monkeypatch.setattr(cli_module, "MasterjetControlClient", lambda connection: client)
+    monkeypatch.setattr(cli_module, "_new_masterjet_client", lambda *_args, **_kwargs: client)
     monkeypatch.setattr(
         cli_module,
         "compare_and_clear_account_auth_sync_required",
@@ -1334,7 +1334,7 @@ def test_account_auth_sync_without_productive_providers_fails_closed(
     client = object()
     monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
     monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: account)
-    monkeypatch.setattr(cli_module, "MasterjetControlClient", lambda connection: client)
+    monkeypatch.setattr(cli_module, "_new_masterjet_client", lambda *_args, **_kwargs: client)
     monkeypatch.setattr(
         cli_module,
         "sync_account_auth",
@@ -5779,8 +5779,8 @@ def test_openai_accounts_command_returns_complete_live_projection(monkeypatch, c
     monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
     monkeypatch.setattr(
         cli_module,
-        "MasterjetControlClient",
-        lambda _connection: SimpleNamespace(call=lambda operation, arguments: (remote,)),
+        "_new_masterjet_client",
+        lambda *_args, **_kwargs: SimpleNamespace(call=lambda operation, arguments: (remote,)),
     )
     monkeypatch.setattr(cli_module, "save_control_snapshot", lambda *_args, **_kwargs: None)
 
@@ -5848,7 +5848,7 @@ def test_live_projection_connection_commands_use_one_canonical_config(
     calls = []
 
     class Client:
-        def __init__(self, connection):
+        def __init__(self, connection, **_kwargs):
             calls.append(connection)
 
         def call(self, operation, arguments):
@@ -5861,6 +5861,39 @@ def test_live_projection_connection_commands_use_one_canonical_config(
     assert json.loads(capsys.readouterr().out)["ok"] is True
     assert config_path.read_bytes() == before
     assert calls[-1] == ("openai.accounts.list", {})
+
+
+def test_masterjet_client_factory_wires_https_providers_and_keeps_local_peer_only(
+    tmp_path, monkeypatch
+):
+    credential_dir = tmp_path / "credentials"
+    credential_dir.mkdir(mode=0o700)
+    credential = credential_dir / "masterjet-control-bearer"
+    credential.write_text("remote-bearer", encoding="ascii")
+    credential.chmod(0o400)
+    captured = []
+
+    class Client:
+        def __init__(self, connection, **kwargs):
+            captured.append((connection, kwargs))
+
+    monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(credential_dir))
+    monkeypatch.setattr(cli_module, "MasterjetControlClient", Client)
+
+    remote = cli_module._new_masterjet_client(
+        MasterjetConnection(transport="https", endpoint="https://masterjet.example.test/control"),
+        step_up_stdin=True,
+    )
+    local = cli_module._new_masterjet_client(
+        MasterjetConnection(transport="local", endpoint="/run/user/1000/masterjet.sock"),
+        step_up_stdin=True,
+    )
+
+    assert isinstance(remote, Client)
+    assert isinstance(local, Client)
+    assert set(captured[0][1]) == {"bearer_provider", "step_up_provider"}
+    assert captured[0][1]["bearer_provider"]() == "remote-bearer"
+    assert captured[1][1] == {}
 
 
 def test_live_projection_connection_set_rejects_invalid_endpoint_before_write(

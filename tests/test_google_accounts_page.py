@@ -570,6 +570,7 @@ def test_totp_is_transient_stdin_not_argv_env_model() -> None:
     )
 
     argv, stdin_data, _callback = calls[0]
+    assert "--step-up-stdin" in argv
     assert marker not in " ".join(argv)
     assert stdin_data == b"739104\n"
     assert marker not in repr(actions)
