@@ -1085,3 +1085,25 @@ def test_age_is_measured_after_waiting_for_cache_lock(tmp_path: Path) -> None:
 
         loaded = future.result(timeout=1)
     assert loaded.stale is True  # type: ignore[attr-defined]
+
+
+def test_task9_offline_snapshot_is_read_only_and_stale_after_30_seconds(
+    tmp_path: Path,
+) -> None:
+    clock = Clock(1_000.0)
+    cache = ControlSnapshotCache.for_test(tmp_path, clock=clock)
+    snapshot = valid_snapshot()
+    cache.save(snapshot, observed_at=1_000.0)
+    persisted = cache_path(tmp_path).read_bytes()
+
+    clock.value = 1_030.0
+    boundary = cache.load(max_age_seconds=30)
+    clock.value = 1_030.001
+    offline = cache.load(max_age_seconds=30)
+
+    assert boundary.snapshot == snapshot
+    assert boundary.stale is False
+    assert offline.snapshot == snapshot
+    assert offline.stale is True
+    assert cache_path(tmp_path).read_bytes() == persisted
+    assert b"task9-synthetic-auth" not in persisted

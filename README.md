@@ -62,6 +62,73 @@ This keeps the browser profile by default. To also delete the stored profile:
 codex-usage account delete privat --delete-profile
 ```
 
+## Masterjet account control
+
+Codex Usage owns local OpenAI profile configuration, its canonical
+`PROFILE/codex-home/auth.json`, and usage polling. Masterjet remains the only
+authority for remote credential generations, Google inventory, plans, and
+applies. Google pages receive strictly redacted projections; they never read
+provider inventory files or persist provider credentials. CLI, MCP, and HTTPS
+are separate clients of that same Masterjet authority. The Master-MCP process
+may therefore run on another host.
+
+One canonical connection profile selects either a local `AF_UNIX` socket or a
+remote HTTPS endpoint:
+
+```bash
+codex-usage masterjet connection-set --transport local \
+  --endpoint /run/user/1000/masterjet.sock
+codex-usage masterjet connection-set --transport https \
+  --endpoint https://masterjet.example.test/control
+codex-usage masterjet connection-show --json
+codex-usage masterjet connection-test --json
+```
+
+HTTPS keeps certificate and hostname verification enabled and rejects
+redirects. Bearer credentials belong in an approved system credential provider,
+never in `config.toml`, argv, environment variables, logs, or URLs. Local
+secret ingress uses a private file descriptor; HTTPS ingress uses a bounded raw
+request body. Step-up TOTP values are transient stdin/dialog data only. Current
+CLI construction does not yet bind the approved Bearer/step-up providers to
+remote HTTPS clients, so remote control commands fail closed with
+`control.authentication_required` or `control.step_up_required` until that
+separate product fix lands. Do not work around this by storing secrets in the
+endpoint or config.
+
+OpenAI re-login only marks synchronization as required. Upload of the canonical
+`auth.json` is always a separate explicit action:
+
+```bash
+codex-usage account auth-sync ACCOUNT --format json
+```
+
+Google OAuth-client import, browser OAuth, inventory refresh, planning, and
+apply remain separate operations. `provision-apply` needs the complete preview
+digest plus explicit confirmation:
+
+```bash
+codex-usage google add ACCOUNT --oauth-client-json /private/client.json --json
+codex-usage google oauth-begin ACCOUNT --browser firefox --json
+codex-usage google inventory-refresh ACCOUNT --json
+codex-usage google provision-plan ACCOUNT --json
+codex-usage google provision-apply ACCOUNT PLAN_ID \
+  --plan-digest sha256:DIGEST --confirm --json
+```
+
+On control failure, a redacted cache can preserve read-only display for at most
+30 seconds. Older or invalid data is `STALE`; account mutations, apply, and any
+direct settings write stay disabled. Recovery always starts with a fresh
+projection.
+
+[Open separate fleet management and Ollama guidance](#fleet-management-and-ollama).
+
+### Fleet management and Ollama
+
+Fleet lifecycle, worker placement, and Ollama belong to Masterjet's separate
+fleet-management surface. Codex Usage only deep-links there; it does not list
+Ollama as an OpenAI or Google account and never invokes `codex-master-mcp fleet`
+from a settings widget.
+
 ## Run
 
 One poll:

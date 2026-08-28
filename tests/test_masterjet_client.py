@@ -12,6 +12,7 @@ import subprocess
 import threading
 import time
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import ClassVar
 
@@ -19,6 +20,7 @@ import pytest
 
 import codex_usage.masterjet_client as client_module
 from codex_usage.config import MasterjetConnection
+from codex_usage.masterjet_auth_sync import sync_account_auth
 from codex_usage.masterjet_client import (
     MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES,
@@ -26,6 +28,7 @@ from codex_usage.masterjet_client import (
     MasterjetClientError,
     MasterjetControlClient,
 )
+from codex_usage.models import Account
 
 REDIRECT_URI = "http://127.0.0.1:8765/oauth/callback"
 AUTHORIZATION_URL = (
@@ -260,6 +263,146 @@ def https_client(**kwargs: object) -> MasterjetControlClient:
         ),
         **kwargs,
     )
+
+
+def _task9_transport_and_auth_selfcheck(tmp_path, monkeypatch):
+    encoded_google = json.dumps(google_accounts_payload()).encode()
+    socket_path = tmp_path / "masterjet.sock"
+    with unix_server(socket_path, encoded_google):
+        local_google = local_client(socket_path).call("google.accounts.list", {})
+
+    operation_base = {
+        "schema_version": 1,
+        "expected_generation": 4,
+        "plan_digest": "sha256:" + "a" * 64,
+        "created_at": "2026-08-28T12:00:00Z",
+        "expires_at": "2026-08-28T12:30:00Z",
+        "failed_count": 0,
+        "reason_codes": [],
+    }
+    responses = [
+        google_accounts_payload(),
+        {
+            "schema_version": 1,
+            "accounts": [
+                {
+                    "ref": "openai-remote",
+                    "label": "OpenAI synthetic",
+                    "enabled": True,
+                    "local_profile_ref": "profile-1",
+                    "source_host_ref": "host-1",
+                    "auth_state": "ready",
+                    "access_expires_at": None,
+                    "credential_generation": 4,
+                    "vault_projection_state": "current",
+                    "usage_state": "fresh",
+                }
+            ],
+        },
+        operation_base
+        | {
+            "id": "plan-1",
+            "kind": "openai.auth-sync.plan",
+            "state": "planned",
+            "resulting_generation": None,
+            "completed_count": 0,
+            "not_attempted_count": 1,
+        },
+        {
+            "schema_version": 1,
+            "id": "ingress-1",
+            "account_ref": "openai-remote",
+            "plan_id": "plan-1",
+            "expires_at": "2026-08-28T12:15:00Z",
+            "expected_generation": 4,
+        },
+        {
+            "schema_version": 1,
+            "session_id": "ingress-1",
+            "account_ref": "openai-remote",
+            "state": "consumed",
+            "generation": 5,
+        },
+        operation_base
+        | {
+            "id": "apply-1",
+            "kind": "openai.auth-sync.apply",
+            "state": "succeeded",
+            "resulting_generation": 5,
+            "completed_count": 1,
+            "not_attempted_count": 0,
+        },
+    ]
+
+    class ScriptedHTTPSConnection(FakeHTTPSConnection):
+        scripted: ClassVar[list[FakeHTTPResponse]] = [
+            FakeHTTPResponse(json.dumps(value).encode()) for value in responses
+        ]
+        instances: ClassVar[list[ScriptedHTTPSConnection]] = []
+
+        def getresponse(self) -> FakeHTTPResponse:
+            return type(self).scripted.pop(0)
+
+    def open_scripted_https(host, port, context, deadline):
+        return ScriptedHTTPSConnection(
+            host,
+            port,
+            timeout=round(deadline.remaining()),
+            context=context,
+        )
+
+    monkeypatch.setattr(client_module, "_open_https_connection", open_scripted_https)
+    remote = https_client(
+        bearer_provider=lambda: "task9-system-credential",
+        step_up_provider=lambda: "123456",
+    )
+    https_google = remote.call("google.accounts.list", {})
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "state"))
+    profile = tmp_path / "profile"
+    codex_home = profile / "codex-home"
+    codex_home.mkdir(parents=True, mode=0o700)
+    codex_home.chmod(0o700)
+    auth_path = codex_home / "auth.json"
+    secret = b'{"tokens":"task9-synthetic-auth"}'
+    auth_path.write_bytes(secret)
+    auth_path.chmod(0o600)
+    account = Account(
+        id="profile-1",
+        label="OpenAI synthetic",
+        profile_dir=str(profile),
+        auth_json_path=str(auth_path),
+    )
+    synced = sync_account_auth(
+        account,
+        remote,
+        clock=lambda: datetime(2026, 8, 28, 12, 5, tzinfo=UTC),
+    )
+
+    requests = [
+        request for instance in ScriptedHTTPSConnection.instances for request in instance.requests
+    ]
+    json_requests = b"".join(
+        body
+        for _method, _target, body, headers in requests
+        if headers.get("Content-Type") == "application/json"
+    )
+    header_bytes = repr([headers for _method, _target, _body, headers in requests]).encode()
+    ingress_headers = next(
+        headers for method, _target, _body, headers in requests if method == "PUT"
+    )
+    assert ScriptedHTTPSConnection.scripted == []
+    return {
+        "local_google": local_google,
+        "https_google": https_google,
+        "google_generation": https_google[0].inventory_generation,
+        "auth_sync": (synced.account_ref, synced.generation, synced.status),
+        "secret_ingress_content_type": ingress_headers["Content-Type"],
+        "secret_bytes": secret,
+        "json_requests": json_requests,
+        "headers": header_bytes,
+        "environment": repr(dict(os.environ)).encode(),
+    }
 
 
 def blocking_resolver_worker(_host: str, _port: int, _sender: object) -> None:
@@ -2323,3 +2466,15 @@ def test_full_plan_preview_dispatches_to_typed_redacted_contract(monkeypatch):
         ("Amber Orchard", "Willow Meadow"),
         ("Velvet Harbor", "Silver Forest"),
     ]
+
+
+def test_task9_selfcheck_covers_both_transports_and_synthetic_auth(tmp_path, monkeypatch):
+    result = _task9_transport_and_auth_selfcheck(tmp_path, monkeypatch)
+
+    assert result["local_google"] == result["https_google"]
+    assert result["google_generation"] == 4
+    assert result["auth_sync"] == ("openai-remote", 5, "succeeded")
+    assert result["secret_ingress_content_type"] == "application/octet-stream"
+    assert result["secret_bytes"] not in result["json_requests"]
+    assert result["secret_bytes"] not in result["headers"]
+    assert result["secret_bytes"] not in result["environment"]

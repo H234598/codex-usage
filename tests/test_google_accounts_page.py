@@ -533,3 +533,75 @@ def test_live_projection_failure_revokes_previous_google_mutations() -> None:
     with pytest.raises(RuntimeError, match="STALE"):
         actions.provision_plan("google-one")
     assert model.cards == ()
+
+
+def test_task9_remote_outage_fail_closes_both_pages_and_all_account_writes(
+    tmp_path,
+) -> None:
+    google_module = _module()
+    openai_module = sys.modules["openai_accounts_page"]
+    google_model = google_module.GoogleAccountsModel()
+    openai_model = openai_module.OpenAIAccountsModel()
+    google_model.render(_payload())
+    openai_model.render(
+        [
+            {
+                "account": "openai-one",
+                "label": "OpenAI One",
+                "series-active": True,
+                "local_auth_state": "ready",
+                "auth_sync_required": True,
+            }
+        ],
+        [
+            {
+                "ref": "openai-remote",
+                "label": "OpenAI One",
+                "enabled": True,
+                "local_profile_ref": "openai-one",
+                "source_host_ref": "host-one",
+                "auth_state": "ready",
+                "access_expires_at": None,
+                "credential_generation": 4,
+                "vault_projection_state": "current",
+                "usage_state": "fresh",
+            }
+        ],
+    )
+    calls = []
+
+    class Runner:
+        def submit(self, argv, *, stdin_data=None, callback=None):
+            calls.append((tuple(argv), stdin_data, callback))
+
+    google_actions = google_module.GoogleActions(Runner())
+    openai_actions = openai_module.OpenAIActions(Runner())
+    google_actions.set_projection_ready(True)
+    openai_actions.set_projection_ready(True)
+
+    google_model.fail_closed()
+    openai_model.fail_closed()
+    google_actions.set_projection_ready(False)
+    openai_actions.set_projection_ready(False)
+
+    blocked = (
+        lambda: google_actions.import_oauth_client("google-one", tmp_path / "oauth-client.json"),
+        lambda: google_actions.oauth_begin("google-one", browser="firefox"),
+        lambda: google_actions.inventory_refresh("google-one"),
+        lambda: google_actions.provision_plan("google-one"),
+        lambda: openai_actions.reauthenticate("openai-one"),
+        lambda: openai_actions.sync_auth("openai-one"),
+    )
+    for write in blocked:
+        with pytest.raises(RuntimeError, match="STALE"):
+            write()
+    with pytest.raises(RuntimeError, match="kanonische"):
+        openai_module.save_masterjet_connection(
+            lambda _key, _value: calls.append(("settings-write",)),
+            "https",
+            "https://masterjet.example.test/control",
+        )
+
+    assert google_model.cards == ()
+    assert openai_model.rows == ()
+    assert calls == []
