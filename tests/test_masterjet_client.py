@@ -233,6 +233,193 @@ def malformed_resolver_worker(_host: str, _port: int, sender: object) -> None:
     sender.close()
 
 
+def hostname_resolver_worker(_host: str, port: int, sender: object) -> None:
+    sender.send((True, [(2, 1, 6, "", ("localhost", port))]))
+    sender.close()
+
+
+def wrong_port_resolver_worker(_host: str, port: int, sender: object) -> None:
+    sender.send((True, [(2, 1, 6, "", ("127.0.0.1", port + 1))]))
+    sender.close()
+
+
+def wrong_family_resolver_worker(_host: str, port: int, sender: object) -> None:
+    sender.send((True, [(10, 1, 6, "", ("127.0.0.1", port, 0, 0))]))
+    sender.close()
+
+
+def wrong_shape_resolver_worker(_host: str, port: int, sender: object) -> None:
+    sender.send((True, [(2, 1, 6, "", ("127.0.0.1", port, 0, 0))]))
+    sender.close()
+
+
+def wrong_protocol_resolver_worker(_host: str, port: int, sender: object) -> None:
+    sender.send((True, [(2, 1, 17, "", ("127.0.0.1", port))]))
+    sender.close()
+
+
+class ExplodingConnectSocket:
+    def settimeout(self, _timeout):
+        pass
+
+    def connect(self, _address):
+        raise AssertionError("resolver response reached parent connect")
+
+    def shutdown(self, _how):
+        pass
+
+    def close(self):
+        pass
+
+
+class ResolverPipe:
+    def __init__(self, events, *, poll_error=None, close_error=None):
+        self.events = events
+        self.poll_error = poll_error
+        self.close_error = close_error
+
+    def poll(self, _timeout):
+        self.events.append("poll")
+        if self.poll_error is not None:
+            raise self.poll_error
+        return False
+
+    def close(self):
+        self.events.append("pipe.close")
+        if self.close_error is not None:
+            raise self.close_error
+
+
+class ResolverAbort(BaseException):
+    pass
+
+
+class ResolverProcess:
+    pid = 42
+
+    def __init__(self, events, *, failing_method=None):
+        self.events = events
+        self.alive = True
+        self.failing_method = failing_method
+
+    def start(self):
+        self.events.append("start")
+
+    def join(self, timeout):
+        self.events.append(("join", timeout))
+        if self.failing_method == "join":
+            raise ValueError("private-resolver-state")
+
+    def is_alive(self):
+        self.events.append("is_alive")
+        return self.alive
+
+    def terminate(self):
+        self.events.append("terminate")
+        if self.failing_method == "terminate":
+            raise ValueError("private-resolver-state")
+
+    def kill(self):
+        self.events.append("kill")
+        self.alive = False
+        if self.failing_method == "kill":
+            raise ValueError("private-resolver-state")
+
+    def close(self):
+        self.events.append("process.close")
+        if self.failing_method == "close":
+            raise ValueError("private-resolver-state")
+
+
+class ResolverContext:
+    def __init__(self, receiver, sender, process):
+        self.receiver = receiver
+        self.sender = sender
+        self.process = process
+
+    def Pipe(self, *, duplex):
+        assert duplex is False
+        return self.receiver, self.sender
+
+    def Process(self, **_kwargs):
+        return self.process
+
+
+class ResolverWorkerSender:
+    def __init__(self):
+        self.messages = []
+        self.closed = False
+
+    def send(self, message):
+        self.messages.append(message)
+
+    def close(self):
+        self.closed = True
+
+
+class OwnedRawSocket:
+    def __init__(self):
+        self.close_calls = 0
+
+    def settimeout(self, _timeout):
+        pass
+
+    def connect(self, _address):
+        pass
+
+    def shutdown(self, _how):
+        pass
+
+    def close(self):
+        self.close_calls += 1
+
+
+class OwnedTLSSocket:
+    def __init__(self, *, fail_timeout: bool):
+        self.fail_timeout = fail_timeout
+        self.close_calls = 0
+
+    def settimeout(self, _timeout):
+        if self.fail_timeout:
+            raise ValueError("private-tls-state")
+
+    def shutdown(self, _how):
+        pass
+
+    def close(self):
+        self.close_calls += 1
+
+
+class OwnershipTLSContext:
+    check_hostname = True
+    verify_mode = ssl.CERT_REQUIRED
+
+    def __init__(self, tls_socket):
+        self.tls_socket = tls_socket
+
+    def wrap_socket(self, _raw_socket, *, server_hostname):
+        assert server_hostname == "masterjet.example.test"
+        return self.tls_socket
+
+
+class FailingSocketAssignmentConnection:
+    def __init__(self, *_args, **_kwargs):
+        self._sock = None
+
+    @property
+    def sock(self):
+        return self._sock
+
+    @sock.setter
+    def sock(self, value):
+        if value is not None:
+            raise ValueError("private-connection-state")
+        self._sock = value
+
+    def close(self):
+        pass
+
+
 def test_local_and_https_decode_same_projection(tmp_path, monkeypatch):
     encoded_response = json.dumps(google_accounts_payload()).encode()
     socket_path = tmp_path / "masterjet.sock"
@@ -1147,6 +1334,14 @@ def real_tls_server(tmp_path, *, wire_delay: float = 0):
 
 def test_real_https_verifies_tls_sni_host_and_content_length(tmp_path, monkeypatch):
     original_default_context = ssl.create_default_context
+    original_getaddrinfo = socket.getaddrinfo
+    parent_pid = os.getpid()
+
+    def child_only_getaddrinfo(*args, **kwargs):
+        if os.getpid() == parent_pid:
+            raise AssertionError("parent process attempted name resolution")
+        return original_getaddrinfo(*args, **kwargs)
+
     with real_tls_server(tmp_path) as (port, certificate, capture):
         monkeypatch.setattr(
             client_module,
@@ -1158,6 +1353,7 @@ def test_real_https_verifies_tls_sni_host_and_content_length(tmp_path, monkeypat
             "create_default_context",
             lambda: original_default_context(cafile=certificate),
         )
+        monkeypatch.setattr(client_module.socket, "getaddrinfo", child_only_getaddrinfo)
         connection = MasterjetConnection(
             transport="https",
             endpoint=f"https://localhost:{port}/control",
@@ -1308,6 +1504,29 @@ def test_https_endpoint_rejects_non_ascii_or_whitespace_before_authentication(en
     assert caught.value.__context__ is None
 
 
+def test_https_endpoint_rejects_port_zero_before_authentication():
+    bearer_called = False
+
+    def bearer():
+        nonlocal bearer_called
+        bearer_called = True
+        return "remote-bearer"
+
+    client = MasterjetControlClient(
+        MasterjetConnection(
+            transport="https",
+            endpoint="https://masterjet.example:0/control",
+            timeout_seconds=2,
+        ),
+        bearer_provider=bearer,
+    )
+
+    with pytest.raises(MasterjetClientError, match=r"control\.endpoint_invalid"):
+        client.call("google.accounts.list", {})
+
+    assert bearer_called is False
+
+
 def test_https_connection_constructor_failure_is_sanitized(monkeypatch):
     private_host = "private-host"
 
@@ -1381,6 +1600,208 @@ def test_malformed_resolver_result_is_sanitized(monkeypatch):
         ).call("google.accounts.list", {})
 
     assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "worker",
+    [
+        hostname_resolver_worker,
+        wrong_port_resolver_worker,
+        wrong_family_resolver_worker,
+        wrong_shape_resolver_worker,
+        wrong_protocol_resolver_worker,
+    ],
+)
+def test_resolver_result_must_match_numeric_tcp_sockaddr(monkeypatch, worker):
+    monkeypatch.setattr(client_module, "_RESOLVER_WORKER", worker)
+    monkeypatch.setattr(
+        client_module,
+        "_open_https_connection",
+        _REAL_OPEN_HTTPS_CONNECTION,
+    )
+    monkeypatch.setattr(
+        client_module.socket,
+        "socket",
+        lambda *_args, **_kwargs: ExplodingConnectSocket(),
+    )
+    connection = MasterjetConnection(
+        transport="https",
+        endpoint="https://localhost:9/control",
+        timeout_seconds=2,
+    )
+
+    with pytest.raises(
+        MasterjetClientError,
+        match=r"control\.transport_unavailable",
+    ) as caught:
+        MasterjetControlClient(
+            connection,
+            bearer_provider=lambda: "remote-bearer",
+        ).call("google.accounts.list", {})
+
+    assert caught.value.__context__ is None
+
+
+def test_resolver_baseexception_is_sanitized_after_process_reap(monkeypatch):
+    events = []
+    receiver = ResolverPipe(
+        events,
+        poll_error=ResolverAbort("private-resolver-state"),
+    )
+    sender = ResolverPipe(events)
+    process = ResolverProcess(events)
+    context = ResolverContext(receiver, sender, process)
+    monkeypatch.setattr(client_module.multiprocessing, "get_context", lambda _kind: context)
+    monkeypatch.setattr(
+        client_module,
+        "_open_https_connection",
+        _REAL_OPEN_HTTPS_CONNECTION,
+    )
+
+    with pytest.raises(
+        MasterjetClientError,
+        match=r"control\.transport_unavailable",
+    ) as caught:
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "google.accounts.list", {}
+        )
+
+    assert caught.value.__context__ is None
+    assert events.index("terminate") < events.index("kill") < events.index("process.close")
+
+
+def test_resolver_worker_baseexception_is_contained_and_pipe_is_closed(monkeypatch):
+    sender = ResolverWorkerSender()
+
+    def fail_resolution(*_args, **_kwargs):
+        raise ResolverAbort("private-resolver-state")
+
+    monkeypatch.setattr(client_module.socket, "getaddrinfo", fail_resolution)
+
+    client_module._resolve_worker("masterjet.example.test", 443, sender)
+
+    assert sender.messages == [(False, ())]
+    assert sender.closed is True
+
+
+def test_resolver_pipe_cleanup_error_does_not_skip_process_reap(monkeypatch):
+    events = []
+    receiver = ResolverPipe(
+        events,
+        close_error=ValueError("private-resolver-state"),
+    )
+    sender = ResolverPipe(events)
+    process = ResolverProcess(events)
+    context = ResolverContext(receiver, sender, process)
+    monkeypatch.setattr(client_module.multiprocessing, "get_context", lambda _kind: context)
+    monkeypatch.setattr(
+        client_module,
+        "_open_https_connection",
+        _REAL_OPEN_HTTPS_CONNECTION,
+    )
+
+    with pytest.raises(MasterjetClientError, match=r"control\.timeout") as caught:
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "google.accounts.list", {}
+        )
+
+    assert caught.value.__context__ is None
+    assert events.index("kill") < events.index("process.close")
+
+
+@pytest.mark.parametrize("failing_method", ["join", "terminate", "kill", "close"])
+def test_resolver_process_cleanup_errors_are_sanitized_after_kill(
+    monkeypatch,
+    failing_method,
+):
+    events = []
+    receiver = ResolverPipe(
+        events,
+        poll_error=ResolverAbort("private-resolver-state"),
+    )
+    sender = ResolverPipe(events)
+    process = ResolverProcess(events, failing_method=failing_method)
+    context = ResolverContext(receiver, sender, process)
+    monkeypatch.setattr(client_module.multiprocessing, "get_context", lambda _kind: context)
+    monkeypatch.setattr(
+        client_module,
+        "_open_https_connection",
+        _REAL_OPEN_HTTPS_CONNECTION,
+    )
+
+    with pytest.raises(
+        MasterjetClientError,
+        match=r"control\.transport_unavailable",
+    ) as caught:
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "google.accounts.list", {}
+        )
+
+    assert caught.value.__context__ is None
+    assert process.alive is False
+
+
+def test_tls_socket_is_closed_when_post_wrap_timeout_setup_fails(monkeypatch):
+    raw_socket = OwnedRawSocket()
+    tls_socket = OwnedTLSSocket(fail_timeout=True)
+    tls_context = OwnershipTLSContext(tls_socket)
+    monkeypatch.setattr(
+        client_module,
+        "_open_https_connection",
+        _REAL_OPEN_HTTPS_CONNECTION,
+    )
+    monkeypatch.setattr(client_module.ssl, "create_default_context", lambda: tls_context)
+    monkeypatch.setattr(
+        client_module,
+        "_resolve_host",
+        lambda *_args: [(2, 1, 6, "", ("127.0.0.1", 8443))],
+    )
+    monkeypatch.setattr(client_module.socket, "socket", lambda *_args: raw_socket)
+
+    with pytest.raises(
+        MasterjetClientError,
+        match=r"control\.transport_unavailable",
+    ) as caught:
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "google.accounts.list", {}
+        )
+
+    assert caught.value.__context__ is None
+    assert tls_socket.close_calls == 1
+
+
+def test_tls_socket_is_closed_when_connection_ownership_transfer_fails(monkeypatch):
+    raw_socket = OwnedRawSocket()
+    tls_socket = OwnedTLSSocket(fail_timeout=False)
+    tls_context = OwnershipTLSContext(tls_socket)
+    monkeypatch.setattr(
+        client_module,
+        "_open_https_connection",
+        _REAL_OPEN_HTTPS_CONNECTION,
+    )
+    monkeypatch.setattr(client_module.ssl, "create_default_context", lambda: tls_context)
+    monkeypatch.setattr(
+        client_module,
+        "_resolve_host",
+        lambda *_args: [(2, 1, 6, "", ("127.0.0.1", 8443))],
+    )
+    monkeypatch.setattr(client_module.socket, "socket", lambda *_args: raw_socket)
+    monkeypatch.setattr(
+        client_module.http.client,
+        "HTTPSConnection",
+        FailingSocketAssignmentConnection,
+    )
+
+    with pytest.raises(
+        MasterjetClientError,
+        match=r"control\.transport_unavailable",
+    ) as caught:
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "google.accounts.list", {}
+        )
+
+    assert caught.value.__context__ is None
+    assert tls_socket.close_calls == 1
 
 
 def test_local_endpoint_rejects_group_traversable_parent(tmp_path):

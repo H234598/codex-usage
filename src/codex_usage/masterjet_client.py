@@ -622,70 +622,125 @@ def _resolve_worker(host: str, port: int, sender: object) -> None:
             (int(family), int(kind), int(protocol), str(canonical_name), tuple(address))
             for family, kind, protocol, canonical_name, address in addresses[:32]
         ]
-        sender.send((True, normalized))
-    except (OSError, UnicodeError, ValueError):
-        try:
-            sender.send((False, ()))
-        except OSError:
-            pass
+        message = (True, normalized)
+    except BaseException:
+        message = (False, ())
+    try:
+        sender.send(message)
+    except BaseException:
+        pass
     finally:
-        sender.close()
+        try:
+            sender.close()
+        except BaseException:
+            pass
 
 
 _RESOLVER_WORKER = _resolve_worker
 
 
 def _resolve_host(host: str, port: int, deadline: _Deadline) -> list[tuple[object, ...]]:
-    context = multiprocessing.get_context("spawn")
-    receiver, sender = context.Pipe(duplex=False)
-    process = context.Process(
-        target=_RESOLVER_WORKER,
-        args=(host, port, sender),
-        daemon=True,
-    )
+    receiver = None
+    sender = None
+    process = None
+    result: list[tuple[object, ...]] | None = None
+    failure: str | None = None
     try:
+        context = multiprocessing.get_context("spawn")
+        receiver, sender = context.Pipe(duplex=False)
+        process = context.Process(
+            target=_RESOLVER_WORKER,
+            args=(host, port, sender),
+            daemon=True,
+        )
         process.start()
         sender.close()
         if not receiver.poll(deadline.remaining()):
-            raise MasterjetClientError("control.timeout")
-        malformed = False
-        try:
+            failure = "control.timeout"
+        else:
             succeeded, addresses = receiver.recv()
-        except (EOFError, OSError, TypeError, ValueError):
-            malformed = True
-        if malformed:
-            raise MasterjetClientError("control.transport_unavailable")
-        deadline.remaining()
-        if succeeded is not True or not _resolved_addresses_valid(addresses):
-            raise MasterjetClientError("control.transport_unavailable")
-        return addresses
-    except MasterjetClientError:
-        raise
-    except (AssertionError, OSError, RuntimeError, ValueError):
-        if deadline.expired():
-            raise MasterjetClientError("control.timeout") from None
-        raise MasterjetClientError("control.transport_unavailable") from None
+            deadline.remaining()
+            if succeeded is True and _resolved_addresses_valid(addresses, port):
+                result = addresses
+            else:
+                failure = "control.transport_unavailable"
+    except BaseException:
+        failure = _resolver_failure_code(deadline)
     finally:
-        receiver.close()
-        sender.close()
-        _stop_process(process)
+        cleanup_succeeded = _cleanup_resolver(process, receiver, sender)
+    if not cleanup_succeeded and failure != "control.timeout":
+        failure = "control.transport_unavailable"
+    if failure is not None or result is None:
+        raise MasterjetClientError(failure or "control.transport_unavailable")
+    return result
 
 
-def _stop_process(process: multiprocessing.Process) -> None:
-    if process.pid is None:
-        return
-    process.join(timeout=0)
-    if process.is_alive():
-        process.terminate()
-        process.join(timeout=0.1)
-    if process.is_alive():
-        process.kill()
-        process.join(timeout=0.1)
-    if not process.is_alive():
-        process.close()
+def _resolver_failure_code(deadline: _Deadline) -> str:
+    try:
+        if deadline.expired():
+            return "control.timeout"
+    except BaseException:
+        pass
+    return "control.transport_unavailable"
 
 
-def _resolved_addresses_valid(value: object) -> bool:
+def _cleanup_resolver(process: object, receiver: object, sender: object) -> bool:
+    succeeded = True
+    for pipe in (receiver, sender):
+        if pipe is None:
+            continue
+        try:
+            pipe.close()
+        except BaseException:
+            succeeded = False
+    if process is not None and not _stop_process(process):
+        succeeded = False
+    return succeeded
+
+
+def _stop_process(process: object) -> bool:
+    succeeded = True
+    try:
+        pid = process.pid
+    except BaseException:
+        pid = 1
+        succeeded = False
+    if pid is not None:
+        succeeded = _try_process_call(process, "join", timeout=0) and succeeded
+        alive, checked = _process_alive(process)
+        succeeded = checked and succeeded
+        if alive:
+            succeeded = _try_process_call(process, "terminate") and succeeded
+            succeeded = _try_process_call(process, "join", timeout=0.1) and succeeded
+            alive, checked = _process_alive(process)
+            succeeded = checked and succeeded
+        if alive:
+            succeeded = _try_process_call(process, "kill") and succeeded
+            succeeded = _try_process_call(process, "join", timeout=0.1) and succeeded
+            alive, checked = _process_alive(process)
+            succeeded = checked and succeeded
+        if alive:
+            succeeded = False
+    succeeded = _try_process_call(process, "close") and succeeded
+    return succeeded
+
+
+def _try_process_call(process: object, method: str, **kwargs: object) -> bool:
+    try:
+        getattr(process, method)(**kwargs)
+        return True
+    except BaseException:
+        return False
+
+
+def _process_alive(process: object) -> tuple[bool, bool]:
+    try:
+        return process.is_alive() is True, True
+    except BaseException:
+        return True, False
+
+
+def _resolved_addresses_valid(value: object, requested_port: int) -> bool:
     if type(value) is not list or not 1 <= len(value) <= 32:
         return False
     for item in value:
@@ -700,12 +755,37 @@ def _resolved_addresses_valid(value: object) -> bool:
             or type(address) is not tuple
             or family not in {socket.AF_INET, socket.AF_INET6}
             or kind != socket.SOCK_STREAM
-            or not 2 <= len(address) <= 4
-            or type(address[0]) is not str
-            or type(address[1]) is not int
+            or protocol not in {0, socket.IPPROTO_TCP}
+            or not _sockaddr_valid(family, address, requested_port)
         ):
             return False
     return True
+
+
+def _sockaddr_valid(family: int, address: tuple[object, ...], requested_port: int) -> bool:
+    if family == socket.AF_INET:
+        if len(address) != 2:
+            return False
+    elif len(address) != 4:
+        return False
+    host, port, *ipv6_tail = address
+    if type(host) is not str or type(port) is not int or port != requested_port:
+        return False
+    try:
+        numeric = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if family == socket.AF_INET:
+        return numeric.version == 4
+    flowinfo, scope_id = ipv6_tail
+    return (
+        numeric.version == 6
+        and "%" not in host
+        and type(flowinfo) is int
+        and 0 <= flowinfo <= 0xFFFFF
+        and type(scope_id) is int
+        and 0 <= scope_id <= 0xFFFFFFFF
+    )
 
 
 def _open_https_connection(
@@ -730,9 +810,11 @@ def _open_https_connection(
         raise MasterjetClientError(constructor_failure)
 
     try:
-        addresses = _resolve_host(host, port or 443, deadline)
+        resolved_port = 443 if port is None else port
+        addresses = _resolve_host(host, resolved_port, deadline)
         for family, kind, protocol, _canonical_name, address in addresses:
             raw_socket: socket.socket | None = None
+            tls_socket: socket.socket | None = None
             try:
                 raw_socket = socket.socket(family, kind, protocol)
                 raw_socket.settimeout(deadline.remaining())
@@ -742,6 +824,7 @@ def _open_https_connection(
                 raw_socket = None
                 tls_socket.settimeout(deadline.remaining())
                 connection.sock = tls_socket
+                tls_socket = None
                 return connection
             except TimeoutError:
                 if deadline.expired():
@@ -750,6 +833,8 @@ def _open_https_connection(
                 if deadline.expired():
                     raise MasterjetClientError("control.timeout") from None
             finally:
+                if tls_socket is not None:
+                    _abort_socket(tls_socket)
                 if raw_socket is not None:
                     _abort_socket(raw_socket)
         raise MasterjetClientError("control.transport_unavailable")
@@ -790,7 +875,11 @@ def _https_endpoint(connection: MasterjetConnection) -> tuple[str, int | None, s
         raise MasterjetClientError("control.endpoint_invalid")
     host = parsed.hostname
     target = parsed.path or "/"
-    if not _host_valid(host) or any(ord(character) <= 0x20 for character in target):
+    if (
+        not _host_valid(host)
+        or (port is not None and not 1 <= port <= 65535)
+        or any(ord(character) <= 0x20 for character in target)
+    ):
         raise MasterjetClientError("control.endpoint_invalid")
     return host, port, target
 
