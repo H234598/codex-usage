@@ -331,6 +331,57 @@ class ResolverProcess:
             raise ValueError("private-resolver-state")
 
 
+class DelayedExitResolverProcess(ResolverProcess):
+    def __init__(self, events) -> None:
+        super().__init__(events)
+        self.allow_exit = threading.Event()
+        self.reaped = threading.Event()
+
+    def join(self, timeout):
+        self.events.append(("join", timeout))
+        if self.allow_exit.is_set():
+            self.alive = False
+            self.reaped.set()
+
+    def kill(self):
+        self.events.append("kill")
+
+    def close(self):
+        self.events.append("process.close")
+        if self.alive:
+            raise ValueError("process still running")
+
+
+class DelayedRealProcess:
+    def __init__(self, process) -> None:
+        self.process = process
+        self.reaped = threading.Event()
+
+    @property
+    def pid(self):
+        return self.process.pid
+
+    def start(self):
+        self.process.start()
+
+    def join(self, timeout):
+        self.process.join(timeout)
+        if not self.process.is_alive():
+            self.reaped.set()
+
+    def is_alive(self):
+        return self.process.is_alive()
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
+
+    def close(self):
+        self.process.close()
+
+
 class ResolverContext:
     def __init__(self, receiver, sender, process):
         self.receiver = receiver
@@ -1504,6 +1555,36 @@ def test_https_endpoint_rejects_non_ascii_or_whitespace_before_authentication(en
     assert caught.value.__context__ is None
 
 
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://[fe80::1%eth0]/control",
+        "https://[fe80::1%25eth0]/control",
+    ],
+)
+def test_https_endpoint_rejects_scoped_ipv6_before_authentication(endpoint):
+    bearer_called = False
+
+    def bearer():
+        nonlocal bearer_called
+        bearer_called = True
+        return "remote-bearer"
+
+    client = MasterjetControlClient(
+        MasterjetConnection(
+            transport="https",
+            endpoint=endpoint,
+            timeout_seconds=2,
+        ),
+        bearer_provider=bearer,
+    )
+
+    with pytest.raises(MasterjetClientError, match=r"control\.endpoint_invalid"):
+        client.call("google.accounts.list", {})
+
+    assert bearer_called is False
+
+
 def test_https_endpoint_rejects_port_zero_before_authentication():
     bearer_called = False
 
@@ -1739,6 +1820,60 @@ def test_resolver_process_cleanup_errors_are_sanitized_after_kill(
 
     assert caught.value.__context__ is None
     assert process.alive is False
+
+
+def test_resolver_alive_after_kill_is_reaped_later_without_blocking_call(monkeypatch):
+    events = []
+    receiver = ResolverPipe(events)
+    sender = ResolverPipe(events)
+    process = DelayedExitResolverProcess(events)
+    context = ResolverContext(receiver, sender, process)
+    monkeypatch.setattr(client_module.multiprocessing, "get_context", lambda _kind: context)
+    monkeypatch.setattr(
+        client_module,
+        "_open_https_connection",
+        _REAL_OPEN_HTTPS_CONNECTION,
+    )
+
+    started = time.monotonic()
+    with pytest.raises(MasterjetClientError, match=r"control\.timeout"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "google.accounts.list", {}
+        )
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.6
+    assert process.alive is True
+    process.allow_exit.set()
+    assert process.reaped.wait(2)
+    assert process.alive is False
+    assert "process.close" in events
+
+
+def test_real_resolver_process_that_outlives_kill_window_is_reaped_later(monkeypatch):
+    children_before = {child.pid for child in multiprocessing.active_children()}
+    real_process = multiprocessing.get_context("spawn").Process(
+        target=time.sleep,
+        args=(0.5,),
+        daemon=True,
+    )
+    process = DelayedRealProcess(real_process)
+    events = []
+    context = ResolverContext(ResolverPipe(events), ResolverPipe(events), process)
+    monkeypatch.setattr(client_module.multiprocessing, "get_context", lambda _kind: context)
+    monkeypatch.setattr(
+        client_module,
+        "_open_https_connection",
+        _REAL_OPEN_HTTPS_CONNECTION,
+    )
+
+    with pytest.raises(MasterjetClientError, match=r"control\.timeout"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "google.accounts.list", {}
+        )
+
+    assert process.reaped.wait(3)
+    assert {child.pid for child in multiprocessing.active_children()} == children_before
 
 
 def test_tls_socket_is_closed_when_post_wrap_timeout_setup_fails(monkeypatch):

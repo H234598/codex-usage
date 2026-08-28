@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import array
+import atexit
 import http.client
 import ipaddress
 import json
@@ -639,7 +640,102 @@ def _resolve_worker(host: str, port: int, sender: object) -> None:
 _RESOLVER_WORKER = _resolve_worker
 
 
+class _ResolverProcessReaper:
+    """Bound resolver workers and retain them until a successful later join."""
+
+    def __init__(self, maximum: int = 32) -> None:
+        self._maximum = maximum
+        self._reset_after_fork()
+
+    def _reset_after_fork(self) -> None:
+        self._owner_pid = os.getpid()
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._pending: dict[int, object] = {}
+        self._reserved = 0
+        self._thread: threading.Thread | None = None
+
+    def reserve(self) -> bool:
+        if self._owner_pid != os.getpid():
+            self._reset_after_fork()
+        with self._lock:
+            if self._reserved >= self._maximum:
+                return False
+            if self._thread is None:
+                thread = threading.Thread(
+                    target=self._run,
+                    name="masterjet-resolver-reaper",
+                    daemon=True,
+                )
+                try:
+                    thread.start()
+                except BaseException:
+                    return False
+                self._thread = thread
+            self._reserved += 1
+            return True
+
+    def release(self) -> None:
+        with self._lock:
+            if self._reserved:
+                self._reserved -= 1
+
+    def defer(self, process: object) -> None:
+        with self._lock:
+            self._pending[id(process)] = process
+            self._wake.set()
+
+    def _run(self) -> None:
+        while True:
+            self._wake.wait()
+            self._wake.clear()
+            while True:
+                with self._lock:
+                    pending = tuple(self._pending.items())
+                if not pending:
+                    break
+                for key, process in pending:
+                    if not self._reap_once(process):
+                        continue
+                    with self._lock:
+                        if self._pending.get(key) is process:
+                            del self._pending[key]
+                            self._reserved -= 1
+                with self._lock:
+                    if not self._pending:
+                        break
+                self._wake.wait(0.05)
+                self._wake.clear()
+
+    @staticmethod
+    def _reap_once(process: object) -> bool:
+        _try_process_call(process, "kill")
+        joined = _try_process_call(process, "join", timeout=0.05)
+        alive, checked = _process_alive(process)
+        if not joined or not checked or alive:
+            return False
+        _try_process_call(process, "close")
+        return True
+
+    def shutdown(self) -> None:
+        try:
+            with self._lock:
+                pending = tuple(self._pending.values())
+        except BaseException:
+            return
+        for process in pending:
+            self._reap_once(process)
+
+
+_RESOLVER_REAPER = _ResolverProcessReaper()
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_RESOLVER_REAPER._reset_after_fork)
+atexit.register(_RESOLVER_REAPER.shutdown)
+
+
 def _resolve_host(host: str, port: int, deadline: _Deadline) -> list[tuple[object, ...]]:
+    if not _RESOLVER_REAPER.reserve():
+        raise MasterjetClientError("control.transport_unavailable")
     receiver = None
     sender = None
     process = None
@@ -693,12 +789,19 @@ def _cleanup_resolver(process: object, receiver: object, sender: object) -> bool
             pipe.close()
         except BaseException:
             succeeded = False
-    if process is not None and not _stop_process(process):
-        succeeded = False
+    if process is None:
+        _RESOLVER_REAPER.release()
+    else:
+        stopped, needs_reap = _stop_process(process)
+        succeeded = stopped and succeeded
+        if needs_reap:
+            _RESOLVER_REAPER.defer(process)
+        else:
+            _RESOLVER_REAPER.release()
     return succeeded
 
 
-def _stop_process(process: object) -> bool:
+def _stop_process(process: object) -> tuple[bool, bool]:
     succeeded = True
     try:
         pid = process.pid
@@ -706,23 +809,26 @@ def _stop_process(process: object) -> bool:
         pid = 1
         succeeded = False
     if pid is not None:
-        succeeded = _try_process_call(process, "join", timeout=0) and succeeded
+        joined = _try_process_call(process, "join", timeout=0)
+        succeeded = joined and succeeded
         alive, checked = _process_alive(process)
         succeeded = checked and succeeded
         if alive:
             succeeded = _try_process_call(process, "terminate") and succeeded
-            succeeded = _try_process_call(process, "join", timeout=0.1) and succeeded
+            joined = _try_process_call(process, "join", timeout=0.1)
+            succeeded = joined and succeeded
             alive, checked = _process_alive(process)
             succeeded = checked and succeeded
         if alive:
             succeeded = _try_process_call(process, "kill") and succeeded
-            succeeded = _try_process_call(process, "join", timeout=0.1) and succeeded
+            joined = _try_process_call(process, "join", timeout=0.1)
+            succeeded = joined and succeeded
             alive, checked = _process_alive(process)
             succeeded = checked and succeeded
-        if alive:
-            succeeded = False
+        if alive or not checked or not joined:
+            return False, True
     succeeded = _try_process_call(process, "close") and succeeded
-    return succeeded
+    return succeeded, False
 
 
 def _try_process_call(process: object, method: str, **kwargs: object) -> bool:
@@ -893,6 +999,8 @@ def _parse_https_endpoint(value: str):
 
 
 def _host_valid(host: str) -> bool:
+    if "%" in host:
+        return False
     try:
         ipaddress.ip_address(host)
         return True
