@@ -4,6 +4,8 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import NoReturn
+from urllib.parse import urlsplit
 
 _SCHEMA_VERSION = 1
 _MAX_ACCOUNTS = 256
@@ -15,6 +17,7 @@ _MAX_PURPOSE_BYTES = 128
 _MAX_GENERATION = 2**63 - 1
 _MAX_COUNT = 100_000
 _MAX_RETRY_SECONDS = 86_400
+_MAX_URL_BYTES = 2_048
 _REF_RE = re.compile(r"^[a-z][a-z0-9-]{0,127}$")
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _PURPOSE_RE = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
@@ -194,6 +197,22 @@ class GoogleControlAccount:
 
 
 @dataclass(frozen=True, slots=True)
+class GoogleOAuthTransactionV1:
+    id: str
+    account_ref: str
+    authorization_url: str
+    expires_at: datetime
+    generation: int
+
+    def __post_init__(self) -> None:
+        _token(self.id, "id")
+        _ref(self.account_ref, "account_ref")
+        _authorization_url(self.authorization_url)
+        _timestamp_value(self.expires_at, "expires_at")
+        _generation(self.generation, "generation")
+
+
+@dataclass(frozen=True, slots=True)
 class GoogleControlProject:
     ref: str
     project_name: str
@@ -340,6 +359,27 @@ def parse_openai_accounts(payload: object) -> tuple[OpenAIControlAccount, ...]:
     result = tuple(_parse_openai_account(account) for account in accounts)
     _unique_refs(result)
     return result
+
+
+def parse_google_oauth_transaction(payload: object) -> GoogleOAuthTransactionV1:
+    data = _document(
+        payload,
+        {
+            "schema_version",
+            "id",
+            "account_ref",
+            "authorization_url",
+            "expires_at",
+            "generation",
+        },
+    )
+    return GoogleOAuthTransactionV1(
+        id=_token(data["id"], "id"),
+        account_ref=_ref(data["account_ref"], "account_ref"),
+        authorization_url=_authorization_url(data["authorization_url"]),
+        expires_at=_timestamp(data["expires_at"], "expires_at"),
+        generation=_generation(data["generation"], "generation"),
+    )
 
 
 def parse_google_project(payload: object) -> GoogleControlProject:
@@ -634,6 +674,7 @@ def _token(value: object, field: str) -> str:
 
 def _visible_name(value: object, field: str) -> str:
     _safe_text(value, field, _MAX_NAME_BYTES)
+    assert isinstance(value, str)
     if not _VISIBLE_NAME_RE.fullmatch(value):
         _invalid(field)
     return value
@@ -641,6 +682,7 @@ def _visible_name(value: object, field: str) -> str:
 
 def _label(value: object, field: str) -> str:
     _safe_text(value, field, _MAX_LABEL_BYTES)
+    assert isinstance(value, str)
     if not _LABEL_RE.fullmatch(value):
         _invalid(field)
     return value
@@ -648,6 +690,7 @@ def _label(value: object, field: str) -> str:
 
 def _purpose(value: object, field: str) -> str:
     _safe_text(value, field, _MAX_PURPOSE_BYTES)
+    assert isinstance(value, str)
     if not _PURPOSE_RE.fullmatch(value):
         _invalid(field)
     return value
@@ -664,6 +707,31 @@ def _safe_text(value: object, field: str, maximum: int) -> str:
         unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in value
     ):
         _invalid(field)
+    return value
+
+
+def _authorization_url(value: object) -> str:
+    if type(value) is not str or not value:
+        _invalid("authorization_url")
+    try:
+        encoded = value.encode("ascii")
+        parsed = urlsplit(value)
+        port = parsed.port
+    except (UnicodeError, ValueError):
+        _invalid("authorization_url")
+    if (
+        len(encoded) > _MAX_URL_BYTES
+        or any(not 0x21 <= byte <= 0x7E for byte in encoded)
+        or parsed.scheme != "https"
+        or parsed.hostname != "accounts.google.com"
+        or port not in {None, 443}
+        or parsed.username is not None
+        or parsed.password is not None
+        or not parsed.path.startswith("/o/oauth2/")
+        or parsed.fragment
+        or _SECRET_VALUE_RE.search(value)
+    ):
+        _invalid("authorization_url")
     return value
 
 
@@ -756,5 +824,5 @@ def _private_value(value: str) -> bool:
     return bool(_SECRET_VALUE_RE.search(value) or _ABSOLUTE_PATH_RE.search(value))
 
 
-def _invalid(_field: str) -> None:
+def _invalid(_field: str) -> NoReturn:
     raise ControlContractError("control.response_invalid")

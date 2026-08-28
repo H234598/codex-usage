@@ -11,12 +11,14 @@ from codex_usage.masterjet_contracts import (
     ControlProblem,
     GoogleControlAccount,
     GoogleControlProject,
+    GoogleOAuthTransactionV1,
     OpenAIControlAccount,
     SecretIngressReceipt,
     SecretIngressSession,
     parse_control_operation,
     parse_control_problem,
     parse_google_accounts,
+    parse_google_oauth_transaction,
     parse_google_project,
     parse_openai_accounts,
     parse_secret_ingress_receipt,
@@ -85,6 +87,17 @@ def valid_operation() -> dict[str, object]:
     }
 
 
+def valid_google_oauth_transaction() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "id": "oauth-1",
+        "account_ref": "google-1",
+        "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "expires_at": "2026-08-28T12:05:00Z",
+        "generation": 4,
+    }
+
+
 def valid_problem() -> dict[str, object]:
     return {
         "schema_version": 1,
@@ -99,6 +112,42 @@ def valid_problem() -> dict[str, object]:
         "correlation_id": "correlation-1",
         "occurred_at": "2026-08-28T12:00:00Z",
     }
+
+
+def test_google_oauth_transaction_is_typed_redacted_and_immutable():
+    transaction = parse_google_oauth_transaction(valid_google_oauth_transaction())
+
+    assert transaction == GoogleOAuthTransactionV1(
+        id="oauth-1",
+        account_ref="google-1",
+        authorization_url="https://accounts.google.com/o/oauth2/v2/auth",
+        expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=UTC),
+        generation=4,
+    )
+    with pytest.raises(FrozenInstanceError):
+        transaction.generation = 5  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("authorization_url", "http://accounts.google.com/o/oauth2/v2/auth"),
+        ("authorization_url", "https://attacker.invalid/auth"),
+        ("authorization_url", "https://user@accounts.google.com/auth"),
+        ("authorization_url", "https://accounts.google.com/auth#private"),
+        ("generation", True),
+        ("account_ref", "ya29.private"),
+        ("id", "GOCSPX-private"),
+    ],
+)
+def test_google_oauth_transaction_rejects_untrusted_or_private_values(field, value):
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_google_oauth_transaction(valid_google_oauth_transaction() | {field: value})
+
+
+def test_google_oauth_transaction_rejects_unknown_fields():
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_google_oauth_transaction(valid_google_oauth_transaction() | {"state": "private"})
 
 
 def valid_ingress_session() -> dict[str, object]:

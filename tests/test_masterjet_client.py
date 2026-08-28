@@ -69,6 +69,17 @@ def ingress_session_payload() -> dict[str, object]:
     }
 
 
+def google_oauth_transaction_payload() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "id": "oauth-1",
+        "account_ref": "google-1",
+        "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "expires_at": "2026-08-28T12:05:00Z",
+        "generation": 4,
+    }
+
+
 class FakeHTTPResponse:
     def __init__(
         self,
@@ -696,25 +707,106 @@ def test_secret_ingress_receipt_for_another_session_is_rejected(monkeypatch):
         ).put_secret("ingress-1", b"private")
 
 
-def test_https_uses_verified_tls_fixed_target_and_transient_auth_headers(monkeypatch):
+def test_oauth_begin_decodes_bound_typed_transaction(monkeypatch):
+    FakeHTTPSConnection.response = FakeHTTPResponse(
+        json.dumps(google_oauth_transaction_payload()).encode()
+    )
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    result = https_client(
+        bearer_provider=lambda: "remote-bearer",
+        step_up_provider=lambda: "123456",
+    ).call(
+        "google.oauth.begin",
+        {"account_ref": "google-1", "browser": "firefox"},
+        expected_generation=4,
+        idempotency_key="idem-1",
+    )
+
+    assert result.id == "oauth-1"
+    assert result.account_ref == "google-1"
+    assert result.generation == 4
+
+
+def test_oauth_begin_rejects_transaction_for_another_account(monkeypatch):
     FakeHTTPSConnection.response = FakeHTTPResponse(
         json.dumps(
-            {
-                "schema_version": 1,
-                "id": "operation-1",
-                "kind": "google.oauth.begin",
-                "state": "queued",
-                "expected_generation": 4,
-                "resulting_generation": None,
-                "plan_digest": "sha256:" + "a" * 64,
-                "created_at": "2026-08-28T12:00:00Z",
-                "expires_at": "2026-08-28T12:01:00Z",
-                "completed_count": 0,
-                "failed_count": 0,
-                "not_attempted_count": 1,
-                "reason_codes": [],
-            }
+            google_oauth_transaction_payload() | {"account_ref": "google-2"}
         ).encode()
+    )
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.response_invalid"):
+        https_client(
+            bearer_provider=lambda: "remote-bearer",
+            step_up_provider=lambda: "123456",
+        ).call(
+            "google.oauth.begin",
+            {"account_ref": "google-1", "browser": "firefox"},
+            expected_generation=4,
+            idempotency_key="idem-1",
+        )
+
+
+def test_operations_get_binds_returned_operation_id(monkeypatch):
+    payload = {
+        "schema_version": 1,
+        "id": "plan-2",
+        "kind": "google.provision.plan",
+        "state": "planned",
+        "expected_generation": 4,
+        "resulting_generation": None,
+        "plan_digest": "sha256:" + "a" * 64,
+        "created_at": "2026-08-28T12:00:00Z",
+        "expires_at": "2026-08-28T12:05:00Z",
+        "completed_count": 0,
+        "failed_count": 0,
+        "not_attempted_count": 1,
+        "reason_codes": [],
+    }
+    FakeHTTPSConnection.response = FakeHTTPResponse(json.dumps(payload).encode())
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.response_invalid"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "operations.get", {"operation_id": "plan-1"}
+        )
+
+
+@pytest.mark.parametrize(
+    "operation_name,arguments",
+    [
+        ("operations.get", {"operation_id": "plan-1"}),
+        ("google.oauth-client-import.plan", {"account_ref": "google-1"}),
+        (
+            "google.oauth-client-import.apply",
+            {"account_ref": "google-1", "plan_id": "plan-1"},
+        ),
+    ],
+)
+def test_task6_specified_operations_are_accepted_by_request_contract(
+    monkeypatch, operation_name, arguments
+):
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+    FakeHTTPSConnection.response = FakeHTTPResponse(b"{}")
+
+    with pytest.raises(MasterjetClientError, match=r"control\.response_invalid"):
+        https_client(
+            bearer_provider=lambda: "remote-bearer",
+            step_up_provider=lambda: "123456",
+        ).call(
+            operation_name,
+            arguments,
+            expected_generation=4,
+            idempotency_key="idem-1",
+        )
+
+    assert len(FakeHTTPSConnection.instances) == 1
+
+
+def test_https_uses_verified_tls_fixed_target_and_transient_auth_headers(monkeypatch):
+    FakeHTTPSConnection.response = FakeHTTPResponse(
+        json.dumps(google_oauth_transaction_payload()).encode()
     )
     monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
 
@@ -1093,23 +1185,7 @@ def test_local_sensitive_json_operation_requires_step_up(tmp_path):
 
 def test_local_sensitive_json_operation_sends_step_up_only_by_fd(tmp_path):
     socket_path = tmp_path / "masterjet.sock"
-    response = json.dumps(
-        {
-            "schema_version": 1,
-            "id": "operation-1",
-            "kind": "google.oauth.begin",
-            "state": "queued",
-            "expected_generation": 4,
-            "resulting_generation": None,
-            "plan_digest": "sha256:" + "a" * 64,
-            "created_at": "2026-08-28T12:00:00Z",
-            "expires_at": "2026-08-28T12:01:00Z",
-            "completed_count": 0,
-            "failed_count": 0,
-            "not_attempted_count": 1,
-            "reason_codes": [],
-        }
-    ).encode()
+    response = json.dumps(google_oauth_transaction_payload()).encode()
 
     with unix_server(socket_path, response) as capture:
         local_client(

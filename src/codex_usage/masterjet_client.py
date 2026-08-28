@@ -26,6 +26,7 @@ from .masterjet_contracts import (
     parse_control_operation,
     parse_control_problem,
     parse_google_accounts,
+    parse_google_oauth_transaction,
     parse_google_projects,
     parse_openai_accounts,
     parse_secret_ingress_receipt,
@@ -45,6 +46,7 @@ _IDEMPOTENCY_RE = re.compile(
 _HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
 _INVALID_JSON = object()
 _OPERATION_ARGUMENT_FIELDS = {
+    "operations.get": ({"operation_id": "token"}, frozenset()),
     "google.accounts.list": ({}, frozenset()),
     "google.projects.list": ({"account_ref": "token"}, frozenset()),
     "google.oauth.begin": (
@@ -53,6 +55,14 @@ _OPERATION_ARGUMENT_FIELDS = {
     ),
     "google.oauth.complete": (
         {"account_ref": "token", "transaction_id": "token"},
+        frozenset(),
+    ),
+    "google.oauth-client-import.plan": (
+        {"account_ref": "token"},
+        frozenset(),
+    ),
+    "google.oauth-client-import.apply": (
+        {"account_ref": "token", "plan_id": "token"},
         frozenset(),
     ),
     "google.inventory.refresh": ({"account_ref": "token"}, frozenset()),
@@ -88,6 +98,8 @@ _SENSITIVE_OPERATIONS = frozenset(
     {
         "google.oauth.begin",
         "google.oauth.complete",
+        "google.oauth-client-import.plan",
+        "google.oauth-client-import.apply",
         "google.billing.plan",
         "google.billing.apply",
         "openai.auth-sync.plan",
@@ -514,6 +526,14 @@ def _decode_response(operation: str, arguments: object, response: tuple[int, byt
             raise MasterjetClientError(problem.code, problem=problem)
         if operation == "google.accounts.list":
             return parse_google_accounts(payload)
+        if operation == "google.oauth.begin":
+            transaction = parse_google_oauth_transaction(payload)
+            if (
+                type(arguments) is not dict
+                or transaction.account_ref != arguments.get("account_ref")
+            ):
+                raise MasterjetClientError("control.response_invalid")
+            return transaction
         if operation == "openai.accounts.list":
             return parse_openai_accounts(payload)
         if operation == "google.projects.list":
@@ -535,7 +555,16 @@ def _decode_response(operation: str, arguments: object, response: tuple[int, byt
             ):
                 raise MasterjetClientError("control.response_invalid")
             return receipt
-        return parse_control_operation(payload)
+        result = parse_control_operation(payload)
+        if (
+            operation == "operations.get"
+            and (
+                type(arguments) is not dict
+                or result.id != arguments.get("operation_id")
+            )
+        ):
+            raise MasterjetClientError("control.response_invalid")
+        return result
     except ControlContractError:
         raise MasterjetClientError("control.response_invalid") from None
 

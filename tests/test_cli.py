@@ -1336,6 +1336,195 @@ def test_account_auth_sync_without_productive_providers_fails_closed(
     assert capsys.readouterr().err.strip() == "Fehler: control.authentication_required"
 
 
+def test_google_provision_apply_requires_confirm_before_config_or_request(
+    monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        cli_module,
+        "load_config",
+        lambda _path: (_ for _ in ()).throw(AssertionError("request started")),
+    )
+
+    assert main(["google", "provision-apply", "google-one", "plan-1", "--json"]) == 2
+
+    assert capsys.readouterr().err.strip() == "Fehler: confirmation_required"
+
+
+def test_google_cli_fixed_commands_forward_only_redacted_values(monkeypatch, capsys):
+    calls = []
+
+    class Controller:
+        def list(self):
+            calls.append(("list",))
+            return (
+                SimpleNamespace(
+                    ref="google-one",
+                    label="Google One",
+                    enabled=True,
+                    subject_bound=True,
+                    oauth_state="ready",
+                    inventory_generation=4,
+                    quota_state="fresh",
+                    project_count=1,
+                    billing_count=0,
+                    reload_state="ready",
+                ),
+            )
+
+        def oauth_begin(self, account_ref, *, browser):
+            calls.append(("oauth_begin", account_ref, browser))
+            return SimpleNamespace(
+                id="oauth-1",
+                account_ref=account_ref,
+                authorization_url="https://accounts.google.com/o/oauth2/v2/auth",
+                expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=ZoneInfo("UTC")),
+                generation=4,
+            )
+
+        def import_oauth_client(self, account_ref, path):
+            calls.append(("import", account_ref, path))
+            return SimpleNamespace(account_ref=account_ref, generation=5, status="succeeded")
+
+        def inventory_refresh(self, account_ref):
+            calls.append(("inventory", account_ref))
+            return SimpleNamespace(
+                id="refresh-1",
+                kind="google.inventory.refresh",
+                state="succeeded",
+                expected_generation=4,
+                resulting_generation=5,
+                plan_digest="sha256:" + "a" * 64,
+                expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=ZoneInfo("UTC")),
+            )
+
+        def provision_plan(self, account_ref):
+            calls.append(("plan", account_ref))
+            return SimpleNamespace(
+                account_ref=account_ref,
+                plan_id="plan-1",
+                expected_generation=4,
+                plan_digest="sha256:" + "a" * 64,
+                expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=ZoneInfo("UTC")),
+            )
+
+        def provision_apply(self, plan_id, *, account_ref):
+            calls.append(("apply", account_ref, plan_id))
+            return SimpleNamespace(
+                id="apply-1",
+                kind="google.provision.apply",
+                state="succeeded",
+                expected_generation=4,
+                resulting_generation=5,
+                plan_digest="sha256:" + "a" * 64,
+                expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=ZoneInfo("UTC")),
+            )
+
+    monkeypatch.setattr(cli_module, "_new_google_controller", lambda _path: Controller())
+
+    assert main(["google", "accounts", "--json"]) == 0
+    assert main(["google", "oauth-begin", "google-one", "--browser", "firefox"]) == 0
+    assert main(["google", "inventory-refresh", "google-one", "--json"]) == 0
+    assert main(["google", "provision-plan", "google-one", "--json"]) == 0
+    assert (
+        main(
+            [
+                "google",
+                "provision-apply",
+                "google-one",
+                "plan-1",
+                "--confirm",
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    assert calls == [
+        ("list",),
+        ("oauth_begin", "google-one", "firefox"),
+        ("inventory", "google-one"),
+        ("plan", "google-one"),
+        ("apply", "google-one", "plan-1"),
+    ]
+    output = capsys.readouterr().out
+    assert "access_token" not in output
+    assert "client_secret" not in output
+
+
+def test_google_add_keeps_oauth_client_path_local(monkeypatch, tmp_path, capsys):
+    source = tmp_path / "oauth-client.json"
+    source.write_text("private", encoding="utf-8")
+    seen = []
+
+    class Controller:
+        def import_oauth_client(self, account_ref, path):
+            seen.append(("import", account_ref, path))
+            return SimpleNamespace(account_ref=account_ref, generation=5, status="succeeded")
+
+        def oauth_begin(self, account_ref, *, browser):
+            seen.append(("begin", account_ref, browser))
+            return SimpleNamespace(
+                id="oauth-1",
+                account_ref=account_ref,
+                authorization_url="https://accounts.google.com/o/oauth2/v2/auth",
+                expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=ZoneInfo("UTC")),
+                generation=5,
+            )
+
+    monkeypatch.setattr(cli_module, "_new_google_controller", lambda _path: Controller())
+
+    assert (
+        main(
+            [
+                "google",
+                "add",
+                "google-one",
+                "--oauth-client-json",
+                str(source),
+                "--browser",
+                "firefox",
+            ]
+        )
+        == 0
+    )
+
+    assert seen == [
+        ("import", "google-one", source),
+        ("begin", "google-one", "firefox"),
+    ]
+    assert str(source) not in capsys.readouterr().out
+
+
+def test_google_cli_rejects_secret_quota_and_provider_identifier_options(capsys):
+    for option in ("--token", "--secret", "--quota-remaining", "--provider-id"):
+        with pytest.raises(SystemExit) as caught:
+            main(["google", "accounts", option])
+        assert caught.value.code == 2
+
+    capsys.readouterr()
+
+
+def test_google_production_cli_fails_closed_before_client_construction(monkeypatch, capsys):
+    monkeypatch.setattr(
+        cli_module,
+        "MasterjetControlClient",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("client constructed")),
+    )
+
+    assert main(["google", "accounts", "--json"]) == 2
+
+    assert capsys.readouterr().err.strip() == "Fehler: control.authentication_required"
+
+
+def test_masterjet_status_reports_auth_wiring_fail_closed(capsys):
+    assert main(["masterjet", "status", "--json"]) == 2
+
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "code": "control.authentication_required",
+    }
+
+
 def test_diagnose_accepts_unique_label(tmp_path, monkeypatch, capsys):
     config_path = tmp_path / "config.toml"
     called = {}
