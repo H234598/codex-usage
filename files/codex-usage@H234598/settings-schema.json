@@ -459,12 +459,9 @@
     "type": "custom",
     "file": "openai_accounts_page.py",
     "widget": "MasterjetConnectionWidget",
-    "description": "Transport, Socket- oder HTTPS-Endpoint und Verbindungsstatus",
-    "tooltip": "Ungültige Endpoints werden vor dem Speichern abgewiesen. Bearer und TOTP sind keine Settingswerte.",
-    "default": {
-      "transport": "local",
-      "endpoint": "/run/user/1000/masterjet.sock"
-    }
+    "description": "Kanonische Codex-Usage-Verbindung und Status",
+    "tooltip": "Liest und testet ausschließlich die kanonische config.toml. Bearer, TOTP und eine zweite Verbindungsautorität sind keine Settingswerte.",
+    "default": ""
   },
   "panel-value-count": {
     "type": "entry",

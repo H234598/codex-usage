@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import signal
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -129,11 +132,22 @@ def test_openai_actions_use_only_bounded_own_cli_commands() -> None:
             calls.append((tuple(argv), stdin_data, callback))
 
     controller = _module().OpenAIActions(Runner(), executable="/opt/codex-usage")
-    controller.reauthenticate("BW_Work")
-    controller.sync_auth("BW_Work")
+    completed = object()
+    controller.reauthenticate("BW_Work", callback=completed)
+    controller.sync_auth("BW_Work", callback=completed)
 
     assert calls == [
-        (("/opt/codex-usage", "reactivate", "BW_Work"), None, None),
+        (
+            (
+                "/opt/codex-usage",
+                "reactivate",
+                "BW_Work",
+                "--format",
+                "json",
+            ),
+            None,
+            completed,
+        ),
         (
             (
                 "/opt/codex-usage",
@@ -144,9 +158,57 @@ def test_openai_actions_use_only_bounded_own_cli_commands() -> None:
                 "json",
             ),
             None,
-            None,
+            completed,
         ),
     ]
+
+
+def test_reauthentication_has_bounded_interactive_timeout() -> None:
+    assert _module().REAUTH_TIMEOUT_SECONDS == 15 * 60
+
+
+def test_reauthentication_command_uses_real_json_cli_contract(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from codex_usage import cli as cli_module
+    from codex_usage.config import Account, AppConfig, save_config
+
+    commands = []
+
+    class Runner:
+        def submit(self, argv, *, stdin_data=None, callback=None):
+            commands.append(tuple(argv))
+
+    _module().OpenAIActions(Runner(), executable="/opt/codex-usage").reauthenticate("work")
+    config_path = tmp_path / "config.toml"
+    save_config(
+        AppConfig(
+            accounts=(
+                Account(
+                    id="work",
+                    label="Work",
+                    profile_dir=str(tmp_path / "profile"),
+                    auth_json_path=str(tmp_path / "profile" / "auth.json"),
+                ),
+            )
+        ),
+        config_path,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "reactivate_account",
+        lambda selected, browser: {
+            "ok": True,
+            "account": selected.id,
+            "browser": browser,
+        },
+    )
+
+    assert cli_module.main(["--config", str(config_path), *commands[0][1:]]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["account"] == "work"
+    assert payload["auth_sync_required"] is True
 
 
 @pytest.mark.parametrize(
@@ -179,6 +241,123 @@ def test_masterjet_endpoint_validation_rejects_before_settings_write(transport, 
         )
 
     assert writes == []
+
+
+def test_masterjet_connection_cannot_create_second_settings_authority() -> None:
+    writes = []
+
+    with pytest.raises(RuntimeError, match="kanonische Codex-Usage-Konfiguration"):
+        _module().save_masterjet_connection(
+            lambda key, value: writes.append((key, value)),
+            "local",
+            "/run/user/4242/masterjet.sock",
+        )
+
+    assert writes == []
+
+
+def test_masterjet_status_tests_only_canonical_codex_usage_config() -> None:
+    calls = []
+
+    class Runner:
+        def submit(self, argv, *, stdin_data=None, callback=None):
+            calls.append((tuple(argv), stdin_data, callback))
+
+    completed = object()
+    actions = _module().MasterjetConnectionActions(Runner(), executable="/opt/codex-usage")
+    actions.test(callback=completed)
+
+    assert calls == [
+        (
+            ("/opt/codex-usage", "masterjet", "status", "--json"),
+            None,
+            completed,
+        )
+    ]
+
+
+def test_masterjet_socket_default_uses_current_runtime_uid() -> None:
+    module = _module()
+
+    assert (
+        module.default_masterjet_socket(environ={"XDG_RUNTIME_DIR": "/run/user/4242"}, uid=4242)
+        == "/run/user/4242/masterjet.sock"
+    )
+    assert module.default_masterjet_socket(environ={}, uid=4242) == (
+        "/run/user/4242/masterjet.sock"
+    )
+
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    assert schema["masterjet-connection"]["default"] == ""
+    assert "/run/user/1000/masterjet.sock" not in SCHEMA.read_text(encoding="utf-8")
+
+
+def _process_running(pid: int) -> bool:
+    try:
+        status = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+    return status.split()[2] != "Z"
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_ok"),
+    [
+        ("success", True),
+        ("timeout", False),
+        ("decode", False),
+        ("output", False),
+        ("error", False),
+    ],
+)
+def test_bounded_runner_terminates_group_on_every_exit_path(
+    tmp_path, mode: str, expected_ok: bool
+) -> None:
+    module = _module()
+    pid_file = tmp_path / f"{mode}.pid"
+    helper = """
+import json
+import os
+import signal
+import sys
+import time
+
+mode, pid_file = sys.argv[1:]
+child = os.fork()
+if child == 0:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    time.sleep(30)
+    os._exit(0)
+with open(pid_file, "w", encoding="ascii") as stream:
+    stream.write(str(child))
+if mode == "success":
+    print(json.dumps({"status": "ok"}), flush=True)
+elif mode == "decode":
+    print("not-json", flush=True)
+elif mode == "output":
+    print("x" * 1024, flush=True)
+elif mode == "error":
+    print(json.dumps({"code": "control.failed"}), flush=True)
+    raise SystemExit(2)
+else:
+    time.sleep(30)
+"""
+    result = module.BoundedJsonRunner(
+        timeout_seconds=0.3,
+        max_output_bytes=128,
+        dispatcher=lambda *args: args,
+    )._run((sys.executable, "-c", helper, mode, str(pid_file)), None)
+    child_pid = int(pid_file.read_text(encoding="ascii"))
+
+    try:
+        assert result.ok is expected_ok
+        deadline = time.monotonic() + 2
+        while _process_running(child_pid) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not _process_running(child_pid)
+    finally:
+        if _process_running(child_pid):
+            os.kill(child_pid, signal.SIGKILL)
 
 
 def test_masterjet_schema_has_no_bearer_or_totp_settings() -> None:

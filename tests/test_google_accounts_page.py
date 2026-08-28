@@ -91,7 +91,24 @@ def test_accounts_only_cli_payload_marks_project_details_unavailable() -> None:
     model.render(payload["accounts"])
 
     assert model.details_available is False
+    assert model.stale is True
     assert model.card("google-one").projects == ()
+    assert model.card("google-one").plan_enabled is False
+
+
+def test_google_model_starts_unknown_and_fail_closed() -> None:
+    model = _module().GoogleAccountsModel()
+
+    assert model.stale is True
+    assert model.details_available is False
+    assert model.cards == ()
+
+    model.render(_payload())
+    model.fail_closed()
+
+    assert model.stale is True
+    assert model.details_available is False
+    assert model.cards == ()
 
 
 def test_google_widget_never_persists_secret_or_provider_id_fields() -> None:
@@ -163,12 +180,14 @@ def test_apply_runs_only_after_visible_confirmation() -> None:
     declined = module.GoogleActions(
         Runner(), executable="/opt/codex-usage", confirm=lambda _preview: False
     )
+    declined.set_projection_ready(True)
     assert declined.apply(preview) is False
     assert calls == []
 
     accepted = module.GoogleActions(
         Runner(), executable="/opt/codex-usage", confirm=lambda _preview: True
     )
+    accepted.set_projection_ready(True)
     assert accepted.apply(preview) is True
     assert calls == [
         (
@@ -187,6 +206,37 @@ def test_apply_runs_only_after_visible_confirmation() -> None:
     ]
 
 
+def test_apply_stale_race_is_rejected_after_confirmation() -> None:
+    module = _module()
+    preview = module.GoogleAccountsModel().preview_plan(
+        {
+            "account_ref": "google-one",
+            "plan_id": "plan-one",
+            "expected_generation": 4,
+            "expires_at": "2026-08-28T18:00:00Z",
+            "step_count": 1,
+            "projects": [{"project_name": "Amber Meadow", "key_name": "Quiet River"}],
+        }
+    )
+    calls = []
+
+    class Runner:
+        def submit(self, argv, *, stdin_data=None, callback=None):
+            calls.append(tuple(argv))
+
+    actions = None
+
+    def confirm(_preview):
+        actions.set_projection_ready(False)
+        return True
+
+    actions = module.GoogleActions(Runner(), confirm=confirm)
+    actions.set_projection_ready(True)
+
+    assert actions.apply(preview) is False
+    assert calls == []
+
+
 def test_oauth_filechooser_passes_only_path_to_private_cli_opening(tmp_path) -> None:
     source = tmp_path / "oauth-client.json"
     source.write_text('{"client_secret":"marker-secret"}', encoding="utf-8")
@@ -197,6 +247,7 @@ def test_oauth_filechooser_passes_only_path_to_private_cli_opening(tmp_path) -> 
             calls.append((tuple(argv), stdin_data, callback))
 
     actions = _module().GoogleActions(Runner(), executable="/opt/codex-usage")
+    actions.set_projection_ready(True)
     actions.import_oauth_client("google-one", source)
 
     assert calls == [
@@ -227,6 +278,7 @@ def test_totp_is_transient_stdin_not_argv_env_model() -> None:
             calls.append((tuple(argv), bytes(stdin_data), callback))
 
     actions = _module().GoogleActions(Runner(), executable="/opt/codex-usage")
+    actions.set_projection_ready(True)
     actions.with_step_up(
         ["/opt/codex-usage", "google", "inventory-refresh", "google-one", "--json"],
         lambda: marker,
@@ -247,6 +299,7 @@ def test_google_actions_use_own_cli_and_never_masterjet_binary() -> None:
 
     actions = _module().GoogleActions(Runner(), executable="/opt/codex-usage")
     actions.refresh_accounts()
+    actions.set_projection_ready(True)
     actions.oauth_begin("google-one", browser="firefox")
     actions.inventory_refresh("google-one")
     actions.provision_plan("google-one")
@@ -264,7 +317,6 @@ def test_stale_actions_allow_read_only_refresh_but_block_every_mutation(tmp_path
 
     module = _module()
     actions = module.GoogleActions(Runner(), executable="/opt/codex-usage")
-    actions.set_stale(True)
     actions.refresh_accounts()
 
     with pytest.raises(RuntimeError, match="STALE"):

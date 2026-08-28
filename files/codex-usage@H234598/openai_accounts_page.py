@@ -64,6 +64,7 @@ _SECRET_FIELD_PARTS = (
     "provider_id",
 )
 _CODE_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-")
+REAUTH_TIMEOUT_SECONDS = 15 * 60
 
 
 def _text(value: object, field: str, *, maximum: int = 256) -> str:
@@ -249,6 +250,7 @@ class BoundedJsonRunner:
 
     def _run(self, argv: tuple[str, ...], stdin_data: bytearray | None) -> CommandResult:
         process = None
+        process_group = None
         output = bytearray()
         try:
             process = subprocess.Popen(
@@ -259,6 +261,7 @@ class BoundedJsonRunner:
                 env=_safe_environment(),
                 start_new_session=True,
             )
+            process_group = process.pid
             if process.stdin is not None:
                 process.stdin.write(stdin_data or b"")
                 process.stdin.close()
@@ -268,9 +271,11 @@ class BoundedJsonRunner:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError
-                ready, _, _ = select.select([stream], [], [], remaining)
+                ready, _, _ = select.select([stream], [], [], min(remaining, 0.05))
                 if not ready:
-                    raise TimeoutError
+                    if process.poll() is not None:
+                        break
+                    continue
                 chunk = os.read(stream.fileno(), min(8192, self._max_output + 1 - len(output)))
                 if not chunk:
                     break
@@ -286,8 +291,8 @@ class BoundedJsonRunner:
         except (OSError, UnicodeError, ValueError, TimeoutError, subprocess.TimeoutExpired):
             return CommandResult(False, None, "control.transport_unavailable")
         finally:
-            if process is not None and process.poll() is None:
-                _terminate_process_group(process)
+            if process is not None and process_group is not None:
+                _terminate_process_group(process, process_group)
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(timeout={self._timeout!r}, max_output={self._max_output!r})"
@@ -305,18 +310,39 @@ def _redacted_code(value: object) -> str:
         return "control.transport_unavailable"
 
 
-def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
+def _process_group_exists(process_group: int) -> bool:
     try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except (OSError, ProcessLookupError):
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _terminate_process_group(process: subprocess.Popen[bytes], process_group: int) -> None:
+    try:
+        os.killpg(process_group, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    deadline = time.monotonic() + 0.1
+    while _process_group_exists(process_group) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if _process_group_exists(process_group):
         try:
-            process.kill()
-        except (OSError, ProcessLookupError):
+            os.killpg(process_group, signal.SIGKILL)
+        except ProcessLookupError:
             pass
     try:
         process.wait(timeout=0.5)
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=0.5)
+    finally:
+        if process.stdin is not None and not process.stdin.closed:
+            process.stdin.close()
+        if process.stdout is not None:
+            process.stdout.close()
 
 
 def validate_masterjet_endpoint(transport: object, endpoint: object) -> str:
@@ -345,9 +371,21 @@ def validate_masterjet_endpoint(transport: object, endpoint: object) -> str:
 def save_masterjet_connection(
     setter: Callable[[str, object], object], transport: object, endpoint: object
 ) -> None:
+    del setter
     kind = _text(transport, "transport", maximum=16)
-    value = validate_masterjet_endpoint(kind, endpoint)
-    setter("masterjet-connection", {"transport": kind, "endpoint": value})
+    validate_masterjet_endpoint(kind, endpoint)
+    raise RuntimeError("nur kanonische Codex-Usage-Konfiguration ist schreibbar")
+
+
+def default_masterjet_socket(
+    *, environ: Mapping[str, str] | None = None, uid: int | None = None
+) -> str:
+    values = os.environ if environ is None else environ
+    current_uid = os.getuid() if uid is None else uid
+    runtime_dir = values.get("XDG_RUNTIME_DIR")
+    if not runtime_dir or not Path(runtime_dir).is_absolute():
+        runtime_dir = f"/run/user/{current_uid}"
+    return str(Path(runtime_dir) / "masterjet.sock")
 
 
 class OpenAIActions:
@@ -357,10 +395,19 @@ class OpenAIActions:
         self._runner = runner
         self._executable = executable or str(Path.home() / ".local/bin/codex-usage")
 
-    def reauthenticate(self, account_ref: str) -> None:
-        self._runner.submit([self._executable, "reactivate", _text(account_ref, "account")])
+    def reauthenticate(self, account_ref: str, *, callback=None) -> None:
+        self._runner.submit(
+            [
+                self._executable,
+                "reactivate",
+                _text(account_ref, "account"),
+                "--format",
+                "json",
+            ],
+            callback=callback,
+        )
 
-    def sync_auth(self, account_ref: str) -> None:
+    def sync_auth(self, account_ref: str, *, callback=None) -> None:
         self._runner.submit(
             [
                 self._executable,
@@ -369,64 +416,54 @@ class OpenAIActions:
                 _text(account_ref, "account"),
                 "--format",
                 "json",
-            ]
+            ],
+            callback=callback,
         )
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"
 
 
+class MasterjetConnectionActions:
+    __slots__ = ("_executable", "_runner")
+
+    def __init__(self, runner: BoundedJsonRunner, *, executable: str | None = None) -> None:
+        self._runner = runner
+        self._executable = executable or str(Path.home() / ".local/bin/codex-usage")
+
+    def test(self, *, callback=None) -> None:
+        self._runner.submit([self._executable, "masterjet", "status", "--json"], callback=callback)
+
+
 class MasterjetConnectionWidget(SettingsWidget):
     bind_dir = None
 
     def __init__(self, info, key, settings):
-        del info, key
+        del info, key, settings
         SettingsWidget.__init__(self)
         self.set_orientation(Gtk.Orientation.VERTICAL)
         self.set_spacing(6)
-        self._settings = settings
-        saved = settings.get_value("masterjet-connection") or {}
-        transport = saved.get("transport", "local") if isinstance(saved, dict) else "local"
-        endpoint = saved.get("endpoint", "") if isinstance(saved, dict) else ""
-        self.transport = Gtk.ComboBoxText()
-        self.transport.append("local", "Unix-Socket")
-        self.transport.append("https", "HTTPS")
-        self.transport.set_active_id(transport if transport in {"local", "https"} else "local")
-        self.endpoint = Gtk.Entry()
-        self.endpoint.set_text(endpoint if isinstance(endpoint, str) else "")
-        self.status = Gtk.Label(label="Nicht getestet")
+        self._actions = MasterjetConnectionActions(BoundedJsonRunner())
+        authority = Gtk.Label(
+            label=(
+                "Kanonische Verbindung: ~/.config/codex-usage/config.toml · "
+                f"Runtime-Default {default_masterjet_socket()}"
+            )
+        )
+        authority.set_xalign(0.0)
+        authority.set_line_wrap(True)
+        self.status = Gtk.Label(label="Kanonische Verbindung nicht getestet")
         self.status.set_xalign(0.0)
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        row.pack_start(self.transport, False, False, 0)
-        row.pack_start(self.endpoint, True, True, 0)
-        save = Gtk.Button(label="Speichern")
-        save.connect("clicked", self._save)
-        row.pack_start(save, False, False, 0)
-        test = Gtk.Button(label="Verbindung testen")
+        test = Gtk.Button(label="Kanonische Verbindung testen")
         test.connect("clicked", self._test)
-        row.pack_start(test, False, False, 0)
-        self.pack_start(row, False, False, 0)
+        self.pack_start(authority, False, False, 0)
+        self.pack_start(test, False, False, 0)
         self.pack_start(self.status, False, False, 0)
         self.show_all()
 
-    def _save(self, *_args) -> None:
-        try:
-            save_masterjet_connection(
-                self._settings.set_value,
-                self.transport.get_active_id(),
-                self.endpoint.get_text(),
-            )
-        except ValueError:
-            self.status.set_text("Ungültiger Endpoint")
-            return
-        self.status.set_text("Gespeichert")
-
     def _test(self, *_args) -> None:
         self.status.set_text("Prüfung läuft …")
-        executable = str(Path.home() / ".local/bin/codex-usage")
-        BoundedJsonRunner().submit(
-            [executable, "masterjet", "status", "--json"], callback=self._tested
-        )
+        self._actions.test(callback=self._tested)
 
     def _tested(self, result: CommandResult) -> bool:
         self.status.set_text("Verbunden" if result.ok else f"Fehler: {result.code}")
@@ -444,7 +481,10 @@ class OpenAIAccountsPage(SettingsWidget):
         self.set_orientation(Gtk.Orientation.VERTICAL)
         self.set_spacing(6)
         self.model = OpenAIAccountsModel()
-        self._actions = OpenAIActions(BoundedJsonRunner())
+        self._actions = OpenAIActions(BoundedJsonRunner(timeout_seconds=REAUTH_TIMEOUT_SECONDS))
+        self._status = Gtk.Label(label="OpenAI-Control nicht geladen")
+        self._status.set_xalign(0.0)
+        self.pack_start(self._status, False, False, 0)
         self._body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.pack_start(self._body, True, True, 0)
         self.show_all()
@@ -483,23 +523,32 @@ class OpenAIAccountsPage(SettingsWidget):
         self._body.show_all()
 
     def _reauth(self, _button, account_ref: str) -> None:
-        self._actions.reauthenticate(account_ref)
+        self._status.set_text("Re-Auth läuft …")
+        self._actions.reauthenticate(account_ref, callback=self._operation_finished)
 
     def _sync_auth(self, _button, account_ref: str) -> None:
-        self._actions.sync_auth(account_ref)
+        self._status.set_text("Auth-Sync läuft …")
+        self._actions.sync_auth(account_ref, callback=self._operation_finished)
+
+    def _operation_finished(self, result: CommandResult) -> bool:
+        self._status.set_text("Operation abgeschlossen" if result.ok else f"Fehler: {result.code}")
+        return False
 
     def row(self, account_ref: str) -> OpenAIAccountRow:
         return self.model.row(account_ref)
 
 
 __all__ = [
+    "REAUTH_TIMEOUT_SECONDS",
     "BoundedJsonRunner",
     "CommandResult",
+    "MasterjetConnectionActions",
     "MasterjetConnectionWidget",
     "OpenAIAccountRow",
     "OpenAIAccountsModel",
     "OpenAIAccountsPage",
     "OpenAIActions",
+    "default_masterjet_socket",
     "save_masterjet_connection",
     "validate_masterjet_endpoint",
 ]

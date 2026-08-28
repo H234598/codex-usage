@@ -139,7 +139,7 @@ class GoogleAccountsModel:
     def __init__(self) -> None:
         self._cards: tuple[GoogleAccountCard, ...] = ()
         self.details_available = False
-        self.stale = False
+        self.stale = True
 
     @property
     def cards(self) -> tuple[GoogleAccountCard, ...]:
@@ -155,7 +155,7 @@ class GoogleAccountsModel:
         if isinstance(payload, list):
             accounts = payload
             projects: Mapping[str, object] = {}
-            stale = False
+            stale = True
             details_available = False
         elif isinstance(payload, Mapping) and set(payload) == {"accounts", "projects", "stale"}:
             accounts = payload["accounts"]
@@ -168,7 +168,7 @@ class GoogleAccountsModel:
             raise ValueError("private or invalid Google response fields")
         cards: list[GoogleAccountCard] = []
         seen: set[str] = set()
-        mutations_enabled = not stale
+        mutations_enabled = details_available and not stale
         for value in accounts:
             account = _mapping(value, _ACCOUNT_FIELDS, "Google account")
             account_ref = _text(account["ref"], "ref")
@@ -203,6 +203,11 @@ class GoogleAccountsModel:
         self._cards = tuple(cards)
         self.details_available = details_available
         self.stale = stale
+
+    def fail_closed(self) -> None:
+        self._cards = ()
+        self.details_available = False
+        self.stale = True
 
     def _projects(self, account_ref: str, values: object) -> tuple[GoogleProjectRow, ...]:
         if not isinstance(values, list) or len(values) > 256:
@@ -270,7 +275,7 @@ class GoogleAccountsModel:
 
 
 class GoogleActions:
-    __slots__ = ("_confirm", "_executable", "_runner", "_stale")
+    __slots__ = ("_confirm", "_executable", "_projection_ready", "_runner")
 
     def __init__(
         self,
@@ -282,13 +287,17 @@ class GoogleActions:
         self._runner = runner
         self._executable = executable or str(Path.home() / ".local/bin/codex-usage")
         self._confirm = confirm or (lambda _preview: False)
-        self._stale = False
+        self._projection_ready = False
 
-    def set_stale(self, stale: bool) -> None:
-        self._stale = bool(stale)
+    def set_projection_ready(self, ready: bool) -> None:
+        self._projection_ready = bool(ready)
+
+    @property
+    def projection_ready(self) -> bool:
+        return self._projection_ready
 
     def _submit(self, arguments, *, stdin_data=None, callback=None, mutation=True) -> None:
-        if mutation and self._stale:
+        if mutation and not self._projection_ready:
             raise RuntimeError("STALE")
         self._runner.submit(
             [self._executable, *arguments], stdin_data=stdin_data, callback=callback
@@ -340,9 +349,11 @@ class GoogleActions:
         )
 
     def apply(self, preview: GooglePlanPreview, *, callback=None) -> bool:
-        if self._stale:
+        if not self._projection_ready:
             raise RuntimeError("STALE")
         if not isinstance(preview, GooglePlanPreview) or not self._confirm(preview):
+            return False
+        if not self._projection_ready:
             return False
         self._submit(
             [
@@ -373,7 +384,7 @@ class GoogleActions:
             secret.clear()
 
     def __repr__(self) -> str:
-        return f"{type(self).__name__}(stale={self._stale!r})"
+        return f"{type(self).__name__}(projection_ready={self._projection_ready!r})"
 
 
 class GoogleAccountsPage(SettingsWidget):
@@ -395,6 +406,7 @@ class GoogleAccountsPage(SettingsWidget):
         refresh.connect("clicked", self._refresh)
         controls.pack_start(refresh, False, False, 0)
         self._add_button = Gtk.Button(label="Account hinzufügen")
+        self._add_button.set_sensitive(False)
         self._add_button.connect("clicked", self._add_account)
         controls.pack_start(self._add_button, False, False, 0)
         self.pack_start(controls, False, False, 0)
@@ -411,20 +423,25 @@ class GoogleAccountsPage(SettingsWidget):
 
     def _accounts_loaded(self, result: CommandResult) -> bool:
         if not result.ok:
-            self._actions.set_stale(True)
+            self.model.fail_closed()
+            self._actions.set_projection_ready(False)
             self._status.set_text(f"STALE · {result.code} · Mutationen gesperrt")
             self._set_buttons_sensitive(False)
             return False
         try:
             self.render(result.payload)
         except ValueError:
-            self._status.set_text("Ungültige redigierte Control-Antwort")
+            self.model.fail_closed()
+            self._actions.set_projection_ready(False)
+            self._status.set_text("Ungültige redigierte Control-Antwort · Mutationen gesperrt")
+            self._set_buttons_sensitive(False)
         return False
 
     def render(self, payload: object) -> None:
         self.model.render(payload)
-        self._actions.set_stale(self.model.stale)
-        self._add_button.set_sensitive(not self.model.stale)
+        projection_ready = self.model.details_available and not self.model.stale
+        self._actions.set_projection_ready(projection_ready)
+        self._add_button.set_sensitive(projection_ready)
         if self.model.stale:
             status = "STALE · Mutationen gesperrt"
         elif not self.model.details_available:
@@ -514,7 +531,12 @@ class GoogleAccountsPage(SettingsWidget):
         except ValueError:
             self._status.set_text("Planvorschau unvollständig · Apply gesperrt")
             return False
-        self._actions.apply(preview, callback=self._operation_finished)
+        try:
+            applied = self._actions.apply(preview, callback=self._operation_finished)
+        except RuntimeError:
+            applied = False
+        if not applied and not self._actions.projection_ready:
+            self._status.set_text("STALE · Apply gesperrt")
         return False
 
     def _operation_finished(self, result: CommandResult) -> bool:
