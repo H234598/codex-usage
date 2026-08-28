@@ -39,27 +39,23 @@ _MAX_JSON_DEPTH: Final[int] = 16
 _MAX_INTEGER_LEXEME_BYTES: Final[int] = 20
 _MAX_FLOAT_LEXEME_BYTES: Final[int] = 64
 _MAX_TIME_VALUE: Final[float] = float(2**53 - 1)
-_MAX_DIRECTORY_ENTRIES: Final[int] = 4096
 _TEMP_NAME: Final[str] = f".{_CACHE_NAME}.tmp"
-_LEGACY_TEMP_PREFIX: Final[str] = f".{_CACHE_NAME}.tmp-"
-_ROLLBACK_PREFIX: Final[str] = f".{_CACHE_NAME}.rollback-"
-_PRIVATE_TEXT_MARKERS: Final[frozenset[str]] = frozenset(
+_ROLLBACK_NAME: Final[str] = f".{_CACHE_NAME}.rollback"
+_CREDENTIAL_WORDS: Final[frozenset[str]] = frozenset(
+    {"authorization", "bearer", "passwd", "password", "pwd", "token"}
+)
+_CREDENTIAL_PAIRS: Final[frozenset[tuple[str, str]]] = frozenset(
     {
-        "apikey",
-        "authorization",
-        "bearer",
-        "cookie",
-        "error",
-        "exception",
-        "failed",
-        "failure",
-        "header",
-        "passwd",
-        "password",
-        "session",
-        "secret",
-        "token",
-        "traceback",
+        ("access", "token"),
+        ("api", "key"),
+        ("client", "password"),
+        ("client", "secret"),
+        ("cookie", "header"),
+        ("refresh", "token"),
+        ("session", "id"),
+        ("session", "key"),
+        ("session", "token"),
+        ("set", "cookie"),
     }
 )
 _ERROR_CODES: Final[frozenset[str]] = frozenset(
@@ -141,13 +137,14 @@ class ControlSnapshotCache:
         ):
             raise ControlCacheError("control.cache_request_invalid")
         root_fd = -1
+        failed = False
         try:
             root_fd = self._open_cache_root(state_root, create=True)
-        except (OSError, ValueError):
+        except (OSError, ValueError, ControlCacheError):
+            failed = True
+        close_ok = root_fd < 0 or self._close_fd(root_fd)
+        if failed or not close_ok:
             raise ControlCacheError("control.cache_unavailable") from None
-        finally:
-            if root_fd >= 0:
-                os.close(root_fd)
         self._root = state_root
         self._path = state_root / _CACHE_NAME
         self._clock = clock
@@ -293,59 +290,77 @@ class ControlSnapshotCache:
 
     @classmethod
     def _prepare_publish_state(cls, root_fd: int) -> None:
-        rollback_names: list[str] = []
-        temp_names: list[str] = []
-        with os.scandir(root_fd) as entries:
-            for count, entry in enumerate(entries, start=1):
-                if count > _MAX_DIRECTORY_ENTRIES:
-                    raise ValueError("cache directory exceeds entry budget")
-                name = entry.name
-                if type(name) is not str:
-                    raise ValueError("cache artifact name is invalid")
-                if name == _TEMP_NAME or name.startswith(_LEGACY_TEMP_PREFIX):
-                    temp_names.append(name)
-                elif name.startswith(_ROLLBACK_PREFIX):
-                    rollback_names.append(name)
-        for name in temp_names:
-            cls._attest_named_file(root_fd, name)
-            os.unlink(name, dir_fd=root_fd)
-        if temp_names:
-            cls._fsync_directory(root_fd)
-        if len(rollback_names) > 1:
-            raise ControlCacheError("control.cache_invalid")
-        if rollback_names:
-            cls._recover_rollback(root_fd, rollback_names[0])
+        try:
+            os.stat(_TEMP_NAME, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            cls._cleanup_stale_temp(root_fd)
+        try:
+            os.stat(_ROLLBACK_NAME, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        cls._recover_rollback(root_fd)
 
     @classmethod
-    def _recover_rollback(cls, root_fd: int, name: str) -> None:
-        rollback_raw, rollback_identity = cls._read_named(root_fd, name)
+    def _recover_rollback(cls, root_fd: int) -> None:
+        rollback_item = os.stat(_ROLLBACK_NAME, dir_fd=root_fd, follow_symlinks=False)
+        links = rollback_item.st_nlink
+        if links not in {1, 2}:
+            raise ValueError("cache rollback metadata is invalid")
+        rollback_raw, rollback_identity = cls._read_named_links(
+            root_fd,
+            _ROLLBACK_NAME,
+            expected_links=links,
+        )
         cls._decode(rollback_raw)
+        if links == 2:
+            linked_target = cls._read_named_links(
+                root_fd,
+                _CACHE_NAME,
+                expected_links=2,
+            )
+            if linked_target != (rollback_raw, rollback_identity):
+                raise ValueError("cache rollback link identity is invalid")
+            cls._unlink_exact(root_fd, _ROLLBACK_NAME, rollback_identity)
+            recovered_raw, _recovered_identity = cls._read_named(root_fd, _CACHE_NAME)
+            if recovered_raw != rollback_raw:
+                raise ControlCacheError("control.cache_invalid")
+            return
         existing = cls._read_existing(root_fd)
         if existing is not None:
             existing_raw, _existing_identity = existing
             cls._decode(existing_raw)
             if existing_raw != rollback_raw:
                 raise ControlCacheError("control.cache_invalid")
-            if cls._read_named(root_fd, name) != (rollback_raw, rollback_identity):
+            if cls._read_named_links(
+                root_fd,
+                _ROLLBACK_NAME,
+                expected_links=links,
+            ) != (rollback_raw, rollback_identity):
                 raise ValueError("cache rollback changed before cleanup")
-            os.unlink(name, dir_fd=root_fd)
-            cls._fsync_directory(root_fd)
+            cls._unlink_exact(root_fd, _ROLLBACK_NAME, rollback_identity)
             return
-        if cls._read_named(root_fd, name) != (rollback_raw, rollback_identity):
+        if links != 1:
+            raise ValueError("cache rollback target is missing")
+        if cls._read_named(root_fd, _ROLLBACK_NAME) != (rollback_raw, rollback_identity):
             raise ValueError("cache rollback changed before recovery")
-        try:
-            os.stat(_CACHE_NAME, dir_fd=root_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            pass
-        else:
-            raise ValueError("cache target appeared during recovery")
-        os.replace(
-            name,
+        os.link(
+            _ROLLBACK_NAME,
             _CACHE_NAME,
             src_dir_fd=root_fd,
             dst_dir_fd=root_fd,
+            follow_symlinks=False,
         )
-        cls._fsync_directory(root_fd)
+        linked_rollback = cls._read_named_links(
+            root_fd,
+            _ROLLBACK_NAME,
+            expected_links=2,
+        )
+        linked_target = cls._read_named_links(root_fd, _CACHE_NAME, expected_links=2)
+        if linked_rollback[0] != rollback_raw or linked_target != linked_rollback:
+            raise ValueError("cache rollback publish identity changed")
+        cls._unlink_exact(root_fd, _ROLLBACK_NAME, linked_rollback[1])
         recovered_raw, _recovered_identity = cls._read_named(root_fd, _CACHE_NAME)
         if recovered_raw != rollback_raw:
             raise ControlCacheError("control.cache_invalid")
@@ -366,10 +381,16 @@ class ControlSnapshotCache:
             | getattr(os, "O_NONBLOCK", 0)
         )
         temp_fd = -1
+        created_identity: tuple[int, int] | None = None
         temp_identity: tuple[int, ...] | None = None
         published = False
+        operation_ok = False
         try:
             temp_fd = os.open(_TEMP_NAME, flags, 0o600, dir_fd=root_fd)
+            opened_temp = os.fstat(temp_fd)
+            created_identity = opened_temp.st_dev, opened_temp.st_ino
+            if cls._created_temp_identity(opened_temp) != created_identity:
+                raise ValueError("cache temporary identity changed")
             os.fchmod(temp_fd, 0o600)
             offset = 0
             while offset < len(encoded):
@@ -387,22 +408,49 @@ class ControlSnapshotCache:
             if named_raw != encoded or named_identity != temp_identity:
                 raise ValueError("cache temporary identity changed")
             cls._recheck_target(root_fd, existing)
-            os.replace(
-                _TEMP_NAME,
-                _CACHE_NAME,
-                src_dir_fd=root_fd,
-                dst_dir_fd=root_fd,
-            )
-            published = True
+            if existing is None:
+                os.link(
+                    _TEMP_NAME,
+                    _CACHE_NAME,
+                    src_dir_fd=root_fd,
+                    dst_dir_fd=root_fd,
+                    follow_symlinks=False,
+                )
+                linked_temp = cls._read_named_links(
+                    root_fd,
+                    _TEMP_NAME,
+                    expected_links=2,
+                )
+                linked_target = cls._read_named_links(
+                    root_fd,
+                    _CACHE_NAME,
+                    expected_links=2,
+                )
+                if linked_temp[0] != encoded or linked_target != linked_temp:
+                    raise ValueError("cache create-only publish identity changed")
+                cls._unlink_exact(root_fd, _TEMP_NAME, linked_temp[1])
+            else:
+                # Lock and private root define cooperative same-EUID concurrency boundary.
+                os.replace(
+                    _TEMP_NAME,
+                    _CACHE_NAME,
+                    src_dir_fd=root_fd,
+                    dst_dir_fd=root_fd,
+                )
             published_raw, published_identity = cls._read_named(root_fd, _CACHE_NAME)
             if published_raw != encoded or published_identity[:5] != temp_identity[:5]:
                 raise ValueError("published cache identity changed")
             cls._fsync_directory(root_fd)
-        finally:
-            if temp_fd >= 0:
-                os.close(temp_fd)
-            if not published and temp_identity is not None:
-                cls._remove_matching_temp(root_fd, temp_identity)
+            published = True
+            operation_ok = True
+        except BaseException:
+            operation_ok = False
+        close_ok = temp_fd < 0 or cls._close_fd(temp_fd)
+        cleanup_ok = True
+        if not published and created_identity is not None:
+            cleanup_ok = cls._remove_created_temp(root_fd, created_identity)
+        if not operation_ok or not close_ok or not cleanup_ok:
+            raise ValueError("cache publish failed")
 
     @classmethod
     def _recheck_target(
@@ -421,18 +469,46 @@ class ControlSnapshotCache:
             raise ValueError("cache target changed before publish")
 
     @classmethod
-    def _remove_matching_temp(cls, root_fd: int, identity: tuple[int, ...]) -> None:
+    def _cleanup_stale_temp(cls, root_fd: int) -> None:
+        item = os.stat(_TEMP_NAME, dir_fd=root_fd, follow_symlinks=False)
+        links = item.st_nlink
+        if links not in {1, 2}:
+            raise ValueError("cache temporary metadata is invalid")
+        identity = cls._private_file_identity(item, expected_links=links)
+        if links == 2:
+            target = cls._attest_named_file(root_fd, _CACHE_NAME, expected_links=2)
+            if target[:2] != identity[:2]:
+                raise ValueError("cache temporary link identity is invalid")
+        cls._unlink_exact(root_fd, _TEMP_NAME, identity)
+
+    @classmethod
+    def _remove_created_temp(
+        cls,
+        root_fd: int,
+        created_identity: tuple[int, int],
+    ) -> bool:
         try:
-            current = cls._attest_named_file(root_fd, _TEMP_NAME)
-        except (FileNotFoundError, OSError, ValueError):
-            return
-        if current != identity:
-            return
-        try:
+            item = os.stat(_TEMP_NAME, dir_fd=root_fd, follow_symlinks=False)
+            if (
+                not stat.S_ISREG(item.st_mode)
+                or item.st_uid != os.geteuid()
+                or (item.st_dev, item.st_ino) != created_identity
+                or item.st_nlink not in {1, 2}
+                or stat.S_IMODE(item.st_mode) & ~0o600
+                or item.st_size > MAX_CONTROL_SNAPSHOT_BYTES
+            ):
+                return False
+            if item.st_nlink == 2:
+                target = os.stat(_CACHE_NAME, dir_fd=root_fd, follow_symlinks=False)
+                if (target.st_dev, target.st_ino) != created_identity:
+                    return False
             os.unlink(_TEMP_NAME, dir_fd=root_fd)
             cls._fsync_directory(root_fd)
-        except OSError:
-            return
+            return True
+        except FileNotFoundError:
+            return True
+        except BaseException:
+            return False
 
     @classmethod
     def _read_existing(
@@ -462,20 +538,71 @@ class ControlSnapshotCache:
         return raw, identity
 
     @classmethod
-    def _attest_named_file(cls, root_fd: int, name: str) -> tuple[int, ...]:
+    def _read_named_links(
+        cls,
+        root_fd: int,
+        name: str,
+        *,
+        expected_links: int,
+    ) -> tuple[bytes, tuple[int, ...]]:
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+        )
+        fd = os.open(name, flags, dir_fd=root_fd)
+        try:
+            initial = cls._private_file_identity(
+                os.fstat(fd),
+                expected_links=expected_links,
+            )
+            payload = bytearray()
+            while len(payload) <= MAX_CONTROL_SNAPSHOT_BYTES:
+                chunk = os.read(
+                    fd,
+                    min(65_536, MAX_CONTROL_SNAPSHOT_BYTES + 1 - len(payload)),
+                )
+                if not chunk:
+                    break
+                payload.extend(chunk)
+            if len(payload) > MAX_CONTROL_SNAPSHOT_BYTES:
+                raise ValueError("cache file exceeds byte budget")
+            final = cls._private_file_identity(
+                os.fstat(fd),
+                expected_links=expected_links,
+            )
+            if final != initial:
+                raise ValueError("cache file changed during read")
+        finally:
+            os.close(fd)
+        named = cls._attest_named_file(root_fd, name, expected_links=expected_links)
+        if named != initial:
+            raise ValueError("cache file identity changed after read")
+        return bytes(payload), named
+
+    @classmethod
+    def _attest_named_file(
+        cls,
+        root_fd: int,
+        name: str,
+        *,
+        expected_links: int = 1,
+    ) -> tuple[int, ...]:
         item = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
-        return cls._private_file_identity(item)
+        return cls._private_file_identity(item, expected_links=expected_links)
 
     @staticmethod
     def _private_file_identity(
         item: os.stat_result,
         *,
         expected_size: int | None = None,
+        expected_links: int = 1,
     ) -> tuple[int, ...]:
         if (
             not stat.S_ISREG(item.st_mode)
             or item.st_uid != os.geteuid()
-            or item.st_nlink != 1
+            or item.st_nlink != expected_links
             or stat.S_IMODE(item.st_mode) != 0o600
             or item.st_size > MAX_CONTROL_SNAPSHOT_BYTES
             or (expected_size is not None and item.st_size != expected_size)
@@ -491,6 +618,43 @@ class ControlSnapshotCache:
             item.st_mtime_ns,
             item.st_ctime_ns,
         )
+
+    @staticmethod
+    def _created_temp_identity(item: os.stat_result) -> tuple[int, int]:
+        if (
+            not stat.S_ISREG(item.st_mode)
+            or item.st_uid != os.geteuid()
+            or item.st_nlink != 1
+            or stat.S_IMODE(item.st_mode) & ~0o600
+            or item.st_size != 0
+        ):
+            raise ValueError("cache temporary metadata is invalid")
+        return item.st_dev, item.st_ino
+
+    @classmethod
+    def _unlink_exact(
+        cls,
+        root_fd: int,
+        name: str,
+        identity: tuple[int, ...],
+    ) -> None:
+        current = cls._attest_named_file(
+            root_fd,
+            name,
+            expected_links=identity[4],
+        )
+        if current != identity:
+            raise ValueError("cache artifact changed before cleanup")
+        os.unlink(name, dir_fd=root_fd)
+        cls._fsync_directory(root_fd)
+
+    @staticmethod
+    def _close_fd(fd: int) -> bool:
+        try:
+            os.close(fd)
+        except BaseException:
+            return False
+        return True
 
     @staticmethod
     def _fsync_directory(root_fd: int) -> None:
@@ -663,19 +827,44 @@ class ControlSnapshotCache:
     def _public_text(value: str) -> str:
         if type(value) is not str:
             raise ValueError("cache display text is invalid")
-        normalized = unicodedata.normalize("NFKC", value).casefold()
+        normalized = unicodedata.normalize("NFKC", value)
         tokens: list[str] = []
         token: list[str] = []
         for character in normalized:
             if character.isalnum():
+                if token and character.isupper() and token[-1].islower():
+                    tokens.append("".join(token).casefold())
+                    token.clear()
                 token.append(character)
             elif token:
-                tokens.append("".join(token))
+                tokens.append("".join(token).casefold())
                 token.clear()
         if token:
-            tokens.append("".join(token))
-        if any(item in _PRIVATE_TEXT_MARKERS for item in tokens) or any(
-            left == "api" and right == "key" for left, right in pairwise(tokens)
+            tokens.append("".join(token).casefold())
+        pairs = set(pairwise(tokens))
+        has_assignment = "=" in normalized or ":" in normalized
+        structured_header = "header" in tokens and bool(
+            {"authorization", "cookie", "private", "secret", "token", "value"} & set(tokens)
+        )
+        structured_error = bool(
+            {"error", "exception", "failed", "failure", "traceback"} & set(tokens)
+        ) and bool(
+            {"detail", "diagnostic", "payload", "private", "raw", "server", "upstream"}
+            & set(tokens)
+        )
+        assignment_marker = has_assignment and bool(
+            {"cookie", "credential", "header", "secret", "session"} & set(tokens)
+        )
+        lowercase_secret_form = (
+            bool(tokens) and tokens[0] == "secret" and normalized.startswith("secret")
+        )
+        if (
+            any(item in _CREDENTIAL_WORDS for item in tokens)
+            or bool(_CREDENTIAL_PAIRS & pairs)
+            or assignment_marker
+            or structured_header
+            or structured_error
+            or lowercase_secret_form
         ):
             raise ValueError("cache display text is private")
         return value
