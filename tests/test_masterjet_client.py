@@ -3,9 +3,12 @@ from __future__ import annotations
 import array
 import json
 import os
+import shutil
 import socket
 import ssl
+import subprocess
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import ClassVar
@@ -119,6 +122,7 @@ def unix_server(
     response: bytes,
     *,
     append_newline: bool = True,
+    response_delay: float = 0,
 ):
     capture: dict[str, object] = {}
     ready = threading.Event()
@@ -130,8 +134,14 @@ def unix_server(
             server.bind(str(socket_path))
             socket_path.chmod(0o600)
             server.listen(1)
+            server.settimeout(1)
             ready.set()
-            connection, _ = server.accept()
+            try:
+                connection, _ = server.accept()
+            except TimeoutError:
+                capture["accepted"] = False
+                return
+            capture["accepted"] = True
             with connection:
                 chunks: list[bytes] = []
                 received_fds: list[int] = []
@@ -157,7 +167,16 @@ def unix_server(
                     finally:
                         os.close(fd)
                 capture["secrets"] = secrets
-                connection.sendall(response + (b"\n" if append_newline else b""))
+                try:
+                    framed_response = response + (b"\n" if append_newline else b"")
+                    if response_delay:
+                        for byte in framed_response:
+                            connection.sendall(bytes([byte]))
+                            time.sleep(response_delay)
+                    else:
+                        connection.sendall(framed_response)
+                except BrokenPipeError:
+                    pass
         finally:
             server.close()
             finished.set()
@@ -254,8 +273,18 @@ def test_local_secret_uses_scm_rights_and_never_enters_json(tmp_path):
         }
     ).encode()
 
+    peer: list[tuple[int, int, int, socket.socket]] = []
+
+    def attest(pid, uid, gid, connected_socket):
+        peer.append((pid, uid, gid, connected_socket))
+        return True
+
     with unix_server(socket_path, response) as capture:
-        result = local_client(socket_path).call(
+        result = local_client(
+            socket_path,
+            local_attestation_verifier=attest,
+            step_up_provider=lambda: "123456",
+        ).call(
             "secret.ingress.put",
             secret,
             expected_generation=4,
@@ -263,10 +292,17 @@ def test_local_secret_uses_scm_rights_and_never_enters_json(tmp_path):
         )
 
     assert result.state == "succeeded"
+    assert peer[0][:3] == (os.getpid(), os.geteuid(), os.getegid())
+    assert isinstance(peer[0][3], socket.socket)
     assert bytes(secret) not in capture["request"]
-    assert capture["secrets"] == [bytes(secret)]
+    assert capture["secrets"] == [bytes(secret), b"123456"]
     request = json.loads(capture["request"])
-    assert request["arguments"] == {"secret_fd": 0, "secret_size": len(secret)}
+    assert request["arguments"] == {
+        "secret_fd": 0,
+        "secret_size": len(secret),
+        "step_up_fd": 1,
+        "step_up_size": 6,
+    }
 
 
 def test_https_secret_uses_bounded_raw_body_not_json(monkeypatch):
@@ -528,3 +564,656 @@ def test_client_repr_never_echoes_unvalidated_endpoint_credentials():
 
     assert "user" not in repr(client)
     assert "private" not in repr(client)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"token": "sk-private"},
+        {"credential": "ya29.private"},
+        {"apiKey": "ordinary-looking-value"},
+        {"nested": [{"clientSecret": "ordinary-looking-value"}]},
+    ],
+)
+def test_secret_shaped_keys_and_values_never_reach_json(monkeypatch, arguments):
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "fixture.echo", arguments
+        )
+
+    assert FakeHTTPSConnection.instances == []
+
+
+@pytest.mark.parametrize(
+    ("operation", "idempotency_key"),
+    [
+        ("sk-private", None),
+        ("fixture.echo", "ya29.private"),
+    ],
+)
+def test_secret_shaped_control_tokens_are_rejected(monkeypatch, operation, idempotency_key):
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            operation,
+            {},
+            idempotency_key=idempotency_key,
+        )
+
+    assert FakeHTTPSConnection.instances == []
+
+
+def test_json_container_subclasses_are_rejected_before_transport(monkeypatch):
+    class Arguments(dict):
+        pass
+
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "fixture.echo", Arguments(safe="value")
+        )
+
+    assert FakeHTTPSConnection.instances == []
+
+
+def test_cyclic_request_is_mapped_before_transport(monkeypatch):
+    cycle: list[object] = []
+    cycle.append(cycle)
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "fixture.echo", {"cycle": cycle}
+        )
+
+    assert FakeHTTPSConnection.instances == []
+
+
+def test_excessively_deep_request_is_rejected_before_transport(monkeypatch):
+    nested: object = "leaf"
+    for _ in range(40):
+        nested = [nested]
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "fixture.echo", {"nested": nested}
+        )
+
+    assert FakeHTTPSConnection.instances == []
+
+
+def test_duplicate_json_response_keys_are_rejected(monkeypatch):
+    body = (
+        b'{"schema_version":1,'
+        b'"accounts":[{"access_token":"sk-private"}],'
+        b'"accounts":[]}'
+    )
+    FakeHTTPSConnection.response = FakeHTTPResponse(body)
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.response_invalid"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "google.accounts.list", {}
+        )
+
+
+def test_excessively_deep_json_response_is_mapped(monkeypatch):
+    FakeHTTPSConnection.response = FakeHTTPResponse(b"[" * 2_000 + b"0" + b"]" * 2_000)
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.response_invalid"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "google.accounts.list", {}
+        )
+
+
+def test_secret_payload_is_rejected_for_unknown_operation_before_connect(monkeypatch):
+    provider_called = False
+
+    def step_up():
+        nonlocal provider_called
+        provider_called = True
+        return "123456"
+
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
+        https_client(
+            bearer_provider=lambda: "remote-bearer",
+            step_up_provider=step_up,
+        ).call("fixture.echo", b"private")
+
+    assert provider_called is False
+    assert FakeHTTPSConnection.instances == []
+
+
+def test_local_secret_requires_confirmed_transport_attestation(tmp_path):
+    socket_path = tmp_path / "masterjet.sock"
+    response = json.dumps(google_accounts_payload()).encode()
+    step_up_called = False
+
+    def step_up():
+        nonlocal step_up_called
+        step_up_called = True
+        return "123456"
+
+    with unix_server(socket_path, response) as capture:
+        with pytest.raises(MasterjetClientError, match=r"control\.attestation_required"):
+            local_client(socket_path, step_up_provider=step_up).call(
+                "secret.ingress.put", b"private"
+            )
+
+    assert step_up_called is False
+    assert capture.get("secrets", []) == []
+
+
+def test_rejected_transport_attestation_prevents_fd_send(tmp_path):
+    socket_path = tmp_path / "masterjet.sock"
+    response = json.dumps(google_accounts_payload()).encode()
+    step_up_called = False
+
+    def step_up():
+        nonlocal step_up_called
+        step_up_called = True
+        return "123456"
+
+    with unix_server(socket_path, response) as capture:
+        with pytest.raises(MasterjetClientError, match=r"control\.attestation_required"):
+            local_client(
+                socket_path,
+                local_attestation_verifier=lambda _pid, _uid, _gid, _socket: False,
+                step_up_provider=step_up,
+            ).call("secret.ingress.put", b"private")
+
+    assert step_up_called is False
+    assert capture.get("secrets", []) == []
+
+
+@pytest.mark.parametrize("value", ["has space", "has\ttab", "tök", "\ud800"])
+def test_bearer_rejects_non_ascii_header_values_before_request(monkeypatch, value):
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.authentication_required"):
+        https_client(bearer_provider=lambda: value).call("google.accounts.list", {})
+
+    assert FakeHTTPSConnection.instances == []
+
+
+@pytest.mark.parametrize("value", ["12 3456", "12\t3456", "tötp", "\ud800"])
+def test_step_up_rejects_non_ascii_header_values_before_request(monkeypatch, value):
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.step_up_required"):
+        https_client(
+            bearer_provider=lambda: "remote-bearer",
+            step_up_provider=lambda: value,
+        ).call(
+            "google.provision.apply",
+            {"plan_id": "plan-1"},
+            expected_generation=4,
+            idempotency_key="idem-1",
+        )
+
+    assert FakeHTTPSConnection.instances == []
+
+
+def test_local_endpoint_rejects_embedded_nul():
+    client = MasterjetControlClient(
+        MasterjetConnection(
+            transport="local",
+            endpoint="/tmp/masterjet\0.sock",
+            timeout_seconds=2,
+        )
+    )
+
+    with pytest.raises(MasterjetClientError, match=r"control\.endpoint_invalid"):
+        client.call("google.accounts.list", {})
+
+
+def test_local_endpoint_rejects_symlink_ancestor(tmp_path):
+    socket_dir = tmp_path / "real"
+    socket_dir.mkdir(mode=0o700)
+    socket_path = socket_dir / "masterjet.sock"
+    alias = tmp_path / "alias"
+    alias.symlink_to(socket_dir, target_is_directory=True)
+
+    with unix_server(socket_path, json.dumps(google_accounts_payload()).encode()) as capture:
+        with pytest.raises(MasterjetClientError, match=r"control\.endpoint_invalid"):
+            local_client(alias / "masterjet.sock").call("google.accounts.list", {})
+
+    assert capture["accepted"] is False
+
+
+def test_local_slow_drip_cannot_extend_end_to_end_deadline(tmp_path):
+    socket_path = tmp_path / "masterjet.sock"
+    connection = MasterjetConnection(
+        transport="local",
+        endpoint=str(socket_path),
+        timeout_seconds=1,
+    )
+    started = time.monotonic()
+
+    with unix_server(
+        socket_path,
+        b'{"padding":"xxxxxxxx"}',
+        response_delay=0.1,
+    ):
+        with pytest.raises(MasterjetClientError, match=r"control\.timeout"):
+            MasterjetControlClient(connection).call("fixture.echo", {})
+
+    assert time.monotonic() - started < 1.6
+
+
+def test_swap_and_restore_socket_fails_attestation_before_fd_send(tmp_path, monkeypatch):
+    endpoint = tmp_path / "masterjet.sock"
+    parked = tmp_path / "masterjet.original.sock"
+    legitimate = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    legitimate.bind(str(endpoint))
+    endpoint.chmod(0o600)
+    legitimate.listen(1)
+    original_identity = endpoint.lstat()
+    real_identity = client_module._socket_identity
+    malicious: socket.socket | None = None
+    malicious_finished = threading.Event()
+    capture: dict[str, object] = {}
+    identity_calls = 0
+
+    def malicious_server(server):
+        try:
+            connection, _ = server.accept()
+            with connection:
+                capture["handshake"] = connection.recv(64)
+                connection.sendall(b"BAD\n")
+                _data, ancillary, _flags, _address = connection.recvmsg(
+                    65_536,
+                    socket.CMSG_SPACE(4 * array.array("i").itemsize),
+                )
+                capture["fd_messages"] = [
+                    item for item in ancillary if item[1] == socket.SCM_RIGHTS
+                ]
+        finally:
+            malicious_finished.set()
+
+    def swapped_identity(path):
+        nonlocal identity_calls, malicious
+        identity_calls += 1
+        if identity_calls == 1:
+            identity = real_identity(path)
+            endpoint.rename(parked)
+            malicious = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            malicious.bind(str(endpoint))
+            endpoint.chmod(0o600)
+            malicious.listen(1)
+            threading.Thread(
+                target=malicious_server,
+                args=(malicious,),
+                daemon=True,
+            ).start()
+            return identity
+        endpoint.unlink()
+        parked.rename(endpoint)
+        return real_identity(path)
+
+    def attest(_pid, _uid, _gid, connected_socket):
+        connected_socket.sendall(b"ATTEST\n")
+        return connected_socket.recv(4) == b"OK\n"
+
+    monkeypatch.setattr(client_module, "_socket_identity", swapped_identity)
+    try:
+        with pytest.raises(MasterjetClientError, match=r"control\.attestation_required"):
+            local_client(
+                endpoint,
+                local_attestation_verifier=attest,
+                step_up_provider=lambda: "123456",
+            ).call("secret.ingress.put", b"private")
+        assert malicious_finished.wait(2)
+        assert capture["handshake"] == b"ATTEST\n"
+        assert capture["fd_messages"] == []
+        restored = endpoint.lstat()
+        assert (restored.st_dev, restored.st_ino) == (
+            original_identity.st_dev,
+            original_identity.st_ino,
+        )
+    finally:
+        legitimate.close()
+        if malicious is not None:
+            malicious.close()
+
+
+@contextmanager
+def real_tls_server(tmp_path, *, wire_delay: float = 0):
+    openssl = shutil.which("openssl")
+    if openssl is None:
+        pytest.skip("openssl unavailable for stdlib TLS fixture")
+    certificate = tmp_path / "server.crt"
+    private_key = tmp_path / "server.key"
+    subprocess.run(
+        [
+            openssl,
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-days",
+            "1",
+            "-subj",
+            "/CN=localhost",
+            "-addext",
+            "subjectAltName=DNS:localhost",
+            "-keyout",
+            str(private_key),
+            "-out",
+            str(certificate),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_context.load_cert_chain(certificate, private_key)
+    capture: dict[str, object] = {}
+    server_context.sni_callback = lambda _socket, name, _context: capture.update(sni=name)
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    listener.settimeout(3)
+    port = listener.getsockname()[1]
+    finished = threading.Event()
+
+    def serve():
+        try:
+            connection, _ = listener.accept()
+            try:
+                with server_context.wrap_socket(connection, server_side=True) as tls_socket:
+                    request = bytearray()
+                    while b"\r\n\r\n" not in request:
+                        request.extend(tls_socket.recv(4096))
+                    head, body = request.split(b"\r\n\r\n", 1)
+                    lines = head.decode("ascii").split("\r\n")
+                    headers = dict(line.split(": ", 1) for line in lines[1:])
+                    length = int(headers["Content-Length"])
+                    while len(body) < length:
+                        body.extend(tls_socket.recv(length - len(body)))
+                    capture["request_line"] = lines[0]
+                    capture["headers"] = headers
+                    capture["body"] = bytes(body)
+                    response = json.dumps(google_accounts_payload()).encode()
+                    wire_response = (
+                        b"HTTP/1.1 200 OK\r\n"
+                        b"Content-Type: application/json\r\n"
+                        + f"Content-Length: {len(response)}\r\n".encode()
+                        + b"Connection: close\r\n\r\n"
+                        + response
+                    )
+                    if wire_delay:
+                        for byte in wire_response:
+                            tls_socket.sendall(bytes([byte]))
+                            time.sleep(wire_delay)
+                    else:
+                        tls_socket.sendall(wire_response)
+            except (OSError, ssl.SSLError) as exc:
+                capture["tls_error"] = type(exc).__name__
+        finally:
+            listener.close()
+            finished.set()
+
+    threading.Thread(target=serve, daemon=True).start()
+    try:
+        yield port, certificate, capture
+    finally:
+        assert finished.wait(4)
+
+
+def test_real_https_verifies_tls_sni_host_and_content_length(tmp_path, monkeypatch):
+    original_default_context = ssl.create_default_context
+    with real_tls_server(tmp_path) as (port, certificate, capture):
+        monkeypatch.setattr(
+            client_module.ssl,
+            "create_default_context",
+            lambda: original_default_context(cafile=certificate),
+        )
+        connection = MasterjetConnection(
+            transport="https",
+            endpoint=f"https://localhost:{port}/control",
+            timeout_seconds=2,
+        )
+
+        result = MasterjetControlClient(
+            connection,
+            bearer_provider=lambda: "remote-bearer",
+        ).call("google.accounts.list", {})
+
+    assert result[0].ref == "google-1"
+    assert capture["sni"] == "localhost"
+    assert capture["request_line"] == "POST /control HTTP/1.1"
+    headers = capture["headers"]
+    assert headers["Host"] == f"localhost:{port}"
+    assert int(headers["Content-Length"]) == len(capture["body"])
+
+
+def test_real_https_rejects_certificate_hostname_mismatch(tmp_path, monkeypatch):
+    original_default_context = ssl.create_default_context
+    with real_tls_server(tmp_path) as (port, certificate, _capture):
+        monkeypatch.setattr(
+            client_module.ssl,
+            "create_default_context",
+            lambda: original_default_context(cafile=certificate),
+        )
+        connection = MasterjetConnection(
+            transport="https",
+            endpoint=f"https://127.0.0.1:{port}/control",
+            timeout_seconds=2,
+        )
+
+        with pytest.raises(MasterjetClientError, match=r"control\.transport_unavailable"):
+            MasterjetControlClient(
+                connection,
+                bearer_provider=lambda: "remote-bearer",
+            ).call("google.accounts.list", {})
+
+
+def test_provider_exception_is_not_retained_as_client_error_context(monkeypatch):
+    def bearer():
+        raise ValueError("sk-private")
+
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.authentication_required") as caught:
+        https_client(bearer_provider=bearer).call("google.accounts.list", {})
+
+    assert caught.value.__context__ is None
+    assert "sk-private" not in repr(caught.value)
+
+
+def test_header_encoding_exception_is_not_retained_as_client_error_context(monkeypatch):
+    private = "private-☃"
+    FakeHTTPSConnection.error = UnicodeEncodeError(
+        "latin-1",
+        private,
+        len(private) - 1,
+        len(private),
+        "ordinal not in range",
+    )
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.transport_unavailable") as caught:
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "google.accounts.list", {}
+        )
+
+    assert caught.value.__context__ is None
+    assert private not in repr(caught.value)
+
+
+def test_malformed_secret_response_is_not_retained_as_error_context(monkeypatch):
+    private = "sk-private"
+    FakeHTTPSConnection.response = FakeHTTPResponse(
+        f'{{"access_token":"{private}"'.encode()
+    )
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.response_invalid") as caught:
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "google.accounts.list", {}
+        )
+
+    assert caught.value.__context__ is None
+    assert private not in repr(caught.value)
+
+
+def test_https_endpoint_rejects_embedded_nul_before_authentication():
+    bearer_called = False
+
+    def bearer():
+        nonlocal bearer_called
+        bearer_called = True
+        return "remote-bearer"
+
+    client = MasterjetControlClient(
+        MasterjetConnection(
+            transport="https",
+            endpoint="https://masterjet.example.test/control\0hidden",
+            timeout_seconds=2,
+        ),
+        bearer_provider=bearer,
+    )
+
+    with pytest.raises(MasterjetClientError, match=r"control\.endpoint_invalid"):
+        client.call("google.accounts.list", {})
+
+    assert bearer_called is False
+
+
+def test_local_endpoint_rejects_group_traversable_parent(tmp_path):
+    socket_path = tmp_path / "masterjet.sock"
+    try:
+        with unix_server(socket_path, json.dumps(google_accounts_payload()).encode()) as capture:
+            tmp_path.chmod(0o750)
+            with pytest.raises(MasterjetClientError, match=r"control\.endpoint_invalid"):
+                local_client(socket_path).call("google.accounts.list", {})
+        assert capture["accepted"] is False
+    finally:
+        tmp_path.chmod(0o700)
+
+
+def test_real_https_slow_headers_cannot_extend_end_to_end_deadline(tmp_path, monkeypatch):
+    original_default_context = ssl.create_default_context
+    started = time.monotonic()
+    with real_tls_server(tmp_path, wire_delay=0.05) as (port, certificate, _capture):
+        monkeypatch.setattr(
+            client_module.ssl,
+            "create_default_context",
+            lambda: original_default_context(cafile=certificate),
+        )
+        connection = MasterjetConnection(
+            transport="https",
+            endpoint=f"https://localhost:{port}/control",
+            timeout_seconds=1,
+        )
+
+        with pytest.raises(MasterjetClientError, match=r"control\.timeout"):
+            MasterjetControlClient(
+                connection,
+                bearer_provider=lambda: "remote-bearer",
+            ).call("google.accounts.list", {})
+
+    assert time.monotonic() - started < 1.6
+
+
+def test_https_problem_uses_canonical_local_template(monkeypatch):
+    problem = {
+        "schema_version": 1,
+        "code": "authority.scope_denied",
+        "severity": "error",
+        "title": "Authority scope denied",
+        "detail": "Authority scope is denied.",
+        "effect": "Operation is denied.",
+        "action": "Request required scope.",
+        "retryable": False,
+        "retry_after_seconds": None,
+        "correlation_id": "correlation-1",
+        "occurred_at": "2026-08-28T12:00:00Z",
+    }
+    FakeHTTPSConnection.response = FakeHTTPResponse(
+        json.dumps(problem).encode(),
+        status=403,
+    )
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"authority\.scope_denied") as caught:
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "google.accounts.list", {}
+        )
+
+    assert caught.value.problem is not None
+    assert caught.value.problem.detail == "Authority scope is denied."
+
+
+def test_second_secret_fd_failure_closes_first_fd(tmp_path, monkeypatch):
+    socket_path = tmp_path / "masterjet.sock"
+    response = json.dumps(google_accounts_payload()).encode()
+    real_anonymous_secret = client_module._anonymous_secret
+    opened = []
+
+    def fail_second(secret):
+        if opened:
+            raise OSError("fixture failure")
+        item = real_anonymous_secret(secret)
+        opened.append(item)
+        return item
+
+    monkeypatch.setattr(client_module, "_anonymous_secret", fail_second)
+
+    with unix_server(socket_path, response):
+        with pytest.raises(MasterjetClientError, match=r"control\.transport_unavailable"):
+            local_client(
+                socket_path,
+                local_attestation_verifier=lambda _pid, _uid, _gid, _socket: True,
+                step_up_provider=lambda: "123456",
+            ).call("secret.ingress.put", b"private")
+
+    assert len(opened) == 1
+    assert opened[0].closed is True
+
+
+def test_attestation_exception_is_not_retained_as_client_error_context(tmp_path):
+    socket_path = tmp_path / "masterjet.sock"
+
+    def attest(_pid, _uid, _gid, _socket):
+        raise ValueError("sk-private")
+
+    with unix_server(socket_path, json.dumps(google_accounts_payload()).encode()):
+        with pytest.raises(
+            MasterjetClientError,
+            match=r"control\.attestation_required",
+        ) as caught:
+            local_client(
+                socket_path,
+                local_attestation_verifier=attest,
+                step_up_provider=lambda: "123456",
+            ).call("secret.ingress.put", b"private")
+
+    assert caught.value.__context__ is None
+    assert "sk-private" not in repr(caught.value)
+
+
+def test_invalid_https_port_is_not_retained_as_client_error_context():
+    client = MasterjetControlClient(
+        MasterjetConnection(
+            transport="https",
+            endpoint="https://masterjet.example.test:sk-private/control",
+            timeout_seconds=2,
+        ),
+        bearer_provider=lambda: "remote-bearer",
+    )
+
+    with pytest.raises(MasterjetClientError, match=r"control\.endpoint_invalid") as caught:
+        client.call("google.accounts.list", {})
+
+    assert caught.value.__context__ is None
+    assert "sk-private" not in repr(caught.value)
