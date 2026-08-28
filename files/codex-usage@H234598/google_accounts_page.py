@@ -312,17 +312,25 @@ class GoogleActions:
     def projection_ready(self) -> bool:
         return self._projection_ready
 
-    def _submit(self, arguments, *, stdin_data=None, callback=None, mutation=True) -> None:
+    def _submit(
+        self, arguments, *, stdin_data=None, callback=None, mutation=True, challenge_callback=None
+    ) -> None:
         if mutation and not self._projection_ready:
             raise RuntimeError("STALE")
+        options = {"stdin_data": stdin_data, "callback": callback}
+        if challenge_callback is not None:
+            options["challenge_callback"] = challenge_callback
         self._runner.submit(
-            [self._executable, *arguments], stdin_data=stdin_data, callback=callback
+            [self._executable, *(["--step-up-stdin"] if challenge_callback else []), *arguments],
+            **options,
         )
 
     def refresh_accounts(self, *, callback=None) -> None:
         self._submit(["google", "accounts", "--json"], callback=callback, mutation=False)
 
-    def oauth_begin(self, account_ref: str, *, browser: str, callback=None) -> None:
+    def oauth_begin(
+        self, account_ref: str, *, browser: str, callback=None, challenge_callback=None
+    ) -> None:
         if browser not in {"firefox", "vivaldi", "chromium"}:
             raise ValueError("unsupported browser")
         self._submit(
@@ -335,9 +343,12 @@ class GoogleActions:
                 "--json",
             ],
             callback=callback,
+            challenge_callback=challenge_callback,
         )
 
-    def import_oauth_client(self, account_ref: str, source: Path, *, callback=None) -> None:
+    def import_oauth_client(
+        self, account_ref: str, source: Path, *, callback=None, challenge_callback=None
+    ) -> None:
         if not isinstance(source, Path) or not source.is_absolute():
             raise ValueError("OAuth client source must be an absolute local path")
         self._submit(
@@ -350,21 +361,26 @@ class GoogleActions:
                 "--json",
             ],
             callback=callback,
+            challenge_callback=challenge_callback,
         )
 
-    def inventory_refresh(self, account_ref: str, *, callback=None) -> None:
+    def inventory_refresh(
+        self, account_ref: str, *, callback=None, challenge_callback=None
+    ) -> None:
         self._submit(
             ["google", "inventory-refresh", _text(account_ref, "account_ref"), "--json"],
             callback=callback,
+            challenge_callback=challenge_callback,
         )
 
-    def provision_plan(self, account_ref: str, *, callback=None) -> None:
+    def provision_plan(self, account_ref: str, *, callback=None, challenge_callback=None) -> None:
         self._submit(
             ["google", "provision-plan", _text(account_ref, "account_ref"), "--json"],
             callback=callback,
+            challenge_callback=challenge_callback,
         )
 
-    def apply(self, preview: GooglePlanPreview, *, callback=None) -> bool:
+    def apply(self, preview: GooglePlanPreview, *, callback=None, challenge_callback=None) -> bool:
         if not self._projection_ready:
             raise RuntimeError("STALE")
         if not isinstance(preview, GooglePlanPreview) or not self._confirm(preview):
@@ -383,25 +399,9 @@ class GoogleActions:
                 "--json",
             ],
             callback=callback,
+            challenge_callback=challenge_callback,
         )
         return True
-
-    def with_step_up(self, argv: list[str], provider: Callable[[], object], *, callback=None):
-        if not argv or argv[0] != self._executable:
-            raise ValueError("step-up command must use the configured Codex Usage CLI")
-        if not self._projection_ready:
-            raise RuntimeError("STALE")
-        value = provider()
-        if not isinstance(value, str) or not value.isascii() or not value.isdigit():
-            raise ValueError("invalid step-up code")
-        if len(value) not in {6, 7, 8}:
-            raise ValueError("invalid step-up code")
-        secret = bytearray(value.encode("ascii") + b"\n")
-        try:
-            self._submit(["--step-up-stdin", *argv[1:]], stdin_data=secret, callback=callback)
-        finally:
-            secret[:] = b"\x00" * len(secret)
-            secret.clear()
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(projection_ready={self._projection_ready!r})"
@@ -526,25 +526,18 @@ class GoogleAccountsPage(SettingsWidget):
                             button.set_sensitive(sensitive)
 
     def _inventory(self, _button, account_ref: str) -> None:
-        argv = [self._actions._executable, "google", "inventory-refresh", account_ref, "--json"]
         self._actions.inventory_refresh(
-            account_ref, callback=lambda result: self._operation_finished(result, argv=argv)
+            account_ref,
+            callback=self._operation_finished,
+            challenge_callback=self._prompt_running_step_up,
         )
 
     def _oauth_begin(self, _button, account_ref: str) -> None:
-        argv = [
-            self._actions._executable,
-            "google",
-            "oauth-begin",
-            account_ref,
-            "--browser",
-            "firefox",
-            "--json",
-        ]
         self._actions.oauth_begin(
             account_ref,
             browser="firefox",
-            callback=lambda result: self._operation_finished(result, argv=argv),
+            callback=self._operation_finished,
+            challenge_callback=self._prompt_running_step_up,
         )
 
     def _choose_oauth_client(self, _button, account_ref: str) -> None:
@@ -556,14 +549,15 @@ class GoogleAccountsPage(SettingsWidget):
             self.choose_oauth_client(account_ref)
 
     def _plan(self, _button, account_ref: str) -> None:
-        argv = [self._actions._executable, "google", "provision-plan", account_ref, "--json"]
         self._actions.provision_plan(
-            account_ref, callback=lambda result: self._plan_loaded(result, argv=argv)
+            account_ref,
+            callback=self._plan_loaded,
+            challenge_callback=self._prompt_running_step_up,
         )
 
-    def _plan_loaded(self, result: CommandResult, *, argv=None) -> bool:
+    def _plan_loaded(self, result: CommandResult) -> bool:
         if not result.ok:
-            self._operation_finished(result, argv=argv)
+            self._operation_finished(result)
             return False
         try:
             preview = self.model.preview_plan(result.payload)
@@ -571,22 +565,10 @@ class GoogleAccountsPage(SettingsWidget):
             self._status.set_text("Planvorschau unvollständig · Apply gesperrt")
             return False
         try:
-            apply_argv = [
-                self._actions._executable,
-                "google",
-                "provision-apply",
-                preview.account_ref,
-                preview.plan_id,
-                "--plan-digest",
-                preview.plan_digest,
-                "--confirm",
-                "--json",
-            ]
             applied = self._actions.apply(
                 preview,
-                callback=lambda applied_result: self._operation_finished(
-                    applied_result, argv=apply_argv
-                ),
+                callback=self._operation_finished,
+                challenge_callback=self._prompt_running_step_up,
             )
         except RuntimeError:
             applied = False
@@ -594,30 +576,14 @@ class GoogleAccountsPage(SettingsWidget):
             self._status.set_text("STALE · Apply gesperrt")
         return False
 
-    def _operation_finished(self, result: CommandResult, *, argv=None, retried=False) -> bool:
-        if (
-            not retried
-            and argv is not None
-            and not result.ok
-            and result.code == "control.step_up_required"
-            and result.step_up_retry_safe is True
-            and self._actions.projection_ready
-        ):
-            code = self.prompt_step_up()
-            if code is not None:
-                try:
-                    self._actions.with_step_up(
-                        argv,
-                        lambda: code,
-                        callback=lambda retry: self._operation_finished(
-                            retry, argv=argv, retried=True
-                        ),
-                    )
-                    return False
-                except (RuntimeError, ValueError):
-                    pass
+    def _operation_finished(self, result: CommandResult) -> bool:
         self._status.set_text("Operation abgeschlossen" if result.ok else f"Fehler: {result.code}")
         return False
+
+    def _prompt_running_step_up(self) -> str | None:
+        if not self._actions.projection_ready:
+            return None
+        return self.prompt_step_up()
 
     def _confirm_plan(self, preview: GooglePlanPreview) -> bool:
         names = "\n".join(
@@ -657,19 +623,11 @@ class GoogleAccountsPage(SettingsWidget):
                 return
             filename = dialog.get_filename()
             if isinstance(filename, str):
-                argv = [
-                    self._actions._executable,
-                    "google",
-                    "add",
-                    account_ref,
-                    "--oauth-client-json",
-                    filename,
-                    "--json",
-                ]
                 self._actions.import_oauth_client(
                     account_ref,
                     Path(filename),
-                    callback=lambda result: self._operation_finished(result, argv=argv),
+                    callback=self._operation_finished,
+                    challenge_callback=self._prompt_running_step_up,
                 )
         finally:
             dialog.destroy()

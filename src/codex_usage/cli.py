@@ -1519,7 +1519,10 @@ def _new_masterjet_client(
     if connection.transport == "local":
         return MasterjetControlClient(connection)
     step_up = (
-        stdin_step_up_provider(getattr(sys.stdin, "buffer", sys.stdin))
+        stdin_step_up_provider(
+            getattr(sys.stdin, "buffer", sys.stdin),
+            control_stream=getattr(sys.stderr, "buffer", sys.stderr),
+        )
         if step_up_stdin
         else tty_step_up_provider()
         if sys.stdin.isatty() and sys.stderr.isatty()
@@ -1833,7 +1836,7 @@ def _cmd_google_oauth_begin(args: argparse.Namespace) -> int:
             args.account, browser=args.browser
         )
     except Exception as exc:
-        return _print_google_error(exc, json_output=args.json, step_up_retry_safe=True)
+        return _print_google_error(exc, json_output=args.json)
     _print_google_payload(
         _google_oauth_json(transaction),
         json_output=args.json,
@@ -1845,7 +1848,7 @@ def _cmd_google_inventory_refresh(args: argparse.Namespace) -> int:
     try:
         operation = _new_google_controller_for_args(args).inventory_refresh(args.account)
     except Exception as exc:
-        return _print_google_error(exc, json_output=args.json, step_up_retry_safe=True)
+        return _print_google_error(exc, json_output=args.json)
     return _print_google_operation(operation, json_output=args.json)
 
 
@@ -1853,7 +1856,7 @@ def _cmd_google_provision_plan(args: argparse.Namespace) -> int:
     try:
         plan = _new_google_controller_for_args(args).provision_plan(args.account)
     except Exception as exc:
-        return _print_google_error(exc, json_output=args.json, step_up_retry_safe=True)
+        return _print_google_error(exc, json_output=args.json)
     payload = {
         "account_ref": plan.account_ref,
         "plan_id": plan.plan_id,
@@ -1881,7 +1884,7 @@ def _cmd_google_provision_apply(args: argparse.Namespace) -> int:
             args.plan_id, account_ref=args.account, plan_digest=plan_digest
         )
     except Exception as exc:
-        return _print_google_error(exc, json_output=args.json, step_up_retry_safe=True)
+        return _print_google_error(exc, json_output=args.json)
     return _print_google_operation(operation, json_output=args.json)
 
 
@@ -2013,17 +2016,12 @@ def _control_timestamp(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _print_google_error(
-    exc: Exception, *, json_output: bool, step_up_retry_safe: bool = False
-) -> int:
+def _print_google_error(exc: Exception, *, json_output: bool) -> int:
     code = exc.code if isinstance(exc, GoogleAccountsError) else "control.transport_unavailable"
     if json_output:
-        payload: dict[str, object] = {"ok": False, "code": code}
-        if code == "control.step_up_required":
-            payload["step_up_retry_safe"] = step_up_retry_safe
         print(
             json.dumps(
-                payload,
+                {"ok": False, "code": code},
                 ensure_ascii=False,
                 allow_nan=False,
             )
@@ -2052,12 +2050,9 @@ def _cmd_account_auth_sync(args: argparse.Namespace) -> int:
         result = sync_account_auth(account, client)
     except AuthSyncError as exc:
         if args.format == "json":
-            payload: dict[str, object] = {"ok": False, "code": exc.code}
-            if exc.code == "control.step_up_required":
-                payload["step_up_retry_safe"] = False
             print(
                 json.dumps(
-                    payload,
+                    {"ok": False, "code": exc.code},
                     ensure_ascii=False,
                 )
             )

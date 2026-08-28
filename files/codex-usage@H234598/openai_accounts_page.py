@@ -21,6 +21,8 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import GLib, Gtk  # noqa: E402
 from JsonSettingsWidgets import SettingsWidget  # noqa: E402
 
+from codex_usage.masterjet_credentials import STEP_UP_SENTINEL  # noqa: E402
+
 _OPENAI_REMOTE_FIELDS = frozenset(
     {
         "ref",
@@ -216,13 +218,12 @@ class CommandResult:
     ok: bool
     payload: object
     code: str
-    step_up_retry_safe: bool = False
 
 
 class BoundedJsonRunner:
     """Run only fixed local CLI commands with bounded output in a worker thread."""
 
-    __slots__ = ("_dispatcher", "_max_output", "_timeout")
+    __slots__ = ("_dispatcher", "_max_output", "_prompt_dispatcher", "_timeout")
 
     def __init__(
         self,
@@ -230,10 +231,12 @@ class BoundedJsonRunner:
         timeout_seconds: float = 10.0,
         max_output_bytes: int = 512 * 1024,
         dispatcher: Callable[..., object] = GLib.idle_add,
+        prompt_dispatcher: Callable[..., object] = GLib.idle_add,
     ) -> None:
         self._timeout = timeout_seconds
         self._max_output = max_output_bytes
         self._dispatcher = dispatcher
+        self._prompt_dispatcher = prompt_dispatcher
 
     def submit(
         self,
@@ -241,6 +244,7 @@ class BoundedJsonRunner:
         *,
         stdin_data: bytes | bytearray | None = None,
         callback: Callable[[CommandResult], object] | None = None,
+        challenge_callback: Callable[[], str | None] | None = None,
     ) -> None:
         command = tuple(argv)
         if not command or any(
@@ -251,7 +255,7 @@ class BoundedJsonRunner:
 
         def worker() -> None:
             try:
-                result = self._run(command, secret)
+                result = self._run(command, secret, challenge_callback)
             finally:
                 if secret is not None:
                     secret[:] = b"\x00" * len(secret)
@@ -268,56 +272,107 @@ class BoundedJsonRunner:
                 secret.clear()
             raise
 
-    def _run(self, argv: tuple[str, ...], stdin_data: bytearray | None) -> CommandResult:
+    def _run(
+        self,
+        argv: tuple[str, ...],
+        stdin_data: bytearray | None,
+        challenge_callback: Callable[[], str | None] | None = None,
+    ) -> CommandResult:
         process = None
         process_group = None
         output = bytearray()
+        control = bytearray()
+        prompted = False
         try:
             process = subprocess.Popen(
                 argv,
-                stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
+                stdin=(
+                    subprocess.PIPE
+                    if stdin_data is not None or challenge_callback
+                    else subprocess.DEVNULL
+                ),
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE if challenge_callback else subprocess.DEVNULL,
                 env=_safe_environment(),
                 start_new_session=True,
             )
             process_group = process.pid
             if process.stdin is not None:
-                process.stdin.write(stdin_data or b"")
-                process.stdin.close()
+                if stdin_data is not None:
+                    process.stdin.write(stdin_data)
+                    process.stdin.close()
             deadline = time.monotonic() + self._timeout
-            stream = process.stdout
-            while stream is not None:
+            streams = [stream for stream in (process.stdout, process.stderr) if stream is not None]
+            while streams:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError
-                ready, _, _ = select.select([stream], [], [], min(remaining, 0.05))
+                ready, _, _ = select.select(streams, [], [], min(remaining, 0.05))
                 if not ready:
                     if process.poll() is not None:
                         break
                     continue
-                chunk = os.read(stream.fileno(), min(8192, self._max_output + 1 - len(output)))
-                if not chunk:
-                    break
-                output.extend(chunk)
-                if len(output) > self._max_output:
-                    raise ValueError("output too large")
+                for stream in ready:
+                    chunk = os.read(stream.fileno(), min(8192, self._max_output + 1 - len(output)))
+                    if not chunk:
+                        streams.remove(stream)
+                        continue
+                    if stream is process.stdout:
+                        output.extend(chunk)
+                        if len(output) > self._max_output:
+                            raise ValueError("output too large")
+                        continue
+                    control.extend(chunk)
+                    if len(control) > len(STEP_UP_SENTINEL) * 2:
+                        raise ValueError("control output too large")
+                    if STEP_UP_SENTINEL not in control:
+                        continue
+                    if prompted or challenge_callback is None or process.stdin is None:
+                        raise ValueError("invalid step-up control")
+                    prompted = True
+                    value = self._request_step_up(challenge_callback, deadline)
+                    secret = bytearray(value.encode("ascii") + b"\n")
+                    try:
+                        process.stdin.write(secret)
+                        process.stdin.flush()
+                        process.stdin.close()
+                    finally:
+                        secret[:] = b"\x00" * len(secret)
+                        secret.clear()
             returncode = process.wait(timeout=max(0.1, deadline - time.monotonic()))
             payload = json.loads(output.decode("utf-8"))
             if returncode == 0:
                 return CommandResult(True, payload, "")
             code = payload.get("code") if isinstance(payload, dict) else None
-            retry_safe = (
-                payload.get("step_up_retry_safe") is True
-                if isinstance(payload, dict)
-                else False
-            )
-            return CommandResult(False, None, _redacted_code(code), retry_safe)
+            return CommandResult(False, None, _redacted_code(code))
         except (OSError, UnicodeError, ValueError, TimeoutError, subprocess.TimeoutExpired):
             return CommandResult(False, None, "control.transport_unavailable")
         finally:
             if process is not None and process_group is not None:
                 _terminate_process_group(process, process_group)
+            control[:] = b"\x00" * len(control)
+            control.clear()
+
+    def _request_step_up(self, callback: Callable[[], str | None], deadline: float) -> str:
+        result: list[str | None] = [None]
+        completed = threading.Event()
+
+        def prompt() -> bool:
+            try:
+                result[0] = callback()
+            finally:
+                completed.set()
+            return False
+
+        self._prompt_dispatcher(prompt)
+        if not completed.wait(max(0.0, deadline - time.monotonic())):
+            raise TimeoutError
+        value = result[0]
+        if not isinstance(value, str) or not value.isascii() or not value.isdigit():
+            raise ValueError("invalid step-up code")
+        if len(value) not in {6, 7, 8}:
+            raise ValueError("invalid step-up code")
+        return value
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(timeout={self._timeout!r}, max_output={self._max_output!r})"
@@ -479,40 +534,24 @@ class OpenAIActions:
             callback=callback,
         )
 
-    def sync_auth(self, account_ref: str, *, callback=None) -> None:
+    def sync_auth(self, account_ref: str, *, callback=None, challenge_callback=None) -> None:
         account = _text(account_ref, "account")
         self._require_projection()
+        options = {"callback": callback}
+        if challenge_callback is not None:
+            options["challenge_callback"] = challenge_callback
         self._runner.submit(
             [
                 self._executable,
+                "--step-up-stdin",
                 "account",
                 "auth-sync",
                 account,
                 "--format",
                 "json",
             ],
-            callback=callback,
+            **options,
         )
-
-    def with_step_up(self, argv: list[str], provider: Callable[[], object], *, callback=None):
-        if not argv or argv[0] != self._executable:
-            raise ValueError("step-up command must use the configured Codex Usage CLI")
-        self._require_projection()
-        value = provider()
-        if not isinstance(value, str) or not value.isascii() or not value.isdigit():
-            raise ValueError("invalid step-up code")
-        if len(value) not in {6, 7, 8}:
-            raise ValueError("invalid step-up code")
-        secret = bytearray(value.encode("ascii") + b"\n")
-        try:
-            self._runner.submit(
-                [self._executable, "--step-up-stdin", *argv[1:]],
-                stdin_data=secret,
-                callback=callback,
-            )
-        finally:
-            secret[:] = b"\x00" * len(secret)
-            secret.clear()
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"
@@ -773,45 +812,22 @@ class OpenAIAccountsPage(SettingsWidget):
     def _sync_auth(self, _button, account_ref: str) -> None:
         self._status.set_text("Auth-Sync läuft …")
         try:
-            argv = [
-                self._actions._executable,
-                "account",
-                "auth-sync",
-                account_ref,
-                "--format",
-                "json",
-            ]
             self._actions.sync_auth(
                 account_ref,
-                callback=lambda result: self._operation_finished(result, argv=argv),
+                callback=self._operation_finished,
+                challenge_callback=self._prompt_running_step_up,
             )
         except RuntimeError:
             self._status.set_text("STALE · Mutationen gesperrt")
 
-    def _operation_finished(self, result: CommandResult, *, argv=None, retried=False) -> bool:
-        if (
-            not retried
-            and argv is not None
-            and not result.ok
-            and result.code == "control.step_up_required"
-            and result.step_up_retry_safe is True
-            and self._actions.projection_ready
-        ):
-            code = self.prompt_step_up()
-            if code is not None:
-                try:
-                    self._actions.with_step_up(
-                        argv,
-                        lambda: code,
-                        callback=lambda retry: self._operation_finished(
-                            retry, argv=argv, retried=True
-                        ),
-                    )
-                    return False
-                except (RuntimeError, ValueError):
-                    pass
+    def _operation_finished(self, result: CommandResult) -> bool:
         self._status.set_text("Operation abgeschlossen" if result.ok else f"Fehler: {result.code}")
         return False
+
+    def _prompt_running_step_up(self) -> str | None:
+        if not self._actions.projection_ready:
+            return None
+        return self.prompt_step_up()
 
     def prompt_step_up(self) -> str | None:
         dialog = Gtk.Dialog(

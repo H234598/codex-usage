@@ -746,54 +746,11 @@ def test_oauth_filechooser_passes_only_path_to_private_cli_opening(tmp_path) -> 
     assert "marker-secret" not in repr(calls)
 
 
-def test_totp_is_transient_stdin_not_argv_env_model() -> None:
-    marker = "739104"
-    calls = []
-
-    class Runner:
-        def submit(self, argv, *, stdin_data=None, callback=None):
-            calls.append((tuple(argv), bytes(stdin_data), callback))
-
-    actions = _module().GoogleActions(Runner(), executable="/opt/codex-usage")
-    actions.set_projection_ready(True)
-    actions.with_step_up(
-        ["/opt/codex-usage", "google", "inventory-refresh", "google-one", "--json"],
-        lambda: marker,
-    )
-
-    argv, stdin_data, _callback = calls[0]
-    assert "--step-up-stdin" in argv
-    assert marker not in " ".join(argv)
-    assert stdin_data == b"739104\n"
-    assert marker not in repr(actions)
-
-
-def test_google_step_up_checks_stale_before_prompting_or_submitting() -> None:
-    module = _module()
-    calls = []
-    prompted = []
-
-    class Runner:
-        def submit(self, argv, *, stdin_data=None, callback=None):
-            calls.append((tuple(argv), stdin_data, callback))
-
-    actions = module.GoogleActions(Runner(), executable="/opt/codex-usage")
-
-    with pytest.raises(RuntimeError, match="STALE"):
-        actions.with_step_up(
-            ["/opt/codex-usage", "google", "inventory-refresh", "google-one", "--json"],
-            lambda: prompted.append(True) or "739104",
-        )
-
-    assert prompted == []
-    assert calls == []
-
-
-def test_google_page_binds_every_sensitive_action_to_its_original_argv(monkeypatch) -> None:
+def test_google_page_actions_use_running_challenge_callbacks(monkeypatch) -> None:
     module = _module()
     page = module.GoogleAccountsPage(None, None, None)
     pending = {}
-    retries = []
+    callbacks = []
 
     class Entry:
         def set_visibility(self, _visible):
@@ -857,36 +814,33 @@ def test_google_page_binds_every_sensitive_action_to_its_original_argv(monkeypat
         _executable = "/opt/codex-usage"
         projection_ready = True
 
-        def oauth_begin(self, _account, *, browser, callback):
+        def oauth_begin(self, _account, *, browser, callback, challenge_callback):
             assert browser == "firefox"
             pending["oauth"] = callback
+            callbacks.append(challenge_callback)
 
-        def import_oauth_client(self, _account, _source, *, callback):
+        def import_oauth_client(self, _account, _source, *, callback, challenge_callback):
             pending["import"] = callback
+            callbacks.append(challenge_callback)
 
-        def inventory_refresh(self, _account, *, callback):
+        def inventory_refresh(self, _account, *, callback, challenge_callback):
             pending["inventory"] = callback
+            callbacks.append(challenge_callback)
 
-        def provision_plan(self, _account, *, callback):
+        def provision_plan(self, _account, *, callback, challenge_callback):
             pending["plan"] = callback
+            callbacks.append(challenge_callback)
 
-        def apply(self, _preview, *, callback):
+        def apply(self, _preview, *, callback, challenge_callback):
             pending["apply"] = callback
+            callbacks.append(challenge_callback)
             return True
 
-        def with_step_up(self, argv, provider, *, callback=None):
-            retries.append((tuple(argv), provider(), callback))
-
     page._actions = Actions()
-    challenge = module.CommandResult(False, None, "control.step_up_required", True)
     page._oauth_begin(None, "google-one")
-    pending["oauth"](challenge)
     page.choose_oauth_client("google-one")
-    pending["import"](challenge)
     page._inventory(None, "google-one")
-    pending["inventory"](challenge)
     page._plan(None, "google-one")
-    pending["plan"](challenge)
     page._plan_loaded(
         module.CommandResult(
             True,
@@ -902,44 +856,7 @@ def test_google_page_binds_every_sensitive_action_to_its_original_argv(monkeypat
             "",
         )
     )
-    pending["apply"](challenge)
-
-    assert [item[0] for item in retries] == [
-        (
-            "/opt/codex-usage",
-            "google",
-            "oauth-begin",
-            "google-one",
-            "--browser",
-            "firefox",
-            "--json",
-        ),
-        (
-            "/opt/codex-usage",
-            "google",
-            "add",
-            "google-one",
-            "--oauth-client-json",
-            "/tmp/oauth-client.json",
-            "--json",
-        ),
-        ("/opt/codex-usage", "google", "inventory-refresh", "google-one", "--json"),
-        ("/opt/codex-usage", "google", "provision-plan", "google-one", "--json"),
-        (
-            "/opt/codex-usage",
-            "google",
-            "provision-apply",
-            "google-one",
-            "plan-one",
-            "--plan-digest",
-            "sha256:" + "a" * 64,
-            "--confirm",
-            "--json",
-        ),
-    ]
-    for _argv, _code, callback in tuple(retries):
-        callback(challenge)
-    assert len(retries) == 5
+    assert callbacks == [page._prompt_running_step_up] * 5
 
 
 def test_google_actions_use_own_cli_and_never_masterjet_binary() -> None:
@@ -1002,8 +919,28 @@ def test_live_projection_failure_revokes_previous_google_mutations() -> None:
     assert model.cards == ()
 
 
-def test_https_page_late_auth_sync_challenge_fails_closed_without_replaying_stages(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    ("challenge_operation", "openai_operations", "secret_operations"),
+    [
+        (
+            "secret.ingress.create",
+            ["openai.accounts.list", "openai.auth-sync.plan", "openai.auth-sync.apply"],
+            ["secret.ingress.create", "secret.ingress.create", "secret.ingress.put"],
+        ),
+        (
+            "openai.auth-sync.apply",
+            [
+                "openai.accounts.list",
+                "openai.auth-sync.plan",
+                "openai.auth-sync.apply",
+                "openai.auth-sync.apply",
+            ],
+            ["secret.ingress.create", "secret.ingress.put"],
+        ),
+    ],
+)
+def test_https_auth_sync_challenge_resumes_running_process(
+    tmp_path, monkeypatch, challenge_operation, openai_operations, secret_operations
 ) -> None:
     google_module = _module()
     openai_module = sys.modules["openai_accounts_page"]
@@ -1027,7 +964,7 @@ def test_https_page_late_auth_sync_challenge_fails_closed_without_replaying_stag
     submissions = []
 
     with _task9_https_control_server(
-        tmp_path, openai_challenge_operation="openai.auth-sync.apply"
+        tmp_path, openai_challenge_operation=challenge_operation
     ) as (port, certificate, requests):
         config_path = home / ".config" / "codex-usage" / "config.toml"
         save_config(
@@ -1082,16 +1019,22 @@ def test_https_page_late_auth_sync_challenge_fails_closed_without_replaying_stag
 
         class Runner(openai_module.BoundedJsonRunner):
             def __init__(self):
-                super().__init__(
-                    timeout_seconds=15,
-                    dispatcher=lambda callback, result: completed.put((callback, result)),
-                )
+                    super().__init__(
+                        timeout_seconds=15,
+                        dispatcher=lambda callback, result: completed.put((callback, result)),
+                        prompt_dispatcher=lambda prompt: prompt(),
+                    )
 
-            def submit(self, argv, *, stdin_data=None, callback=None):
+            def submit(self, argv, *, stdin_data=None, callback=None, challenge_callback=None):
                 submissions.append(
                     (tuple(argv), None if stdin_data is None else bytes(stdin_data))
                 )
-                return super().submit(argv, stdin_data=stdin_data, callback=callback)
+                return super().submit(
+                    argv,
+                    stdin_data=stdin_data,
+                    callback=callback,
+                    challenge_callback=challenge_callback,
+                )
 
         runner = Runner()
 
@@ -1105,6 +1048,11 @@ def test_https_page_late_auth_sync_challenge_fails_closed_without_replaying_stag
             runner, executable=str(executable), confirm=lambda _preview: True
         )
         google_page._actions.set_projection_ready(True)
+        openai_page = openai_module.OpenAIAccountsPage(None, None, None)
+        openai_page._actions = openai_module.OpenAIActions(
+            runner, reauth_runner=runner, executable=str(executable)
+        )
+        openai_page._actions.set_projection_ready(True)
         class StepUpEntry:
             def set_visibility(self, _visible):
                 return None
@@ -1151,67 +1099,28 @@ def test_https_page_late_auth_sync_challenge_fails_closed_without_replaying_stag
                 InputPurpose=SimpleNamespace(DIGITS="digits"),
             ),
         )
+        monkeypatch.setattr(openai_module, "Gtk", google_module.Gtk)
         google_page._inventory(None, "google-one")
-        google_challenge = dispatch_one()
-        assert google_challenge.code == "control.step_up_required", (
-            google_challenge,
-            requests,
-            diagnostics.read_text(encoding="utf-8"),
-        )
-        assert len(submissions) == 2
         google_result = dispatch_one()
 
         assert google_result.ok is True
         assert google_page._status.get_text() == "Operation abgeschlossen"
-        google_calls = len(submissions)
-        google_page._operation_finished(
-            google_module.CommandResult(False, None, "control.step_up_required"),
-            argv=list(submissions[0][0]),
-            retried=True,
-        )
-        google_page._actions.set_projection_ready(False)
-        google_page._operation_finished(
-            google_module.CommandResult(False, None, "control.step_up_required"),
-            argv=list(submissions[0][0]),
-        )
-        assert len(submissions) == google_calls
+        assert len(submissions) == 1
 
-        openai_page = openai_module.OpenAIAccountsPage(None, None, None)
-        openai_page._actions = openai_module.OpenAIActions(
-            runner, reauth_runner=runner, executable=str(executable)
-        )
-        openai_page._actions.set_projection_ready(True)
         openai_page._sync_auth(None, "openai-one")
-        openai_challenge = dispatch_one()
-        assert openai_challenge.code == "control.step_up_required"
-        assert openai_challenge.step_up_retry_safe is False
-        assert len(submissions) == 3
-        assert openai_page._status.get_text() == "Fehler: control.step_up_required"
-        openai_calls = len(submissions)
-        openai_page._operation_finished(
-            openai_module.CommandResult(False, None, "control.step_up_required"),
-            argv=list(submissions[2][0]),
-            retried=True,
-        )
-        openai_page._actions.set_projection_ready(False)
-        openai_page._operation_finished(
-            openai_module.CommandResult(False, None, "control.step_up_required"),
-            argv=list(submissions[2][0]),
-        )
-        assert len(submissions) == openai_calls
+        openai_result = dispatch_one()
+        assert openai_result.ok is True
+        assert openai_page._status.get_text() == "Operation abgeschlossen"
+        assert len(submissions) == 2
 
-    assert [stdin for _argv, stdin in submissions] == [None, b"739104\n", None]
-    assert submissions[1][0][1:] == (
-        "--step-up-stdin",
-        "google",
-        "inventory-refresh",
-        "google-one",
-        "--json",
+    assert [stdin for _argv, stdin in submissions] == [None, None]
+    assert submissions[0][0][1:] == (
+        "--step-up-stdin", "google", "inventory-refresh", "google-one", "--json"
     )
     assert all(bearer not in " ".join(argv) for argv, _stdin in submissions)
     assert all("739104" not in " ".join(argv) for argv, _stdin in submissions)
     observed = [json.loads(line) for line in diagnostics.read_text(encoding="utf-8").splitlines()]
-    assert len(observed) == 3
+    assert len(observed) == 2
     assert all(
         item["env"].get("CREDENTIALS_DIRECTORY") == str(credential_directory)
         for item in observed
@@ -1224,13 +1133,9 @@ def test_https_page_late_auth_sync_challenge_fails_closed_without_replaying_stag
     assert all(
         request["headers"]["Authorization"] == f"Bearer {bearer}" for request in requests
     )
-    google_requests = [
-        request for request in requests if request["operation"] == "google.accounts.list"
-    ]
+    google_requests = [request for request in requests if request["operation"] == "google.accounts.list"]
     assert [request["headers"].get("X-Masterjet-Step-Up") for request in google_requests] == [
-        None,
-        None,
-        "739104",
+        None, "739104"
     ]
     openai_requests = [
         request for request in requests if request["operation"] == "openai.accounts.list"
@@ -1238,17 +1143,10 @@ def test_https_page_late_auth_sync_challenge_fails_closed_without_replaying_stag
     assert [request["headers"].get("X-Masterjet-Step-Up") for request in openai_requests] == [None]
     assert [
         request["operation"] for request in requests if request["operation"].startswith("openai.")
-    ] == [
-        "openai.accounts.list",
-        "openai.auth-sync.plan",
-        "openai.auth-sync.apply",
-    ]
+    ] == openai_operations
     assert [
         request["operation"] for request in requests if request["operation"].startswith("secret.")
-    ] == [
-        "secret.ingress.create",
-        "secret.ingress.put",
-    ]
+    ] == secret_operations
     assert [request["body"] for request in requests if request["method"] == "PUT"] == [raw_auth]
 
 

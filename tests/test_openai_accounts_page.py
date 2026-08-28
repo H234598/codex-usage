@@ -242,9 +242,10 @@ def test_openai_actions_use_only_bounded_own_cli_commands() -> None:
             completed,
         ),
         (
-            (
-                "/opt/codex-usage",
-                "account",
+                (
+                    "/opt/codex-usage",
+                    "--step-up-stdin",
+                    "account",
                 "auth-sync",
                 "BW_Work",
                 "--format",
@@ -280,8 +281,9 @@ def test_openai_actions_keep_interactive_and_control_runners_separate() -> None:
     assert interactive_calls == [("/opt/codex-usage", "reactivate", "BW_Work", "--format", "json")]
     assert control_calls == [
         (
-            "/opt/codex-usage",
-            "account",
+                "/opt/codex-usage",
+                "--step-up-stdin",
+                "account",
             "auth-sync",
             "BW_Work",
             "--format",
@@ -590,26 +592,6 @@ def test_openai_live_projection_refresh_uses_complete_bounded_command() -> None:
     assert actions.projection_ready is False
 
 
-def test_openai_step_up_uses_explicit_transient_stdin_channel() -> None:
-    calls = []
-
-    class Runner:
-        def submit(self, argv, *, stdin_data=None, callback=None):
-            calls.append((tuple(argv), bytes(stdin_data), callback))
-
-    actions = _module().OpenAIActions(Runner(), executable="/opt/codex-usage")
-    actions.set_projection_ready(True)
-    actions.with_step_up(
-        ["/opt/codex-usage", "account", "auth-sync", "openai-one", "--format", "json"],
-        lambda: "739104",
-    )
-
-    argv, stdin_data, _callback = calls[0]
-    assert "--step-up-stdin" in argv
-    assert "739104" not in " ".join(argv)
-    assert stdin_data == b"739104\n"
-
-
 def _install_totp_dialog(module, monkeypatch, value: str):
     entries = []
 
@@ -679,25 +661,17 @@ def test_openai_page_prompt_step_up_is_hidden_and_wipes_entry(monkeypatch) -> No
     assert entries[0].text == ""
 
 
-def test_openai_page_requires_typed_safe_step_up_projection() -> None:
+def test_openai_page_does_not_restart_a_failed_process() -> None:
     module = _module()
-    calls = []
 
     class Actions:
         projection_ready = True
 
-        def with_step_up(self, argv, provider, *, callback=None):
-            calls.append((argv, provider(), callback))
-
     page = module.OpenAIAccountsPage(None, None, None)
     page._actions = Actions()
-    argv = ["/opt/codex-usage", "account", "auth-sync", "openai-one", "--format", "json"]
+    page._operation_finished(module.CommandResult(False, None, "control.step_up_required"))
 
-    page._operation_finished(
-        module.CommandResult(False, None, "control.step_up_required"), argv=argv
-    )
-
-    assert calls == []
+    assert page._status.get_text() == "Fehler: control.step_up_required"
 
 
 def test_openai_action_guard_checks_current_projection_before_mutation_argv() -> None:

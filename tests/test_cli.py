@@ -1386,7 +1386,6 @@ def test_account_auth_sync_json_error_is_redacted_for_bounded_runner(monkeypatch
     assert json.loads(output.out) == {
         "ok": False,
         "code": "control.step_up_required",
-        "step_up_retry_safe": False,
     }
     assert output.err == ""
 
@@ -1663,7 +1662,6 @@ def test_google_inventory_challenge_explicitly_allows_bound_process_retry(monkey
     assert json.loads(capsys.readouterr().out) == {
         "ok": False,
         "code": "control.step_up_required",
-        "step_up_retry_safe": True,
     }
 
 
@@ -1706,7 +1704,6 @@ def test_google_single_mutation_challenges_explicitly_allow_bound_retry(
     assert json.loads(capsys.readouterr().out) == {
         "ok": False,
         "code": "control.step_up_required",
-        "step_up_retry_safe": True,
     }
 
 

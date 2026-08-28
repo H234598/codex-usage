@@ -4,6 +4,7 @@ import fcntl
 import getpass
 import os
 import stat
+import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from .private_io import read_private_bytes_at
 MASTERJET_BEARER_CREDENTIAL = "masterjet-control-bearer"
 MAX_BEARER_BYTES = 4096
 MAX_STEP_UP_BYTES = 128
+STEP_UP_SENTINEL = b"CODEX_USAGE_STEP_UP_REQUIRED\n"
 
 
 class MasterjetCredentialsError(RuntimeError):
@@ -44,11 +46,24 @@ def bearer_provider_from_fd(fd: int) -> Callable[[], str]:
     return _one_shot(lambda: _read_bearer_from_fd(owned_fd))
 
 
-def stdin_step_up_provider(stream: object) -> Callable[[], str]:
+def stdin_step_up_provider(
+    stream: object, *, control_stream: object | None = None
+) -> Callable[[], str]:
     def read() -> str:
         reader = getattr(stream, "read", None)
-        if not callable(reader):
+        if control_stream is None:
+            output = getattr(sys.stderr, "buffer", sys.stderr)
+        else:
+            output = control_stream
+        writer = getattr(output, "write", None)
+        flush = getattr(output, "flush", None)
+        if not callable(reader) or not callable(writer) or not callable(flush):
             raise MasterjetCredentialsError("step-up unavailable")
+        try:
+            writer(STEP_UP_SENTINEL)
+            flush()
+        except (OSError, TypeError, ValueError) as exc:
+            raise MasterjetCredentialsError("step-up unavailable") from exc
         payload = bytearray(reader(MAX_STEP_UP_BYTES + 1))
         try:
             if len(payload) > MAX_STEP_UP_BYTES:
