@@ -124,10 +124,11 @@ class DynamicSeriesList(List, JSONSettingsBackend):
 
     def _masterjet_series(self):
         now = time.monotonic()
-        command = os.environ.get("CODEX_MASTER_MCP", "").strip()
-        argv = [command, "fleet", "series", "list"] if command else [
-            str(Path.home() / ".local/bin/codex-master-mcp"),
-            "fleet", "series", "list",
+        argv = [
+            str(Path.home() / ".local/bin/codex-usage"),
+            "masterjet",
+            "openai-routing-options",
+            "--json",
         ]
         cache_key = tuple(argv)
         if (

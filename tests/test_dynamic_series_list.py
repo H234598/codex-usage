@@ -176,8 +176,66 @@ def test_series_options_keep_conflicting_current_assignment_editable() -> None:
     }
 
 
+def test_masterjet_series_uses_only_codex_usage_control_cli(
+    tmp_path, monkeypatch
+) -> None:
+    class _Stream:
+        def fileno(self):
+            return 17
+
+    class _Process:
+        pid = 123
+
+        def __init__(self):
+            self.stdout = _Stream()
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    process = _Process()
+    chunks = iter([
+        json.dumps({
+            "series": [
+                {"prefix": "a", "enabled": True, "provider": "openai_chatgpt"}
+            ]
+        }).encode("utf-8"),
+        b"",
+    ])
+    captured = {}
+
+    def _popen(argv, **kwargs):
+        captured["argv"] = argv
+        return process
+
+    monkeypatch.setenv("CODEX_MASTER_MCP", str(tmp_path / "codex-master-mcp"))
+    monkeypatch.setattr("dynamic_series_list.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("dynamic_series_list.subprocess.Popen", _popen)
+    monkeypatch.setattr(
+        "dynamic_series_list.select.select",
+        lambda *_args: ([process.stdout], [], []),
+    )
+    monkeypatch.setattr("dynamic_series_list.os.read", lambda *_args: next(chunks))
+    DynamicSeriesList._masterjet_cache = None
+    DynamicSeriesList._masterjet_cache_at = 0.0
+    DynamicSeriesList._masterjet_cache_key = None
+
+    series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
+    assert DynamicSeriesList._masterjet_series(series_widget) == ("A",)
+    assert captured["argv"] == [
+        str(tmp_path / ".local/bin/codex-usage"),
+        "masterjet",
+        "openai-routing-options",
+        "--json",
+    ]
+    assert all("codex-master-mcp" not in argument for argument in captured["argv"])
+
+
 def test_masterjet_series_filters_provider_state_and_caches_result(tmp_path, monkeypatch) -> None:
-    command = tmp_path / "masterjet-series"
+    command = tmp_path / ".local/bin/codex-usage"
+    command.parent.mkdir(parents=True)
     command.write_text(
         "#!/usr/bin/env python3\n"
         "import json\n"
@@ -191,7 +249,7 @@ def test_masterjet_series_filters_provider_state_and_caches_result(tmp_path, mon
         encoding="utf-8",
     )
     command.chmod(0o700)
-    monkeypatch.setenv("CODEX_MASTER_MCP", str(command))
+    monkeypatch.setattr("dynamic_series_list.Path.home", lambda: tmp_path)
     DynamicSeriesList._masterjet_cache = None
     DynamicSeriesList._masterjet_cache_at = 0.0
 
@@ -206,38 +264,9 @@ def test_masterjet_series_filters_provider_state_and_caches_result(tmp_path, mon
     DynamicSeriesList._masterjet_cache_at = 0.0
 
 
-def test_masterjet_series_cache_follows_command_path(tmp_path, monkeypatch) -> None:
-    commands = []
-    for name, prefix in (("first", "a"), ("second", "b")):
-        command = tmp_path / name
-        payload = {
-            "series": [{"prefix": prefix, "enabled": True, "provider": "openai_chatgpt"}]
-        }
-        command.write_text(
-            "#!/usr/bin/env python3\n"
-            f"print({json.dumps(payload)!r})\n",
-            encoding="utf-8",
-        )
-        command.chmod(0o700)
-        commands.append(command)
-
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
-    DynamicSeriesList._masterjet_cache_key = None
-    series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
-    try:
-        monkeypatch.setenv("CODEX_MASTER_MCP", str(commands[0]))
-        assert DynamicSeriesList._masterjet_series(series_widget) == ("A",)
-        monkeypatch.setenv("CODEX_MASTER_MCP", str(commands[1]))
-        assert DynamicSeriesList._masterjet_series(series_widget) == ("B",)
-    finally:
-        DynamicSeriesList._masterjet_cache = None
-        DynamicSeriesList._masterjet_cache_at = 0.0
-        DynamicSeriesList._masterjet_cache_key = None
-
-
 def test_masterjet_series_keeps_ascii_hyphen_and_underscore_prefixes(tmp_path, monkeypatch) -> None:
-    command = tmp_path / "masterjet-prefixed-series"
+    command = tmp_path / ".local/bin/codex-usage"
+    command.parent.mkdir(parents=True)
     command.write_text(
         "#!/usr/bin/env python3\n"
         "import json\n"
@@ -250,7 +279,7 @@ def test_masterjet_series_keeps_ascii_hyphen_and_underscore_prefixes(tmp_path, m
         encoding="utf-8",
     )
     command.chmod(0o700)
-    monkeypatch.setenv("CODEX_MASTER_MCP", str(command))
+    monkeypatch.setattr("dynamic_series_list.Path.home", lambda: tmp_path)
     DynamicSeriesList._masterjet_cache = None
     DynamicSeriesList._masterjet_cache_at = 0.0
 
@@ -264,7 +293,8 @@ def test_masterjet_series_keeps_ascii_hyphen_and_underscore_prefixes(tmp_path, m
 def test_masterjet_series_fails_closed_when_child_closes_stdout_but_hangs(
     tmp_path, monkeypatch
 ) -> None:
-    command = tmp_path / "masterjet-hanging-series"
+    command = tmp_path / ".local/bin/codex-usage"
+    command.parent.mkdir(parents=True)
     command.write_text(
         "#!/usr/bin/env python3\n"
         "import os\n"
@@ -274,7 +304,7 @@ def test_masterjet_series_fails_closed_when_child_closes_stdout_but_hangs(
         encoding="utf-8",
     )
     command.chmod(0o700)
-    monkeypatch.setenv("CODEX_MASTER_MCP", str(command))
+    monkeypatch.setattr("dynamic_series_list.Path.home", lambda: tmp_path)
     DynamicSeriesList._masterjet_cache = None
     DynamicSeriesList._masterjet_cache_at = 0.0
 
