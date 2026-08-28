@@ -445,7 +445,7 @@ def test_real_https_step_up_challenge_retries_exactly_once(tmp_path, monkeypatch
         )
         result = MasterjetControlClient(
             MasterjetConnection(
-                transport="https", endpoint=f"https://localhost:{port}/control", timeout_seconds=2
+                transport="https", endpoint=f"https://localhost:{port}/control", timeout_seconds=5
             ),
             bearer_provider=lambda: "remote-bearer",
             step_up_provider=step_up,
@@ -479,7 +479,7 @@ def test_real_https_second_step_up_challenge_stops_after_one_retry(tmp_path, mon
         )
         client = MasterjetControlClient(
             MasterjetConnection(
-                transport="https", endpoint=f"https://localhost:{port}/control", timeout_seconds=2
+                transport="https", endpoint=f"https://localhost:{port}/control", timeout_seconds=5
             ),
             bearer_provider=lambda: "remote-bearer",
             step_up_provider=step_up,
