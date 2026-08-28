@@ -414,6 +414,12 @@ class OpenAIActions:
         self._reauth_runner = reauth_runner or runner
         self._executable = executable or str(Path.home() / ".local/bin/codex-usage")
 
+    def refresh(self, *, callback=None) -> None:
+        self._runner.submit(
+            [self._executable, "masterjet", "openai-accounts", "--json"],
+            callback=callback,
+        )
+
     def reauthenticate(self, account_ref: str, *, callback=None) -> None:
         self._reauth_runner.submit(
             [
@@ -451,7 +457,44 @@ class MasterjetConnectionActions:
         self._executable = executable or str(Path.home() / ".local/bin/codex-usage")
 
     def test(self, *, callback=None) -> None:
-        self._runner.submit([self._executable, "masterjet", "status", "--json"], callback=callback)
+        self._runner.submit(
+            [self._executable, "masterjet", "connection-test", "--json"],
+            callback=callback,
+        )
+
+    def show(self, *, callback=None) -> None:
+        self._runner.submit(
+            [self._executable, "masterjet", "connection-show", "--json"],
+            callback=callback,
+        )
+
+    def set(
+        self,
+        transport: object,
+        endpoint: object,
+        timeout_seconds: object,
+        *,
+        callback=None,
+    ) -> None:
+        kind = _text(transport, "transport", maximum=16)
+        value = validate_masterjet_endpoint(kind, endpoint)
+        if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 300:
+            raise ValueError("invalid timeout_seconds")
+        self._runner.submit(
+            [
+                self._executable,
+                "masterjet",
+                "connection-set",
+                "--transport",
+                kind,
+                "--endpoint",
+                value,
+                "--timeout-seconds",
+                str(timeout_seconds),
+                "--json",
+            ],
+            callback=callback,
+        )
 
 
 class MasterjetConnectionWidget(SettingsWidget):
@@ -471,14 +514,82 @@ class MasterjetConnectionWidget(SettingsWidget):
         )
         authority.set_xalign(0.0)
         authority.set_line_wrap(True)
+        form = Gtk.Grid(column_spacing=6, row_spacing=6)
+        self.transport = Gtk.ComboBoxText()
+        self.transport.append("local", "Lokaler Socket")
+        self.transport.append("https", "Remote HTTPS")
+        self.transport.set_active_id("local")
+        self.endpoint = Gtk.Entry()
+        self.endpoint.set_placeholder_text(default_masterjet_socket())
+        self.timeout = Gtk.SpinButton.new_with_range(1, 300, 1)
+        self.timeout.set_value(10)
+        form.attach(Gtk.Label(label="Transport"), 0, 0, 1, 1)
+        form.attach(self.transport, 1, 0, 1, 1)
+        form.attach(Gtk.Label(label="Socket-/HTTPS-Endpoint"), 0, 1, 1, 1)
+        form.attach(self.endpoint, 1, 1, 1, 1)
+        form.attach(Gtk.Label(label="Timeout (s)"), 0, 2, 1, 1)
+        form.attach(self.timeout, 1, 2, 1, 1)
         self.status = Gtk.Label(label="Kanonische Verbindung nicht getestet")
         self.status.set_xalign(0.0)
+        save = Gtk.Button(label="Kanonische Verbindung speichern")
+        save.connect("clicked", self._save)
         test = Gtk.Button(label="Kanonische Verbindung testen")
         test.connect("clicked", self._test)
         self.pack_start(authority, False, False, 0)
+        self.pack_start(form, False, False, 0)
+        self.pack_start(save, False, False, 0)
         self.pack_start(test, False, False, 0)
         self.pack_start(self.status, False, False, 0)
         self.show_all()
+        self._actions.show(callback=self._shown)
+
+    def _shown(self, result: CommandResult) -> bool:
+        if not result.ok or not isinstance(result.payload, Mapping):
+            self.status.set_text(f"Fehler: {result.code}")
+            return False
+        connection = result.payload.get("connection")
+        if not isinstance(connection, Mapping) or set(connection) != {
+            "transport",
+            "endpoint",
+            "timeout_seconds",
+        }:
+            self.status.set_text("Fehler: control.response_invalid")
+            return False
+        try:
+            kind = _text(connection["transport"], "transport", maximum=16)
+            endpoint = connection["endpoint"]
+            if not isinstance(endpoint, str) or len(endpoint) > 2048 or "\x00" in endpoint:
+                raise ValueError("invalid endpoint")
+            timeout = connection["timeout_seconds"]
+            if type(timeout) is not int or not 1 <= timeout <= 300:
+                raise ValueError("invalid timeout")
+            if endpoint:
+                validate_masterjet_endpoint(kind, endpoint)
+            elif kind != "local":
+                raise ValueError("invalid endpoint")
+        except ValueError:
+            self.status.set_text("Fehler: control.response_invalid")
+            return False
+        self.transport.set_active_id(kind)
+        self.endpoint.set_text(endpoint)
+        self.timeout.set_value(timeout)
+        self.status.set_text("Kanonische Verbindung geladen")
+        return False
+
+    def _save(self, *_args) -> None:
+        try:
+            self._actions.set(
+                self.transport.get_active_id(),
+                self.endpoint.get_text(),
+                self.timeout.get_value_as_int(),
+                callback=self._saved,
+            )
+        except ValueError:
+            self.status.set_text("Ungültiger Endpoint · nicht gespeichert")
+
+    def _saved(self, result: CommandResult) -> bool:
+        self.status.set_text("Gespeichert" if result.ok else f"Fehler: {result.code}")
+        return False
 
     def _test(self, *_args) -> None:
         self.status.set_text("Prüfung läuft …")
@@ -507,9 +618,42 @@ class OpenAIAccountsPage(SettingsWidget):
         self._status = Gtk.Label(label="OpenAI-Control nicht geladen")
         self._status.set_xalign(0.0)
         self.pack_start(self._status, False, False, 0)
+        refresh = Gtk.Button(label="OpenAI-Accounts laden")
+        refresh.connect("clicked", self._refresh)
+        self.pack_start(refresh, False, False, 0)
         self._body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.pack_start(self._body, True, True, 0)
         self.show_all()
+
+    def _refresh(self, *_args) -> None:
+        self._status.set_text("OpenAI-Control wird geladen …")
+        self._actions.refresh(callback=self._loaded)
+
+    def _loaded(self, result: CommandResult) -> bool:
+        if not result.ok or not isinstance(result.payload, Mapping):
+            self.model._rows = ()
+            self.model.stale = True
+            self._status.set_text(f"STALE · {result.code} · Mutationen gesperrt")
+            return False
+        payload = result.payload
+        if set(payload) != {"local_accounts", "accounts", "stale"}:
+            self.model._rows = ()
+            self.model.stale = True
+            self._status.set_text("Ungültige Control-Antwort · Mutationen gesperrt")
+            return False
+        try:
+            self.render(
+                payload["local_accounts"],
+                payload["accounts"],
+                stale=payload["stale"],
+            )
+        except (TypeError, ValueError):
+            self.model._rows = ()
+            self.model.stale = True
+            self._status.set_text("Ungültige Control-Antwort · Mutationen gesperrt")
+            return False
+        self._status.set_text("STALE · Mutationen gesperrt" if self.model.stale else "Aktuell")
+        return False
 
     def render(self, local_accounts, masterjet_accounts, *, stale=False) -> None:
         self.model.render(local_accounts, masterjet_accounts, stale=stale)

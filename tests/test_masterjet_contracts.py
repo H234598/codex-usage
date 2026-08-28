@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from codex_usage import masterjet_contracts
 from codex_usage.masterjet_contracts import (
     ControlContractError,
     ControlOperation,
@@ -84,6 +85,20 @@ def valid_operation() -> dict[str, object]:
         "failed_count": 1,
         "not_attempted_count": 3,
         "reason_codes": ["quota.provider_exhausted"],
+    }
+
+
+def valid_google_provision_plan() -> dict[str, object]:
+    return valid_operation() | {
+        "id": "plan-1",
+        "kind": "google.provision.plan",
+        "state": "planned",
+        "account_ref": "google-1",
+        "step_count": 5,
+        "projects": [
+            {"project_name": "Amber Orchard", "key_name": "Willow Meadow"},
+            {"project_name": "Velvet Harbor", "key_name": "Silver Forest"},
+        ],
     }
 
 
@@ -331,6 +346,54 @@ def test_google_project_is_immutable_redacted_projection():
     )
     with pytest.raises(FrozenInstanceError):
         project.status = "blocked"  # type: ignore[misc]
+
+
+def test_full_plan_preview_is_typed_complete_and_redacted():
+    plan = masterjet_contracts.parse_google_provision_plan(valid_google_provision_plan())
+
+    assert plan == masterjet_contracts.GoogleProvisionPlanV1(
+        id="plan-1",
+        kind="google.provision.plan",
+        state="planned",
+        account_ref="google-1",
+        expected_generation=4,
+        resulting_generation=None,
+        plan_digest="sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        created_at=datetime(2026, 8, 28, 12, tzinfo=UTC),
+        expires_at=datetime(2026, 8, 28, 12, 30, tzinfo=UTC),
+        completed_count=2,
+        failed_count=1,
+        not_attempted_count=3,
+        reason_codes=("quota.provider_exhausted",),
+        step_count=5,
+        projects=(
+            masterjet_contracts.GoogleProvisionProjectV1("Amber Orchard", "Willow Meadow"),
+            masterjet_contracts.GoogleProvisionProjectV1("Velvet Harbor", "Silver Forest"),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "private_field",
+    ["project_id", "provider_id", "api_key", "client_secret", "access_token", "cookie"],
+)
+def test_full_plan_preview_rejects_private_project_fields(private_field):
+    payload = valid_google_provision_plan()
+    payload["projects"] = [payload["projects"][0] | {private_field: "private"}]
+
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        masterjet_contracts.parse_google_provision_plan(payload)
+
+
+def test_full_plan_preview_rejects_missing_name_pair_or_impossible_step_count():
+    missing = valid_google_provision_plan()
+    missing["projects"] = [{"project_name": "Amber Orchard"}]
+    impossible = valid_google_provision_plan() | {"step_count": 1}
+
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        masterjet_contracts.parse_google_provision_plan(missing)
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        masterjet_contracts.parse_google_provision_plan(impossible)
 
 
 def test_google_project_rejects_names_that_break_visible_name_rule():

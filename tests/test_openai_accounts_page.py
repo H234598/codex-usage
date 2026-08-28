@@ -302,7 +302,7 @@ def test_masterjet_status_tests_only_canonical_codex_usage_config() -> None:
 
     assert calls == [
         (
-            ("/opt/codex-usage", "masterjet", "status", "--json"),
+            ("/opt/codex-usage", "masterjet", "connection-test", "--json"),
             None,
             completed,
         )
@@ -431,3 +431,44 @@ def test_masterjet_schema_has_no_bearer_or_totp_settings() -> None:
 
     assert "masterjet-connection" in schema
     assert not any("bearer" in key.casefold() or "totp" in key.casefold() for key in schema)
+
+
+def test_openai_live_projection_refresh_uses_complete_bounded_command() -> None:
+    calls = []
+
+    class Runner:
+        def submit(self, argv, *, stdin_data=None, callback=None):
+            calls.append((tuple(argv), stdin_data, callback))
+
+    callback = object()
+    actions = _module().OpenAIActions(Runner(), executable="/opt/codex-usage")
+    actions.refresh(callback=callback)
+
+    assert calls == [
+        (("/opt/codex-usage", "masterjet", "openai-accounts", "--json"), None, callback)
+    ]
+
+
+def test_live_projection_connection_actions_use_show_test_set_cli_contracts() -> None:
+    calls = []
+
+    class Runner:
+        def submit(self, argv, *, stdin_data=None, callback=None):
+            calls.append((tuple(argv), stdin_data, callback))
+
+    actions = _module().MasterjetConnectionActions(
+        Runner(), executable="/opt/codex-usage"
+    )
+    actions.show()
+    actions.test()
+    actions.set("https", "https://masterjet.example.test/control", 7)
+
+    assert [call[0] for call in calls] == [
+        ("/opt/codex-usage", "masterjet", "connection-show", "--json"),
+        ("/opt/codex-usage", "masterjet", "connection-test", "--json"),
+        (
+            "/opt/codex-usage", "masterjet", "connection-set", "--transport", "https",
+            "--endpoint", "https://masterjet.example.test/control",
+            "--timeout-seconds", "7", "--json",
+        ),
+    ]

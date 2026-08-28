@@ -269,6 +269,65 @@ class GoogleControlProjectList:
 
 
 @dataclass(frozen=True, slots=True)
+class GoogleProvisionProjectV1:
+    project_name: str
+    key_name: str
+
+    def __post_init__(self) -> None:
+        _visible_name(self.project_name, "project_name")
+        _visible_name(self.key_name, "key_name")
+
+
+@dataclass(frozen=True, slots=True)
+class GoogleProvisionPlanV1:
+    id: str
+    kind: str
+    state: str
+    account_ref: str
+    expected_generation: int
+    resulting_generation: int | None
+    plan_digest: str
+    created_at: datetime
+    expires_at: datetime
+    completed_count: int
+    failed_count: int
+    not_attempted_count: int
+    reason_codes: tuple[str, ...]
+    step_count: int
+    projects: tuple[GoogleProvisionProjectV1, ...]
+
+    def __post_init__(self) -> None:
+        _token(self.id, "id")
+        if _token(self.kind, "kind") != "google.provision.plan":
+            _invalid("kind")
+        if _code(self.state, "state") != "planned":
+            _invalid("state")
+        _ref(self.account_ref, "account_ref")
+        _generation(self.expected_generation, "expected_generation")
+        _optional_generation(self.resulting_generation, "resulting_generation")
+        _plan_digest(self.plan_digest)
+        _timestamp_value(self.created_at, "created_at")
+        _timestamp_value(self.expires_at, "expires_at")
+        _count(self.completed_count, "completed_count", _MAX_COUNT)
+        _count(self.failed_count, "failed_count", _MAX_COUNT)
+        _count(self.not_attempted_count, "not_attempted_count", _MAX_COUNT)
+        _reason_codes(self.reason_codes)
+        _count(self.step_count, "step_count", _MAX_COUNT)
+        if (
+            self.resulting_generation is not None
+            or self.expires_at <= self.created_at
+            or type(self.projects) is not tuple
+            or len(self.projects) > _MAX_PROJECTS
+            or not all(type(item) is GoogleProvisionProjectV1 for item in self.projects)
+            or self.step_count < len(self.projects)
+        ):
+            _invalid("plan")
+        pairs = tuple((item.project_name, item.key_name) for item in self.projects)
+        if len(pairs) != len(set(pairs)):
+            _invalid("projects")
+
+
+@dataclass(frozen=True, slots=True)
 class ControlOperation:
     id: str
     kind: str
@@ -447,6 +506,59 @@ def parse_google_projects(
     )
 
 
+def parse_google_provision_plan(payload: object) -> GoogleProvisionPlanV1:
+    data = _document(
+        payload,
+        {
+            "schema_version",
+            "id",
+            "kind",
+            "state",
+            "account_ref",
+            "expected_generation",
+            "resulting_generation",
+            "plan_digest",
+            "created_at",
+            "expires_at",
+            "completed_count",
+            "failed_count",
+            "not_attempted_count",
+            "reason_codes",
+            "step_count",
+            "projects",
+        },
+    )
+    raw_projects = _list(data["projects"], "projects", _MAX_PROJECTS)
+    projects = tuple(_parse_google_provision_project(item) for item in raw_projects)
+    return GoogleProvisionPlanV1(
+        id=_token(data["id"], "id"),
+        kind=_token(data["kind"], "kind"),
+        state=_code(data["state"], "state"),
+        account_ref=_ref(data["account_ref"], "account_ref"),
+        expected_generation=_generation(data["expected_generation"], "expected_generation"),
+        resulting_generation=_optional_generation(
+            data["resulting_generation"], "resulting_generation"
+        ),
+        plan_digest=_plan_digest(data["plan_digest"]),
+        created_at=_timestamp(data["created_at"], "created_at"),
+        expires_at=_timestamp(data["expires_at"], "expires_at"),
+        completed_count=_count(data["completed_count"], "completed_count", _MAX_COUNT),
+        failed_count=_count(data["failed_count"], "failed_count", _MAX_COUNT),
+        not_attempted_count=_count(data["not_attempted_count"], "not_attempted_count", _MAX_COUNT),
+        reason_codes=_parse_reason_codes(data["reason_codes"]),
+        step_count=_count(data["step_count"], "step_count", _MAX_COUNT),
+        projects=projects,
+    )
+
+
+def _parse_google_provision_project(payload: object) -> GoogleProvisionProjectV1:
+    data = _mapping(payload, {"project_name", "key_name"})
+    return GoogleProvisionProjectV1(
+        project_name=_visible_name(data["project_name"], "project_name"),
+        key_name=_visible_name(data["key_name"], "key_name"),
+    )
+
+
 def parse_control_operation(payload: object) -> ControlOperation:
     data = _document(
         payload,
@@ -482,9 +594,7 @@ def parse_control_operation(payload: object) -> ControlOperation:
         expires_at=_timestamp(data["expires_at"], "expires_at"),
         completed_count=_count(data["completed_count"], "completed_count", _MAX_COUNT),
         failed_count=_count(data["failed_count"], "failed_count", _MAX_COUNT),
-        not_attempted_count=_count(
-            data["not_attempted_count"], "not_attempted_count", _MAX_COUNT
-        ),
+        not_attempted_count=_count(data["not_attempted_count"], "not_attempted_count", _MAX_COUNT),
         reason_codes=_parse_reason_codes(data["reason_codes"]),
     )
     return operation
@@ -507,9 +617,7 @@ def parse_secret_ingress_session(payload: object) -> SecretIngressSession:
         account_ref=_ref(data["account_ref"], "account_ref"),
         plan_id=_token(data["plan_id"], "plan_id"),
         expires_at=_timestamp(data["expires_at"], "expires_at"),
-        expected_generation=_generation(
-            data["expected_generation"], "expected_generation"
-        ),
+        expected_generation=_generation(data["expected_generation"], "expected_generation"),
     )
 
 
@@ -592,9 +700,7 @@ def _parse_google_account(payload: object) -> GoogleControlAccount:
         enabled=_bool(data["enabled"], "enabled"),
         subject_bound=_bool(data["subject_bound"], "subject_bound"),
         oauth_state=_code(data["oauth_state"], "oauth_state"),
-        inventory_generation=_generation(
-            data["inventory_generation"], "inventory_generation"
-        ),
+        inventory_generation=_generation(data["inventory_generation"], "inventory_generation"),
         quota_state=_code(data["quota_state"], "quota_state"),
         project_count=_count(data["project_count"], "project_count", _MAX_COUNT),
         billing_count=_count(data["billing_count"], "billing_count", _MAX_COUNT),
@@ -626,9 +732,7 @@ def _parse_openai_account(payload: object) -> OpenAIControlAccount:
         source_host_ref=_ref(data["source_host_ref"], "source_host_ref"),
         auth_state=_code(data["auth_state"], "auth_state"),
         access_expires_at=_optional_timestamp(data["access_expires_at"], "access_expires_at"),
-        credential_generation=_generation(
-            data["credential_generation"], "credential_generation"
-        ),
+        credential_generation=_generation(data["credential_generation"], "credential_generation"),
         vault_projection_state=_code(data["vault_projection_state"], "vault_projection_state"),
         usage_state=_code(data["usage_state"], "usage_state"),
     )

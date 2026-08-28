@@ -14,7 +14,11 @@ from .masterjet_contracts import (
     ControlContractError,
     ControlOperation,
     GoogleControlAccount,
+    GoogleControlProject,
+    GoogleControlProjectList,
     GoogleOAuthTransactionV1,
+    GoogleProvisionPlanV1,
+    GoogleProvisionProjectV1,
     SecretIngressReceipt,
     SecretIngressSession,
     google_oauth_redirect_uri,
@@ -79,6 +83,23 @@ class GoogleProvisionPlan:
     expected_generation: int
     plan_digest: str
     expires_at: datetime
+    step_count: int
+    projects: tuple[GoogleProvisionProjectV1, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class GoogleAccountDetails:
+    account: GoogleControlAccount
+    projects: tuple[GoogleControlProject, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.account) is not GoogleControlAccount
+            or type(self.projects) is not tuple
+            or not all(type(item) is GoogleControlProject for item in self.projects)
+            or len(self.projects) != self.account.project_count
+        ):
+            raise ValueError("control.response_invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +159,9 @@ class GoogleAccountsController:
     def list(self) -> tuple[GoogleControlAccount, ...]:
         return self._guard(self._list)
 
+    def account_details(self) -> tuple[GoogleAccountDetails, ...]:
+        return self._guard(self._account_details)
+
     def oauth_begin(self, account_ref: str, *, browser: str) -> GoogleOAuthTransactionV1:
         return self._guard(lambda: self._oauth_begin(account_ref, browser))
 
@@ -190,6 +214,21 @@ class GoogleAccountsController:
         if len(matches) != 1:
             raise MasterjetClientError("control.response_invalid")
         return matches[0]
+
+    def _account_details(self) -> tuple[GoogleAccountDetails, ...]:
+        accounts = self._list()
+        result: list[GoogleAccountDetails] = []
+        for account in accounts:
+            value = self._client.call("google.projects.list", {"account_ref": account.ref})
+            if (
+                type(value) is not GoogleControlProjectList
+                or value.account_ref != account.ref
+                or value.inventory_generation != account.inventory_generation
+                or len(value.projects) != account.project_count
+            ):
+                raise MasterjetClientError("control.response_invalid")
+            result.append(GoogleAccountDetails(account=account, projects=value.projects))
+        return tuple(result)
 
     def _oauth_begin(self, account_ref: str, browser: str) -> GoogleOAuthTransactionV1:
         with self._callback_lock:
@@ -451,18 +490,15 @@ class GoogleAccountsController:
             expected_generation=account.inventory_generation,
             idempotency_key=self._idempotency_key(),
         )
-        plan = _require_plan(
-            result,
-            kind="google.provision.plan",
-            expected_generation=account.inventory_generation,
-            clock=self._clock,
-        )
+        plan = _require_provision_plan(result, account=account, clock=self._clock)
         return GoogleProvisionPlan(
             account_ref=account.ref,
             plan_id=plan.id,
             expected_generation=plan.expected_generation,
             plan_digest=plan.plan_digest,
             expires_at=plan.expires_at,
+            step_count=plan.step_count,
+            projects=plan.projects,
         )
 
     def _provision_apply(self, plan_id: str, account_ref: str) -> ControlOperation:
@@ -472,10 +508,9 @@ class GoogleAccountsController:
             "operations.get",
             {"operation_id": plan_id, "account_ref": account.ref},
         )
-        plan = _require_plan(
+        plan = _require_provision_plan(
             fetched,
-            kind="google.provision.plan",
-            expected_generation=account.inventory_generation,
+            account=account,
             clock=self._clock,
             generation_code="control.plan_stale",
         )
@@ -644,6 +679,24 @@ def _require_plan(
         raise MasterjetClientError("control.response_invalid")
     _require_unexpired(operation.expires_at, clock, "control.plan_stale")
     return operation
+
+
+def _require_provision_plan(
+    value: object,
+    *,
+    account: GoogleControlAccount,
+    clock: Callable[[], datetime],
+    generation_code: str = "control.response_invalid",
+) -> GoogleProvisionPlanV1:
+    if type(value) is not GoogleProvisionPlanV1:
+        raise MasterjetClientError("control.response_invalid")
+    plan = value
+    if plan.account_ref != account.ref:
+        raise MasterjetClientError("control.response_invalid")
+    if plan.expected_generation != account.inventory_generation:
+        raise MasterjetClientError(generation_code)
+    _require_unexpired(plan.expires_at, clock, "control.plan_stale")
+    return plan
 
 
 def _require_operation(value: object, *, kind: str, expected_generation: int) -> ControlOperation:

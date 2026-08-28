@@ -2283,3 +2283,43 @@ def test_invalid_https_port_is_not_retained_as_client_error_context():
 
     assert caught.value.__context__ is None
     assert "sk-private" not in repr(caught.value)
+
+
+def test_full_plan_preview_dispatches_to_typed_redacted_contract(monkeypatch):
+    payload = {
+        "schema_version": 1,
+        "id": "plan-1",
+        "kind": "google.provision.plan",
+        "state": "planned",
+        "account_ref": "google-1",
+        "expected_generation": 4,
+        "resulting_generation": None,
+        "plan_digest": "sha256:" + "a" * 64,
+        "created_at": "2026-08-28T12:00:00Z",
+        "expires_at": "2026-08-28T12:05:00Z",
+        "completed_count": 0,
+        "failed_count": 0,
+        "not_attempted_count": 2,
+        "reason_codes": [],
+        "step_count": 4,
+        "projects": [
+            {"project_name": "Amber Orchard", "key_name": "Willow Meadow"},
+            {"project_name": "Velvet Harbor", "key_name": "Silver Forest"},
+        ],
+    }
+    FakeHTTPSConnection.response = FakeHTTPResponse(json.dumps(payload).encode())
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    result = https_client(bearer_provider=lambda: "remote-bearer").call(
+        "google.provision.plan",
+        {"account_ref": "google-1"},
+        expected_generation=4,
+        idempotency_key="idem-1",
+    )
+
+    assert result.account_ref == "google-1"
+    assert result.step_count == 4
+    assert [(row.project_name, row.key_name) for row in result.projects] == [
+        ("Amber Orchard", "Willow Meadow"),
+        ("Velvet Harbor", "Silver Forest"),
+    ]

@@ -483,3 +483,22 @@ def test_stale_actions_allow_read_only_refresh_but_block_every_mutation(tmp_path
         actions.import_oauth_client("google-one", tmp_path / "client.json")
 
     assert calls == [("/opt/codex-usage", "google", "accounts", "--json")]
+
+
+def test_live_projection_failure_revokes_previous_google_mutations() -> None:
+    module = _module()
+    model = module.GoogleAccountsModel()
+    model.render(_payload())
+
+    class Runner:
+        def submit(self, argv, *, stdin_data=None, callback=None):
+            raise AssertionError("mutation escaped revoked projection")
+
+    actions = module.GoogleActions(Runner())
+    actions.set_projection_ready(True)
+    model.fail_closed()
+    actions.set_projection_ready(False)
+
+    with pytest.raises(RuntimeError, match="STALE"):
+        actions.provision_plan("google-one")
+    assert model.cards == ()

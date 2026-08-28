@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -10,7 +11,11 @@ from codex_usage.masterjet_client import MasterjetClientError
 from codex_usage.masterjet_contracts import (
     ControlOperation,
     GoogleControlAccount,
+    GoogleControlProject,
+    GoogleControlProjectList,
     GoogleOAuthTransactionV1,
+    GoogleProvisionPlanV1,
+    GoogleProvisionProjectV1,
     SecretIngressReceipt,
     SecretIngressSession,
 )
@@ -65,13 +70,37 @@ def operation(
     )
 
 
+def provision_plan(
+    *,
+    generation: int = 4,
+    expires_at: datetime = NOW + timedelta(minutes=5),
+) -> GoogleProvisionPlanV1:
+    return GoogleProvisionPlanV1(
+        id="plan-1",
+        kind="google.provision.plan",
+        state="planned",
+        account_ref="google-one",
+        expected_generation=generation,
+        resulting_generation=None,
+        plan_digest=DIGEST,
+        created_at=NOW - timedelta(minutes=1),
+        expires_at=expires_at,
+        completed_count=0,
+        failed_count=0,
+        not_attempted_count=1,
+        reason_codes=(),
+        step_count=1,
+        projects=(GoogleProvisionProjectV1("Amber Orchard", "Willow Meadow"),),
+    )
+
+
 class FakeControlClient:
     def __init__(self) -> None:
         self.accounts = (account("google-one", 4), account("google-two", 4))
         self.calls: list[tuple[str, object, int | None, str | None]] = []
         self.puts: list[tuple[str, bytes, int | None, str | None]] = []
         self.secret_views: list[bytearray] = []
-        self.stored_plan = operation("google.provision.plan")
+        self.stored_plan = provision_plan()
         self.stored_plan_account_ref = "google-one"
         self.authorization_url = AUTHORIZATION_URL
         self.oauth_expires_at = NOW + timedelta(minutes=5)
@@ -109,7 +138,7 @@ class FakeControlClient:
                 resulting_generation=5,
             )
         if name == "google.provision.plan":
-            self.stored_plan = operation("google.provision.plan")
+            self.stored_plan = provision_plan()
             self.stored_plan_account_ref = str(arguments["account_ref"])
             return self.stored_plan
         if name == "operations.get":
@@ -246,6 +275,66 @@ def test_list_keeps_google_accounts_separate() -> None:
     assert [row.ref for row in rows] == ["google-one", "google-two"]
     assert rows[0].inventory_generation == 4
     assert rows[1].inventory_generation == 4
+
+
+def test_account_details_cover_exact_accounts_generations_and_project_counts() -> None:
+    client = FakeControlClient()
+    client.accounts = (
+        account("google-one", 4),
+        account("google-two", 7),
+    )
+    client.accounts = (replace(client.accounts[0], project_count=1), client.accounts[1])
+    project = GoogleControlProject(
+        ref="hive-one",
+        project_name="Amber Orchard",
+        purpose="quota_probe",
+        key_name="Willow Meadow",
+        billing_ref=None,
+        status="ready",
+        probe_state="ready",
+        quota_state="available",
+    )
+    original_call = client.call
+
+    def call(name, arguments, expected_generation=None, idempotency_key=None):
+        if name == "google.projects.list":
+            ref = arguments["account_ref"]
+            generation = 4 if ref == "google-one" else 7
+            return GoogleControlProjectList(
+                schema_version=1,
+                account_ref=ref,
+                inventory_generation=generation,
+                projects=(project,) if ref == "google-one" else (),
+            )
+        return original_call(name, arguments, expected_generation, idempotency_key)
+
+    client.call = call
+
+    details = controller(client).account_details()
+
+    assert tuple(row.account.ref for row in details) == ("google-one", "google-two")
+    assert details[0].projects == (project,)
+    assert details[1].projects == ()
+
+
+def test_account_details_reject_generation_or_count_mismatch() -> None:
+    client = FakeControlClient()
+    original_call = client.call
+
+    def call(name, arguments, expected_generation=None, idempotency_key=None):
+        if name == "google.projects.list":
+            return GoogleControlProjectList(
+                schema_version=1,
+                account_ref=arguments["account_ref"],
+                inventory_generation=99,
+                projects=(),
+            )
+        return original_call(name, arguments, expected_generation, idempotency_key)
+
+    client.call = call
+
+    with pytest.raises(GoogleAccountsError, match=r"control\.response_invalid"):
+        controller(client).account_details()
 
 
 def test_oauth_begin_and_complete_bind_account_generation_and_transaction() -> None:
@@ -689,7 +778,7 @@ def test_provision_apply_reloads_and_binds_digest_after_restart() -> None:
 
 def test_expired_reloaded_plan_never_reaches_apply() -> None:
     client = FakeControlClient()
-    client.stored_plan = operation("google.provision.plan", expires_at=NOW - timedelta(seconds=1))
+    client.stored_plan = provision_plan(expires_at=NOW - timedelta(seconds=1))
 
     with pytest.raises(GoogleAccountsError, match=r"control\.plan_stale"):
         controller(client).provision_apply("plan-1", account_ref="google-one")

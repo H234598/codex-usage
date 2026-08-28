@@ -28,6 +28,7 @@ from .masterjet_contracts import (
     parse_google_accounts,
     parse_google_oauth_transaction,
     parse_google_projects,
+    parse_google_provision_plan,
     parse_openai_accounts,
     parse_secret_ingress_receipt,
     parse_secret_ingress_session,
@@ -168,9 +169,7 @@ class MasterjetControlClient:
         *,
         bearer_provider: Callable[[], str] | None = None,
         step_up_provider: Callable[[], str] | None = None,
-        local_attestation_verifier: (
-            Callable[[int, int, int, socket.socket], bool] | None
-        ) = None,
+        local_attestation_verifier: (Callable[[int, int, int, socket.socket], bool] | None) = None,
     ) -> None:
         if type(connection) is not MasterjetConnection:
             raise TypeError("connection must be a MasterjetConnection")
@@ -388,10 +387,7 @@ class _HttpsTransport:
                 if secret_session_id is None:
                     raise MasterjetClientError("control.request_invalid")
                 body = secret.tobytes()
-                target = (
-                    "/admin/v1/secret-ingress-sessions/"
-                    + quote(secret_session_id, safe="")
-                )
+                target = "/admin/v1/secret-ingress-sessions/" + quote(secret_session_id, safe="")
                 headers.update(
                     _secret_request_headers(
                         operation,
@@ -536,9 +532,8 @@ def _decode_response(operation: str, arguments: object, response: tuple[int, byt
             return parse_google_accounts(payload)
         if operation == "google.oauth.begin":
             transaction = parse_google_oauth_transaction(payload)
-            if (
-                type(arguments) is not dict
-                or transaction.account_ref != arguments.get("account_ref")
+            if type(arguments) is not dict or transaction.account_ref != arguments.get(
+                "account_ref"
             ):
                 raise MasterjetClientError("control.response_invalid")
             return transaction
@@ -547,6 +542,11 @@ def _decode_response(operation: str, arguments: object, response: tuple[int, byt
         if operation == "google.projects.list":
             account_ref = arguments.get("account_ref") if type(arguments) is dict else None
             return parse_google_projects(payload, expected_account_ref=account_ref)
+        if operation == "google.provision.plan":
+            plan = parse_google_provision_plan(payload)
+            if type(arguments) is not dict or plan.account_ref != arguments.get("account_ref"):
+                raise MasterjetClientError("control.response_invalid")
+            return plan
         if operation == "secret.ingress.create":
             session = parse_secret_ingress_session(payload)
             if (
@@ -558,18 +558,26 @@ def _decode_response(operation: str, arguments: object, response: tuple[int, byt
             return session
         if operation == "secret.ingress.put":
             receipt = parse_secret_ingress_receipt(payload)
-            if type(arguments) is not dict or receipt.session_id != arguments.get(
-                "session_id"
-            ):
+            if type(arguments) is not dict or receipt.session_id != arguments.get("session_id"):
                 raise MasterjetClientError("control.response_invalid")
             return receipt
-        result = parse_control_operation(payload)
         if (
             operation == "operations.get"
-            and (
+            and type(payload) is dict
+            and payload.get("kind") == "google.provision.plan"
+            and "projects" in payload
+        ):
+            plan = parse_google_provision_plan(payload)
+            if (
                 type(arguments) is not dict
-                or result.id != arguments.get("operation_id")
-            )
+                or plan.id != arguments.get("operation_id")
+                or plan.account_ref != arguments.get("account_ref")
+            ):
+                raise MasterjetClientError("control.response_invalid")
+            return plan
+        result = parse_control_operation(payload)
+        if operation == "operations.get" and (
+            type(arguments) is not dict or result.id != arguments.get("operation_id")
         ):
             raise MasterjetClientError("control.response_invalid")
         return result
@@ -1134,12 +1142,9 @@ def _host_valid(host: str) -> bool:
         return True
     except ValueError:
         pass
-    return (
-        _HOST_RE.fullmatch(host) is not None
-        and all(
-            label and len(label) <= 63 and not label.startswith("-") and not label.endswith("-")
-            for label in host.split(".")
-        )
+    return _HOST_RE.fullmatch(host) is not None and all(
+        label and len(label) <= 63 and not label.startswith("-") and not label.endswith("-")
+        for label in host.split(".")
     )
 
 
@@ -1213,10 +1218,7 @@ def _argument_value_valid(value: object, kind: str) -> bool:
         return (
             type(value) is list
             and 1 <= len(value) <= 256
-            and all(
-                type(item) is str and _TOKEN_RE.fullmatch(item) is not None
-                for item in value
-            )
+            and all(type(item) is str and _TOKEN_RE.fullmatch(item) is not None for item in value)
             and len(set(value)) == len(value)
         )
     if kind == "redirect_uri":

@@ -8,7 +8,7 @@ import sys
 import tempfile
 import time
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -36,6 +36,7 @@ from .config import (
     SUPPORTED_BACKENDS,
     SUPPORTED_BROWSERS,
     SUPPORTED_REACTIVATION_BROWSERS,
+    MasterjetConnection,
     add_or_update_account,
     compare_and_clear_account_auth_sync_required,
     default_config_path,
@@ -45,6 +46,7 @@ from .config import (
     remove_account,
     resolve_account,
     restore_account,
+    save_config,
 )
 from .consumption import (
     ConsumptionWindow,
@@ -56,17 +58,28 @@ from .direct import (
     auth_identity_changed,
     auth_identity_for_account,
     auth_identity_from_file,
+    validate_auth_json_file,
 )
-from .google_accounts import GoogleAccountsController, GoogleAccountsError
+from .google_accounts import (
+    GoogleAccountDetails,
+    GoogleAccountsController,
+    GoogleAccountsError,
+)
 from .health import clear_health, load_health, record_health_event
 from .history import HistoryStore
 from .json_utils import loads_strict
 from .masterjet_auth_sync import AuthSyncError, sync_account_auth
-from .masterjet_cache import load_control_snapshot
+from .masterjet_cache import (
+    ControlSnapshot,
+    load_control_snapshot,
+    save_control_snapshot,
+)
 from .masterjet_client import MasterjetClientError, MasterjetControlClient
 from .masterjet_contracts import (
     ControlOperation,
     GoogleControlAccount,
+    GoogleControlProject,
+    GoogleControlProjectList,
     GoogleOAuthTransactionV1,
     OpenAIControlAccount,
 )
@@ -166,7 +179,12 @@ Login und Reaktivierung:
 
 Masterjet und Google:
   codex-usage masterjet status --json
+  codex-usage masterjet openai-accounts --json
   codex-usage masterjet openai-routing-options --json
+  codex-usage masterjet connection-show --json
+  codex-usage masterjet connection-test --json
+  codex-usage masterjet connection-set --transport local|https --endpoint ENDPOINT
+                                       [--timeout-seconds SECONDS] --json
   codex-usage google accounts --json
   codex-usage google add ACCOUNT --oauth-client-json PATH --json
   codex-usage google oauth-begin ACCOUNT --browser BROWSER --json
@@ -309,8 +327,7 @@ KNOWN_COMMANDS = {
 
 def main(argv: list[str] | None = None) -> int:
     if argv is not None and (
-        not isinstance(argv, list)
-        or any(not isinstance(argument, str) for argument in argv)
+        not isinstance(argv, list) or any(not isinstance(argument, str) for argument in argv)
     ):
         print("Fehler: argv is invalid", file=sys.stderr)
         return 2
@@ -470,6 +487,29 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     masterjet_routing.add_argument("--json", action="store_true")
     masterjet_routing.set_defaults(func=_cmd_masterjet_openai_routing_options)
+    masterjet_openai = masterjet_sub.add_parser(
+        "openai-accounts", help="Redigierte OpenAI-Accounts anzeigen"
+    )
+    masterjet_openai.add_argument("--json", action="store_true")
+    masterjet_openai.set_defaults(func=_cmd_masterjet_openai_accounts)
+    connection_show = masterjet_sub.add_parser(
+        "connection-show", help="Kanonische Verbindung anzeigen"
+    )
+    connection_show.add_argument("--json", action="store_true")
+    connection_show.set_defaults(func=_cmd_masterjet_connection_show)
+    connection_test = masterjet_sub.add_parser(
+        "connection-test", help="Kanonische Verbindung testen"
+    )
+    connection_test.add_argument("--json", action="store_true")
+    connection_test.set_defaults(func=_cmd_masterjet_connection_test)
+    connection_set = masterjet_sub.add_parser(
+        "connection-set", help="Kanonische Verbindung speichern"
+    )
+    connection_set.add_argument("--transport", choices=("local", "https"), required=True)
+    connection_set.add_argument("--endpoint", required=True)
+    connection_set.add_argument("--timeout-seconds", type=int, default=10)
+    connection_set.add_argument("--json", action="store_true")
+    connection_set.set_defaults(func=_cmd_masterjet_connection_set)
 
     google = sub.add_parser("google", help="Google-Controlaccounts verwalten")
     google_sub = google.add_subparsers(dest="google_command", required=True)
@@ -586,9 +626,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "set",
         help="Credit-Freigabe fuer einen Scope setzen oder erben",
     )
-    policy_set.add_argument(
-        "scope", choices=("global", "account", "group", "agent", "job")
-    )
+    policy_set.add_argument("scope", choices=("global", "account", "group", "agent", "job"))
     policy_set.add_argument("value", choices=("allow", "deny", "inherit"))
     policy_set.add_argument("--id", dest="identifier")
     policy_set.add_argument("--format", choices=("json",), default="json")
@@ -601,8 +639,10 @@ def _build_parser() -> argparse.ArgumentParser:
     for name in ("hourly", "weekly", "monthly"):
         policy_limits.add_argument("--" + name, type=float, default=None)
     policy_limits.add_argument(
-        "--scope", choices=("global", "account", "group", "agent", "job"),
-        default="global", help="global oder Geltungsbereich der Limits"
+        "--scope",
+        choices=("global", "account", "group", "agent", "job"),
+        default="global",
+        help="global oder Geltungsbereich der Limits",
     )
     policy_limits.add_argument("--id", dest="identifier", help="ID des Geltungsbereichs")
     policy_limits.add_argument("--format", choices=("json",), default="json")
@@ -698,9 +738,7 @@ def _build_parser() -> argparse.ArgumentParser:
     consumption = sub.add_parser("consumption", help="Limitverbrauch in Prozentpunkten berechnen")
     consumption.add_argument("--account", required=True)
     consumption.add_argument("--amount", type=int, required=True)
-    consumption.add_argument(
-        "--unit", choices=("minutes", "hours", "days", "weeks"), required=True
-    )
+    consumption.add_argument("--unit", choices=("minutes", "hours", "days", "weeks"), required=True)
     consumption.add_argument(
         "--baseline-minutes",
         type=int,
@@ -959,9 +997,7 @@ def _cmd_account_overview(args: argparse.Namespace) -> int:
     return (
         0
         if args.config_only
-        or _all_usage_results_valid(
-            usages.values(), (account.id for account in config.accounts)
-        )
+        or _all_usage_results_valid(usages.values(), (account.id for account in config.accounts))
         else 2
     )
 
@@ -1098,7 +1134,7 @@ def _cmd_account_delete(args: argparse.Namespace) -> int:
                 try:
                     profile_transaction.rollback()
                 except Exception as rollback_error:
-                        raise BaseExceptionGroup(
+                    raise BaseExceptionGroup(
                         "profile deletion rollback failed",
                         [primary_error, rollback_error],
                     ) from None
@@ -1147,12 +1183,19 @@ def _cmd_account_delete(args: argparse.Namespace) -> int:
                     )
                 delete_transaction()
     if args.format == "json":
-        print(json.dumps({
-            "ok": True,
-            "account": account.id,
-            "label": account.label,
-            "profile_deleted": bool(args.delete_profile),
-        }, ensure_ascii=False, indent=2, allow_nan=False))
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "account": account.id,
+                    "label": account.label,
+                    "profile_deleted": bool(args.delete_profile),
+                },
+                ensure_ascii=False,
+                indent=2,
+                allow_nan=False,
+            )
+        )
     else:
         print(f"Account geloescht: {account.id} ({account.label})")
         if args.delete_profile:
@@ -1234,9 +1277,7 @@ def _cmd_consumption(args: argparse.Namespace) -> int:
     windows: list[ConsumptionWindow] = []
     lookback_seconds = consumption_lookback_seconds(args.amount, args.unit)
     baseline_seconds = (
-        lookback_seconds
-        if args.baseline_minutes is None
-        else args.baseline_minutes * 60
+        lookback_seconds if args.baseline_minutes is None else args.baseline_minutes * 60
     )
     if args.baseline_minutes is not None and not 0 <= args.baseline_minutes <= 9_999:
         raise ValueError("baseline-minutes must be between 0 and 9999")
@@ -1383,9 +1424,7 @@ def _cmd_profile_device_login(args: argparse.Namespace) -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
     else:
         message = payload.get("error") or (
-            "Device-Login abgeschlossen"
-            if payload.get("ok")
-            else "Device-Login fehlgeschlagen"
+            "Device-Login abgeschlossen" if payload.get("ok") else "Device-Login fehlgeschlagen"
         )
         print(message)
     return 0 if payload.get("ok") is True else 2
@@ -1465,9 +1504,9 @@ def _parse_history_datetime(value: str, label: str) -> datetime:
         raise ValueError(f"{label} is out of range") from exc
 
 
-def _new_google_controller(_config_path: Path | None) -> GoogleAccountsController:
-    # Productive bearer/step-up/local-attestation providers arrive in Admin Tasks 9/10.
-    raise GoogleAccountsError("control.authentication_required")
+def _new_google_controller(config_path: Path | None) -> GoogleAccountsController:
+    config = load_config(config_path)
+    return GoogleAccountsController(MasterjetControlClient(config.masterjet))
 
 
 def _new_google_oauth_controller(_config_path: Path | None) -> GoogleAccountsController:
@@ -1476,21 +1515,184 @@ def _new_google_oauth_controller(_config_path: Path | None) -> GoogleAccountsCon
 
 
 def _cmd_masterjet_status(args: argparse.Namespace) -> int:
-    payload = {"ok": False, "code": "control.authentication_required"}
-    if args.json:
+    return _cmd_masterjet_connection_test(args)
+
+
+def _connection_json(connection: MasterjetConnection) -> dict[str, object]:
+    return {
+        "transport": connection.transport,
+        "endpoint": connection.endpoint,
+        "timeout_seconds": connection.timeout_seconds,
+    }
+
+
+def _print_connection_payload(payload: dict[str, object], *, json_output: bool) -> None:
+    if json_output:
         print(json.dumps(payload, ensure_ascii=False, allow_nan=False))
+        return
+    if payload.get("ok") is True:
+        connection = payload["connection"]
+        assert isinstance(connection, dict)
+        print(
+            f"{connection['transport']}\t{connection['endpoint']}\t{connection['timeout_seconds']}s"
+        )
     else:
-        print("Fehler: control.authentication_required", file=sys.stderr)
-    return 2
+        print(f"Fehler: {payload.get('code', 'control.transport_unavailable')}", file=sys.stderr)
+
+
+def _cmd_masterjet_connection_show(args: argparse.Namespace) -> int:
+    try:
+        connection = load_config(args.config).masterjet
+    except Exception:
+        payload = {"ok": False, "code": "control.endpoint_invalid"}
+        _print_connection_payload(payload, json_output=args.json)
+        return 2
+    payload = {"ok": True, "connection": _connection_json(connection)}
+    _print_connection_payload(payload, json_output=args.json)
+    return 0
+
+
+def _cmd_masterjet_connection_test(args: argparse.Namespace) -> int:
+    try:
+        connection = load_config(args.config).masterjet
+        accounts = MasterjetControlClient(connection).call("openai.accounts.list", {})
+        if type(accounts) is not tuple or any(
+            type(account) is not OpenAIControlAccount for account in accounts
+        ):
+            raise MasterjetClientError("control.response_invalid")
+    except MasterjetClientError as exc:
+        payload = {"ok": False, "code": exc.code}
+        _print_connection_payload(payload, json_output=args.json)
+        return 2
+    except Exception:
+        payload = {"ok": False, "code": "control.transport_unavailable"}
+        _print_connection_payload(payload, json_output=args.json)
+        return 2
+    payload = {"ok": True, "connection": _connection_json(connection)}
+    _print_connection_payload(payload, json_output=args.json)
+    return 0
+
+
+def _cmd_masterjet_connection_set(args: argparse.Namespace) -> int:
+    try:
+        current = load_config(args.config)
+        connection = MasterjetConnection(
+            transport=args.transport,
+            endpoint=args.endpoint,
+            timeout_seconds=args.timeout_seconds,
+        )
+        save_config(replace(current, masterjet=connection), args.config)
+    except Exception:
+        payload = {"ok": False, "code": "control.endpoint_invalid"}
+        _print_connection_payload(payload, json_output=args.json)
+        return 2
+    payload = {"ok": True, "connection": _connection_json(connection)}
+    _print_connection_payload(payload, json_output=args.json)
+    return 0
+
+
+def _openai_account_json(account: OpenAIControlAccount) -> dict[str, object]:
+    return {
+        "ref": account.ref,
+        "label": account.label,
+        "enabled": account.enabled,
+        "local_profile_ref": account.local_profile_ref,
+        "source_host_ref": account.source_host_ref,
+        "auth_state": account.auth_state,
+        "access_expires_at": (
+            None
+            if account.access_expires_at is None
+            else _control_timestamp(account.access_expires_at)
+        ),
+        "credential_generation": account.credential_generation,
+        "vault_projection_state": account.vault_projection_state,
+        "usage_state": account.usage_state,
+    }
+
+
+def _local_openai_account_json(account: Any) -> dict[str, object]:
+    state = "missing"
+    if account.auth_json_path:
+        path = Path(account.auth_json_path)
+        try:
+            validate_auth_json_file(path)
+        except Exception:
+            try:
+                state = "invalid" if path.exists() else "missing"
+            except OSError:
+                state = "invalid"
+        else:
+            state = "ready"
+    return {
+        "account": account.id,
+        "label": account.label,
+        "local_auth_state": state,
+        "auth_sync_required": account.auth_sync_required,
+        "series-active": account.series_active,
+    }
+
+
+def _preserved_snapshot() -> ControlSnapshot:
+    try:
+        cached = load_control_snapshot(default_state_dir(), 30.0)
+    except Exception:
+        return ControlSnapshot()
+    return ControlSnapshot() if cached.stale else cached.snapshot
+
+
+def _save_openai_projection(accounts: tuple[OpenAIControlAccount, ...]) -> None:
+    preserved = _preserved_snapshot()
+    save_control_snapshot(
+        default_state_dir(),
+        ControlSnapshot(
+            openai_accounts=accounts,
+            google_accounts=preserved.google_accounts,
+            google_projects=preserved.google_projects,
+        ),
+        observed_at=time.time(),
+    )
+
+
+def _cmd_masterjet_openai_accounts(args: argparse.Namespace) -> int:
+    try:
+        config = load_config(args.config)
+        stale = False
+        try:
+            value = MasterjetControlClient(config.masterjet).call("openai.accounts.list", {})
+            if type(value) is not tuple or any(
+                type(account) is not OpenAIControlAccount for account in value
+            ):
+                raise MasterjetClientError("control.response_invalid")
+            accounts = value
+            _save_openai_projection(accounts)
+        except MasterjetClientError as live_error:
+            cached = load_control_snapshot(default_state_dir(), 30.0)
+            if cached.stale:
+                raise live_error from None
+            accounts = cached.snapshot.openai_accounts
+            stale = True
+        payload = {
+            "stale": stale,
+            "local_accounts": [_local_openai_account_json(item) for item in config.accounts],
+            "accounts": [_openai_account_json(item) for item in accounts],
+        }
+    except MasterjetClientError as exc:
+        payload = {"ok": False, "code": exc.code}
+        print(json.dumps(payload, ensure_ascii=False, allow_nan=False))
+        return 2
+    except Exception:
+        payload = {"ok": False, "code": "control.transport_unavailable"}
+        print(json.dumps(payload, ensure_ascii=False, allow_nan=False))
+        return 2
+    print(json.dumps(payload, ensure_ascii=False, allow_nan=False))
+    return 0
 
 
 def _cmd_masterjet_openai_routing_options(args: argparse.Namespace) -> int:
     try:
         config = load_config(args.config)
         try:
-            accounts = MasterjetControlClient(config.masterjet).call(
-                "openai.accounts.list", {}
-            )
+            accounts = MasterjetControlClient(config.masterjet).call("openai.accounts.list", {})
         except MasterjetClientError as live_error:
             try:
                 cached = load_control_snapshot(default_state_dir(), 30.0)
@@ -1511,9 +1713,7 @@ def _cmd_masterjet_openai_routing_options(args: argparse.Namespace) -> int:
         series = [
             {
                 "prefix": account.series,
-                "enabled": (
-                    account.id in by_profile and by_profile[account.id].enabled
-                ),
+                "enabled": (account.id in by_profile and by_profile[account.id].enabled),
                 "provider": "openai_chatgpt",
             }
             for account in config.accounts
@@ -1537,15 +1737,25 @@ def _cmd_masterjet_openai_routing_options(args: argparse.Namespace) -> int:
 
 def _cmd_google_accounts(args: argparse.Namespace) -> int:
     try:
-        rows = _new_google_controller(args.config).list()
+        stale = False
+        try:
+            details = _new_google_controller(args.config).account_details()
+            _save_google_projection(details)
+        except Exception as live_error:
+            cached_details = _load_google_projection_cache()
+            if cached_details is None:
+                raise live_error
+            details = cached_details
+            stale = True
     except Exception as exc:
         return _print_google_error(exc, json_output=args.json)
     if args.json:
-        payload = [_google_account_json(row) for row in rows]
+        payload = _google_details_json(details, stale=stale)
         print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
     else:
         print("REF\tLABEL\tOAUTH\tGENERATION\tQUOTA")
-        for row in rows:
+        for detail in details:
+            row = detail.account
             print(
                 f"{row.ref}\t{row.label}\t{row.oauth_state}\t"
                 f"{row.inventory_generation}\t{row.quota_state}"
@@ -1604,6 +1814,10 @@ def _cmd_google_provision_plan(args: argparse.Namespace) -> int:
         "expected_generation": plan.expected_generation,
         "plan_digest": plan.plan_digest,
         "expires_at": _control_timestamp(plan.expires_at),
+        "step_count": plan.step_count,
+        "projects": [
+            {"project_name": item.project_name, "key_name": item.key_name} for item in plan.projects
+        ],
     }
     _print_google_payload(payload, json_output=args.json)
     return 0
@@ -1639,6 +1853,79 @@ def _google_account_json(account: GoogleControlAccount) -> dict[str, object]:
     }
 
 
+def _google_project_json(project: GoogleControlProject) -> dict[str, object]:
+    return {
+        "ref": project.ref,
+        "project_name": project.project_name,
+        "purpose": project.purpose,
+        "key_name": project.key_name,
+        "billing_ref": project.billing_ref,
+        "status": project.status,
+        "probe_state": project.probe_state,
+        "quota_state": project.quota_state,
+    }
+
+
+def _google_details_json(
+    details: tuple[GoogleAccountDetails, ...], *, stale: bool
+) -> dict[str, object]:
+    return {
+        "stale": stale,
+        "accounts": [_google_account_json(item.account) for item in details],
+        "projects": {
+            item.account.ref: [_google_project_json(project) for project in item.projects]
+            for item in details
+        },
+    }
+
+
+def _save_google_projection(details: tuple[GoogleAccountDetails, ...]) -> None:
+    preserved = _preserved_snapshot()
+    save_control_snapshot(
+        default_state_dir(),
+        ControlSnapshot(
+            openai_accounts=preserved.openai_accounts,
+            google_accounts=tuple(item.account for item in details),
+            google_projects=tuple(
+                GoogleControlProjectList(
+                    schema_version=1,
+                    account_ref=item.account.ref,
+                    inventory_generation=item.account.inventory_generation,
+                    projects=item.projects,
+                )
+                for item in details
+            ),
+        ),
+        observed_at=time.time(),
+    )
+
+
+def _load_google_projection_cache() -> tuple[GoogleAccountDetails, ...] | None:
+    try:
+        cached = load_control_snapshot(default_state_dir(), 30.0)
+    except Exception:
+        return None
+    if cached.stale:
+        return None
+    accounts = cached.snapshot.google_accounts
+    projects = {item.account_ref: item for item in cached.snapshot.google_projects}
+    if set(projects) != {item.ref for item in accounts}:
+        return None
+    result: list[GoogleAccountDetails] = []
+    try:
+        for account in accounts:
+            projection = projects[account.ref]
+            if (
+                projection.inventory_generation != account.inventory_generation
+                or len(projection.projects) != account.project_count
+            ):
+                return None
+            result.append(GoogleAccountDetails(account, projection.projects))
+    except (TypeError, ValueError):
+        return None
+    return tuple(result)
+
+
 def _google_oauth_json(transaction: GoogleOAuthTransactionV1) -> dict[str, object]:
     return {
         "id": transaction.id,
@@ -1649,9 +1936,7 @@ def _google_oauth_json(transaction: GoogleOAuthTransactionV1) -> dict[str, objec
     }
 
 
-def _print_google_operation(
-    operation: ControlOperation, *, json_output: bool
-) -> int:
+def _print_google_operation(operation: ControlOperation, *, json_output: bool) -> int:
     failed = operation.state in {"partial", "failed", "blocked"}
     payload: dict[str, object] = {
         "id": operation.id,
@@ -1682,11 +1967,7 @@ def _control_timestamp(value: datetime) -> str:
 
 
 def _print_google_error(exc: Exception, *, json_output: bool) -> int:
-    code = (
-        exc.code
-        if isinstance(exc, GoogleAccountsError)
-        else "control.transport_unavailable"
-    )
+    code = exc.code if isinstance(exc, GoogleAccountsError) else "control.transport_unavailable"
     if json_output:
         print(json.dumps({"ok": False, "code": code}, ensure_ascii=False, allow_nan=False))
     else:
@@ -1962,20 +2243,28 @@ def _cmd_policy_status(args: argparse.Namespace) -> int:
             sort_keys=True,
         )
     )
-    return 0 if decisions and all(
-        _policy_decision_exit_code(decision) == 0
-        for decision in decisions.values()
-    ) else 2
+    return (
+        0
+        if decisions
+        and all(_policy_decision_exit_code(decision) == 0 for decision in decisions.values())
+        else 2
+    )
 
 
 def _policy_decision_exit_code(result: dict[str, Any]) -> int:
     decision = result.get("decision")
-    return 0 if isinstance(decision, str) and decision in {
-        "spark",
-        "main",
-        "credits",
-        "unchanged",
-    } else 2
+    return (
+        0
+        if isinstance(decision, str)
+        and decision
+        in {
+            "spark",
+            "main",
+            "credits",
+            "unchanged",
+        }
+        else 2
+    )
 
 
 def _cmd_spark_health(args: argparse.Namespace) -> int:
@@ -2013,9 +2302,7 @@ def _usage_for_policy(
         required_auth_path = Path(account.auth_json_path)
     if required_auth_path is not None:
         try:
-            auth_user_id, auth_account_id = auth_identity_from_file(
-                required_auth_path
-            )
+            auth_user_id, auth_account_id = auth_identity_from_file(required_auth_path)
         except (DirectAuthError, OSError, ValueError):
             return _invalid_policy_usage(account, "auth.json identity unavailable")
         if (
@@ -2064,9 +2351,7 @@ def _resolve_policy_account(config, account_ref: str | None, auth_json: Path | N
         if configured_account_id == backend_account_id:
             matches.append(account)
     if len(matches) != 1:
-        raise ValueError(
-            "auth.json backend account id must match exactly one configured account"
-        )
+        raise ValueError("auth.json backend account id must match exactly one configured account")
     matched = matches[0]
     if account_ref and resolve_account(config, account_ref).id != matched.id:
         raise ValueError("ACCOUNT and --auth-json identify different accounts")
@@ -2347,8 +2632,7 @@ def _validate_single_account_auth_override(account, auth_json_path: Path) -> Non
         ) from exc
     if not (expected_user_id or expected_account_id):
         raise ValueError(
-            "configured auth.json has no canonical identity; "
-            "cannot use --auth-json override"
+            "configured auth.json has no canonical identity; cannot use --auth-json override"
         )
     try:
         override_user_id, override_account_id = auth_identity_from_file(auth_json_path)
@@ -2373,9 +2657,7 @@ def _validate_fetch_mode_flags(args: argparse.Namespace) -> None:
         or getattr(args, "auth_json", None) is not None
         or getattr(args, "backend", None) is not None
     ):
-        raise ValueError(
-            "--headed cannot be combined with --direct, --auth-json or --backend"
-        )
+        raise ValueError("--headed cannot be combined with --direct, --auth-json or --backend")
 
 
 def _backend_override(args: argparse.Namespace) -> str | None:
@@ -2613,6 +2895,7 @@ class _ProfileDeleteTransaction:
 
     def commit(self) -> str:
         if self.quarantine is not None:
+
             def mark_nonrollbackable(_function, _path, exception_info):
                 self.rollbackable = False
                 raise exception_info[1]
@@ -2625,9 +2908,7 @@ class _ProfileDeleteTransaction:
         try:
             if self.quarantine is not None:
                 if not self.rollbackable:
-                    raise OSError(
-                        "profile deletion cannot be rolled back after partial cleanup"
-                    )
+                    raise OSError("profile deletion cannot be rolled back after partial cleanup")
                 if self.path.exists() or self.path.is_symlink():
                     raise OSError(f"profile path appeared during rollback: {self.path}")
                 self.quarantine.rename(self.path)
@@ -2691,8 +2972,7 @@ def _profile_delete_lock_targets(path: Path, *, browser: str) -> tuple[Path, ...
         for index, candidate in enumerate(oauth_root.iterdir(), start=1):
             if index > MAX_PROFILE_OAUTH_ENTRIES:
                 raise ValueError(
-                    "too many OAuth browser profiles: "
-                    f"max {MAX_PROFILE_OAUTH_ENTRIES}"
+                    f"too many OAuth browser profiles: max {MAX_PROFILE_OAUTH_ENTRIES}"
                 )
             if candidate.is_symlink():
                 raise ValueError(f"OAuth browser profile must not be a symlink: {candidate}")
