@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -9,18 +10,21 @@ _MAX_ACCOUNTS = 256
 _MAX_PROJECTS = 256
 _MAX_REASON_CODES = 64
 _MAX_NAME_BYTES = 256
+_MAX_LABEL_BYTES = 256
+_MAX_PURPOSE_BYTES = 128
 _MAX_GENERATION = 2**63 - 1
 _MAX_COUNT = 100_000
 _MAX_RETRY_SECONDS = 86_400
 _REF_RE = re.compile(r"^[a-z][a-z0-9-]{0,127}$")
-_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,127}(?:\.[a-z][a-z0-9_]{0,127}){0,7}$")
+_TOKEN_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+_PURPOSE_RE = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
+_LABEL_RE = re.compile(r'^[^{}\[\]"`:\\]+$')
 _VISIBLE_NAME_RE = re.compile(r"^[A-Za-z]+(?:[ -][A-Za-z]+)*$")
 _TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$")
 _PLAN_DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
 _SECRET_VALUE_RE = re.compile(
-    r"(?:\b(?:AIza[A-Za-z0-9_-]{20,}|ya29\.[A-Za-z0-9._-]{8,}|"
-    r"1//[A-Za-z0-9._-]{8,}|GOCSPX-[A-Za-z0-9_-]{8,}|"
-    r"eyJ[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,})\b|"
+    r"(?:\bAIza[A-Za-z0-9_-]*|\bya29(?:\.[A-Za-z0-9._-]*)?\b|"
+    r"\b1//|\bGOCSPX-|\beyJ[A-Za-z0-9_-]{20,}|\bsk-|"
     r"(?:^|\s)Bearer\s+[A-Za-z0-9._-]{8,}|"
     r"\b(?:access_token|refresh_token|client_secret)\s*[=:]\s*\S+)",
     re.IGNORECASE,
@@ -152,7 +156,7 @@ class OpenAIControlAccount:
 
     def __post_init__(self) -> None:
         _ref(self.ref, "ref")
-        _visible_name(self.label, "label")
+        _label(self.label, "label")
         _bool(self.enabled, "enabled")
         _ref(self.local_profile_ref, "local_profile_ref")
         _ref(self.source_host_ref, "source_host_ref")
@@ -178,7 +182,7 @@ class GoogleControlAccount:
 
     def __post_init__(self) -> None:
         _ref(self.ref, "ref")
-        _visible_name(self.label, "label")
+        _label(self.label, "label")
         _bool(self.enabled, "enabled")
         _bool(self.subject_bound, "subject_bound")
         _code(self.oauth_state, "oauth_state")
@@ -203,7 +207,7 @@ class GoogleControlProject:
     def __post_init__(self) -> None:
         _ref(self.ref, "ref")
         _visible_name(self.project_name, "project_name")
-        _visible_name(self.purpose, "purpose")
+        _purpose(self.purpose, "purpose")
         _visible_name(self.key_name, "key_name")
         _optional_ref(self.billing_ref, "billing_ref")
         _code(self.status, "status")
@@ -246,8 +250,8 @@ class ControlOperation:
     reason_codes: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        _ref(self.id, "id")
-        _code(self.kind, "kind")
+        _token(self.id, "id")
+        _token(self.kind, "kind")
         if _code(self.state, "state") not in _OPERATION_STATES:
             _invalid("state")
         _generation(self.expected_generation, "expected_generation")
@@ -288,7 +292,7 @@ class ControlProblem:
             _invalid("problem")
         _bool(self.retryable, "retryable")
         _optional_retry_seconds(self.retry_after_seconds, "retry_after_seconds")
-        _ref(self.correlation_id, "correlation_id")
+        _token(self.correlation_id, "correlation_id")
         _timestamp_value(self.occurred_at, "occurred_at")
 
 
@@ -325,7 +329,7 @@ def parse_google_project(payload: object) -> GoogleControlProject:
     return GoogleControlProject(
         ref=_ref(data["ref"], "ref"),
         project_name=_visible_name(data["project_name"], "project_name"),
-        purpose=_visible_name(data["purpose"], "purpose"),
+        purpose=_purpose(data["purpose"], "purpose"),
         key_name=_visible_name(data["key_name"], "key_name"),
         billing_ref=_optional_ref(data["billing_ref"], "billing_ref"),
         status=_code(data["status"], "status"),
@@ -381,8 +385,8 @@ def parse_control_operation(payload: object) -> ControlOperation:
     if state not in _OPERATION_STATES:
         _invalid("state")
     operation = ControlOperation(
-        id=_ref(data["id"], "id"),
-        kind=_code(data["kind"], "kind"),
+        id=_token(data["id"], "id"),
+        kind=_token(data["kind"], "kind"),
         state=state,
         expected_generation=_generation(data["expected_generation"], "expected_generation"),
         resulting_generation=_optional_generation(
@@ -440,7 +444,7 @@ def parse_control_problem(payload: object) -> ControlProblem:
         retry_after_seconds=_optional_retry_seconds(
             data["retry_after_seconds"], "retry_after_seconds"
         ),
-        correlation_id=_ref(data["correlation_id"], "correlation_id"),
+        correlation_id=_token(data["correlation_id"], "correlation_id"),
         occurred_at=_timestamp(data["occurred_at"], "occurred_at"),
     )
 
@@ -463,7 +467,7 @@ def _parse_google_account(payload: object) -> GoogleControlAccount:
     )
     return GoogleControlAccount(
         ref=_ref(data["ref"], "ref"),
-        label=_visible_name(data["label"], "label"),
+        label=_label(data["label"], "label"),
         enabled=_bool(data["enabled"], "enabled"),
         subject_bound=_bool(data["subject_bound"], "subject_bound"),
         oauth_state=_code(data["oauth_state"], "oauth_state"),
@@ -495,7 +499,7 @@ def _parse_openai_account(payload: object) -> OpenAIControlAccount:
     )
     return OpenAIControlAccount(
         ref=_ref(data["ref"], "ref"),
-        label=_visible_name(data["label"], "label"),
+        label=_label(data["label"], "label"),
         enabled=_bool(data["enabled"], "enabled"),
         local_profile_ref=_ref(data["local_profile_ref"], "local_profile_ref"),
         source_host_ref=_ref(data["source_host_ref"], "source_host_ref"),
@@ -541,7 +545,7 @@ def _unique_refs(
 
 
 def _ref(value: object, field: str) -> str:
-    if type(value) is not str or not _REF_RE.fullmatch(value):
+    if type(value) is not str or _private_value(value) or not _REF_RE.fullmatch(value):
         _invalid(field)
     return value
 
@@ -553,23 +557,45 @@ def _optional_ref(value: object, field: str) -> str | None:
 
 
 def _code(value: object, field: str) -> str:
-    if type(value) is not str or not _CODE_RE.fullmatch(value):
+    return _token(value, field)
+
+
+def _token(value: object, field: str) -> str:
+    if type(value) is not str or _private_value(value) or not _TOKEN_RE.fullmatch(value):
         _invalid(field)
     return value
 
 
 def _visible_name(value: object, field: str) -> str:
-    if type(value) is not str:
+    _safe_text(value, field, _MAX_NAME_BYTES)
+    if not _VISIBLE_NAME_RE.fullmatch(value):
+        _invalid(field)
+    return value
+
+
+def _label(value: object, field: str) -> str:
+    _safe_text(value, field, _MAX_LABEL_BYTES)
+    if not _LABEL_RE.fullmatch(value):
+        _invalid(field)
+    return value
+
+
+def _purpose(value: object, field: str) -> str:
+    _safe_text(value, field, _MAX_PURPOSE_BYTES)
+    if not _PURPOSE_RE.fullmatch(value):
+        _invalid(field)
+    return value
+
+
+def _safe_text(value: object, field: str, maximum: int) -> str:
+    if type(value) is not str or not value or _private_value(value):
         _invalid(field)
     try:
         encoded = value.encode("utf-8")
     except UnicodeEncodeError as exc:
         raise ControlContractError("control.response_invalid") from exc
-    if (
-        len(encoded) > _MAX_NAME_BYTES
-        or _SECRET_VALUE_RE.search(value)
-        or _ABSOLUTE_PATH_RE.search(value)
-        or not _VISIBLE_NAME_RE.fullmatch(value)
+    if len(encoded) > maximum or any(
+        unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in value
     ):
         _invalid(field)
     return value
@@ -658,6 +684,10 @@ def _problem_template(code: object) -> tuple[str, str, str, str, str]:
     if type(code) is not str or code not in _PROBLEM_TEMPLATES:
         _invalid("code")
     return _PROBLEM_TEMPLATES[code]
+
+
+def _private_value(value: str) -> bool:
+    return bool(_SECRET_VALUE_RE.search(value) or _ABSOLUTE_PATH_RE.search(value))
 
 
 def _invalid(_field: str) -> None:

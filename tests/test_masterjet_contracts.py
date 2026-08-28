@@ -24,7 +24,7 @@ def valid_google_project() -> dict[str, object]:
     return {
         "ref": "the-hive-1",
         "project_name": "Amber Orchard",
-        "purpose": "Primary usage",
+        "purpose": "quota_probe",
         "key_name": "Willow Meadow",
         "billing_ref": "billing-1",
         "status": "active",
@@ -115,7 +115,7 @@ def test_google_project_is_immutable_redacted_projection():
     assert project == GoogleControlProject(
         ref="the-hive-1",
         project_name="Amber Orchard",
-        purpose="Primary usage",
+        purpose="quota_probe",
         key_name="Willow Meadow",
         billing_ref="billing-1",
         status="active",
@@ -140,6 +140,19 @@ def test_google_project_accepts_visible_name_without_secret_value():
     project = parse_google_project(valid_google_project() | {"project_name": "Prompt Secret"})
 
     assert project.project_name == "Prompt Secret"
+
+
+def test_account_labels_and_project_purpose_use_distinct_safe_contracts():
+    accounts = parse_google_accounts(
+        {
+            "schema_version": 1,
+            "accounts": [valid_google_account() | {"label": "Google account 01_BW"}],
+        }
+    )
+    project = parse_google_project(valid_google_project())
+
+    assert accounts[0].label == "Google account 01_BW"
+    assert project.purpose == "quota_probe"
 
 
 def test_google_accounts_reject_unknown_nested_fields():
@@ -350,9 +363,59 @@ def test_control_operation_accepts_server_boundary_fixture():
     assert operation.expires_at.microsecond == 999_999
 
 
+def test_operation_tokens_accept_server_grammar_at_128_bytes():
+    token = "A._:-" + "x" * 123
+    operation = parse_control_operation(
+        valid_operation()
+        | {
+            "id": token,
+            "kind": token,
+            "reason_codes": [token],
+        }
+    )
+
+    assert operation.id == token
+    assert operation.kind == token
+    assert operation.reason_codes == (token,)
+
+
+def test_problem_correlation_id_accepts_server_token_grammar_at_128_bytes():
+    token = "A._:-" + "x" * 123
+
+    problem = parse_control_problem(valid_problem() | {"correlation_id": token})
+
+    assert problem.correlation_id == token
+
+
 def test_control_operation_rejects_unknown_state():
     with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
         parse_control_operation(valid_operation() | {"state": "waiting"})
+
+
+def test_consumed_refs_and_tokens_reject_provider_secret_values():
+    secret_ref = "sk-" + "a" * 40
+
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_control_operation(valid_operation() | {"id": secret_ref})
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_control_problem(valid_problem() | {"correlation_id": secret_ref})
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_google_project(valid_google_project() | {"billing_ref": secret_ref})
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_openai_accounts(
+            {
+                "schema_version": 1,
+                "accounts": [valid_openai_account() | {"local_profile_ref": secret_ref}],
+            }
+        )
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_control_operation(
+            valid_operation() | {"reason_codes": ["ya29.abcdefghijk"]}
+        )
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_control_operation(valid_operation() | {"id": "sk-..."})
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_control_operation(valid_operation() | {"reason_codes": ["ya29"]})
 
 
 @pytest.mark.parametrize(
@@ -428,7 +491,7 @@ def test_control_operation_constructor_rejects_mutable_reason_codes():
         lambda: GoogleControlProject(
             ref="the-hive-1",
             project_name="Amber Orchard",
-            purpose="Primary usage",
+            purpose="quota_probe",
             key_name="Willow Meadow",
             billing_ref="billing-1",
             status=True,
