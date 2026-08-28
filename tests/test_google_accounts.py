@@ -163,17 +163,21 @@ class FakeControlClient:
 
 
 class FakeCallbackLease:
-    def __init__(self, redirect_uri: str = REDIRECT_URI) -> None:
+    def __init__(self, redirect_uri: str = REDIRECT_URI, *, close_failures: int = 0) -> None:
         self.redirect_uri = redirect_uri
         self.close_count = 0
+        self.close_failures = close_failures
 
     def close(self) -> None:
         self.close_count += 1
+        if self.close_count <= self.close_failures:
+            raise OSError("close failed")
 
 
 class FakeCallbackProvider:
-    def __init__(self, redirect_uri: str = REDIRECT_URI) -> None:
+    def __init__(self, redirect_uri: str = REDIRECT_URI, *, close_failures: int = 0) -> None:
         self.redirect_uri = redirect_uri
+        self.close_failures = close_failures
         self.leases: list[FakeCallbackLease] = []
         self.acquire_count = 0
 
@@ -183,9 +187,38 @@ class FakeCallbackProvider:
 
     def acquire(self) -> FakeCallbackLease:
         self.acquire_count += 1
-        lease = FakeCallbackLease(self.redirect_uri)
+        lease = FakeCallbackLease(self.redirect_uri, close_failures=self.close_failures)
         self.leases.append(lease)
         return lease
+
+
+class FakeCallbackTimer:
+    def __init__(self, delay: float, callback) -> None:
+        self.delay = delay
+        self.callback = callback
+        self.cancel_count = 0
+        self.started = False
+
+    def start(self) -> None:
+        self.started = True
+
+    def cancel(self) -> None:
+        self.cancel_count += 1
+
+    def fire(self) -> None:
+        assert self.started
+        assert self.cancel_count == 0
+        self.callback()
+
+
+class FakeCallbackTimerFactory:
+    def __init__(self) -> None:
+        self.timers: list[FakeCallbackTimer] = []
+
+    def __call__(self, delay: float, callback) -> FakeCallbackTimer:
+        timer = FakeCallbackTimer(delay, callback)
+        self.timers.append(timer)
+        return timer
 
 
 def controller(client: FakeControlClient, *, clock=lambda: NOW) -> GoogleAccountsController:
@@ -441,6 +474,57 @@ def test_oauth_complete_closes_matching_lease_on_error_or_expiry(failure) -> Non
     client.fail_complete = False
     retried = subject.oauth_begin("google-one", browser="firefox")
     assert retried.id == "oauth-1"
+    assert provider.acquire_count == 2
+
+
+def test_oauth_expiry_closes_bound_lease_without_complete_or_cancel() -> None:
+    client = FakeControlClient()
+    provider = FakeCallbackProvider()
+    timers = FakeCallbackTimerFactory()
+    subject = GoogleAccountsController(
+        client,
+        clock=lambda: NOW,
+        idempotency_key_factory=lambda: "idem-1",
+        callback_provider=provider,
+        callback_timer_factory=timers,
+    )
+
+    subject.oauth_begin("google-one", browser="firefox")
+
+    assert len(timers.timers) == 1
+    assert timers.timers[0].delay == 300
+    timers.timers[0].fire()
+    assert provider.lease.close_count == 1
+
+    subject.oauth_begin("google-one", browser="firefox")
+    assert provider.acquire_count == 2
+
+
+def test_oauth_close_failure_keeps_ownership_until_bound_retry_succeeds() -> None:
+    client = FakeControlClient()
+    provider = FakeCallbackProvider(close_failures=1)
+    timers = FakeCallbackTimerFactory()
+    subject = GoogleAccountsController(
+        client,
+        clock=lambda: NOW,
+        idempotency_key_factory=lambda: "idem-1",
+        callback_provider=provider,
+        callback_timer_factory=timers,
+    )
+    subject.oauth_begin("google-one", browser="firefox")
+    timers.timers[0].fire()
+
+    assert provider.lease.close_count == 1
+    assert provider.acquire_count == 1
+    with pytest.raises(GoogleAccountsError, match=r"oauth\.callback_active"):
+        subject.oauth_begin("google-one", browser="firefox")
+
+    retry_timer = timers.timers[-1]
+    assert retry_timer.delay == 1
+    retry_timer.fire()
+    assert provider.lease.close_count == 2
+
+    subject.oauth_begin("google-one", browser="firefox")
     assert provider.acquire_count == 2
 
 

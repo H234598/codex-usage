@@ -23,6 +23,7 @@ from .masterjet_contracts import (
 from .private_io import open_verified_state_home, read_private_bytes_at
 
 MAX_OAUTH_CLIENT_JSON_BYTES = 1_000_000
+_CALLBACK_CLOSE_RETRY_SECONDS = 1.0
 _T = TypeVar("_T")
 _PATH_TYPE = type(Path())
 
@@ -56,6 +57,12 @@ class GoogleOAuthCallbackProvider(Protocol):
     def acquire(self) -> GoogleOAuthCallbackLease: ...
 
 
+class _CallbackTimer(Protocol):
+    def start(self) -> None: ...
+
+    def cancel(self) -> None: ...
+
+
 class GoogleAccountsError(RuntimeError):
     """Redacted Google control-flow failure."""
 
@@ -85,6 +92,8 @@ class GoogleAccountsController:
         "_callback_lease",
         "_callback_lock",
         "_callback_provider",
+        "_callback_timer",
+        "_callback_timer_factory",
         "_callback_transaction",
         "_client",
         "_clock",
@@ -98,6 +107,7 @@ class GoogleAccountsController:
         clock: Callable[[], datetime] | None = None,
         idempotency_key_factory: Callable[[], str] | None = None,
         callback_provider: GoogleOAuthCallbackProvider | None = None,
+        callback_timer_factory: Callable[[float, Callable[[], None]], _CallbackTimer] | None = None,
     ) -> None:
         self._client = client
         self._clock = clock if clock is not None else _utc_now
@@ -105,8 +115,12 @@ class GoogleAccountsController:
             idempotency_key_factory if idempotency_key_factory is not None else _uuid_key
         )
         self._callback_provider = callback_provider
+        self._callback_timer_factory = (
+            callback_timer_factory if callback_timer_factory is not None else _new_callback_timer
+        )
         self._callback_lease: GoogleOAuthCallbackLease | None = None
         self._callback_transaction: GoogleOAuthTransactionV1 | None = None
+        self._callback_timer: _CallbackTimer | None = None
         self._callback_lock = threading.Lock()
 
     def __repr__(self) -> str:
@@ -178,15 +192,23 @@ class GoogleAccountsController:
             lease: GoogleOAuthCallbackLease | None = None
             try:
                 lease = provider.acquire()
+                self._callback_lease = lease
                 transaction = self._begin_with_callback(
                     lease, account_ref=account_ref, browser=browser
                 )
+                self._callback_transaction = transaction
+                self._schedule_callback_timer(
+                    lease,
+                    transaction,
+                    max(
+                        0.0,
+                        (transaction.expires_at - _clock_value(self._clock)).total_seconds(),
+                    ),
+                )
             except BaseException:
-                if lease is not None:
-                    _close_callback_lease(lease)
+                if lease is not None and lease is self._callback_lease:
+                    self._close_active_callback()
                 raise
-            self._callback_lease = lease
-            self._callback_transaction = transaction
             return transaction
 
     def _begin_with_callback(
@@ -261,10 +283,71 @@ class GoogleAccountsController:
 
     def _close_active_callback(self) -> None:
         lease = self._callback_lease
+        if lease is None:
+            return
+        try:
+            _close_callback_lease(lease)
+        except MasterjetClientError:
+            try:
+                self._schedule_callback_timer(
+                    lease,
+                    self._callback_transaction,
+                    _CALLBACK_CLOSE_RETRY_SECONDS,
+                )
+            except BaseException:
+                pass
+            raise
+        timer = self._callback_timer
         self._callback_lease = None
         self._callback_transaction = None
-        if lease is not None:
-            _close_callback_lease(lease)
+        self._callback_timer = None
+        if timer is not None:
+            timer.cancel()
+
+    def _schedule_callback_timer(
+        self,
+        lease: GoogleOAuthCallbackLease,
+        transaction: GoogleOAuthTransactionV1 | None,
+        delay: float,
+    ) -> None:
+        current = self._callback_timer
+        timer_ref: list[_CallbackTimer] = []
+
+        def expire() -> None:
+            self._expire_callback(lease, transaction, timer_ref[0])
+
+        try:
+            timer = self._callback_timer_factory(delay, expire)
+            timer_ref.append(timer)
+            self._callback_timer = timer
+            timer.start()
+        except BaseException:
+            self._callback_timer = current
+            raise MasterjetClientError("oauth.callback_unavailable") from None
+        if current is not None:
+            try:
+                current.cancel()
+            except BaseException:
+                pass
+
+    def _expire_callback(
+        self,
+        lease: GoogleOAuthCallbackLease,
+        transaction: GoogleOAuthTransactionV1 | None,
+        timer: _CallbackTimer,
+    ) -> None:
+        with self._callback_lock:
+            if (
+                timer is not self._callback_timer
+                or lease is not self._callback_lease
+                or transaction != self._callback_transaction
+            ):
+                return
+            self._callback_timer = None
+            try:
+                self._close_active_callback()
+            except MasterjetClientError:
+                pass
 
     def _inventory_refresh(self, account_ref: str) -> ControlOperation:
         account = self._account(account_ref)
@@ -507,6 +590,12 @@ def _require_unexpired(expires_at: datetime, clock: Callable[[], datetime], code
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _new_callback_timer(delay: float, callback: Callable[[], None]) -> _CallbackTimer:
+    timer = threading.Timer(delay, callback)
+    timer.daemon = True
+    return timer
 
 
 def _uuid_key() -> str:
