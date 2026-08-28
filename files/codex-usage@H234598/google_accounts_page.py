@@ -389,6 +389,8 @@ class GoogleActions:
     def with_step_up(self, argv: list[str], provider: Callable[[], object], *, callback=None):
         if not argv or argv[0] != self._executable:
             raise ValueError("step-up command must use the configured Codex Usage CLI")
+        if not self._projection_ready:
+            raise RuntimeError("STALE")
         value = provider()
         if not isinstance(value, str) or not value.isascii() or not value.isdigit():
             raise ValueError("invalid step-up code")
@@ -530,7 +532,20 @@ class GoogleAccountsPage(SettingsWidget):
         )
 
     def _oauth_begin(self, _button, account_ref: str) -> None:
-        self._actions.oauth_begin(account_ref, browser="firefox", callback=self._operation_finished)
+        argv = [
+            self._actions._executable,
+            "google",
+            "oauth-begin",
+            account_ref,
+            "--browser",
+            "firefox",
+            "--json",
+        ]
+        self._actions.oauth_begin(
+            account_ref,
+            browser="firefox",
+            callback=lambda result: self._operation_finished(result, argv=argv),
+        )
 
     def _choose_oauth_client(self, _button, account_ref: str) -> None:
         self.choose_oauth_client(account_ref)
@@ -541,11 +556,14 @@ class GoogleAccountsPage(SettingsWidget):
             self.choose_oauth_client(account_ref)
 
     def _plan(self, _button, account_ref: str) -> None:
-        self._actions.provision_plan(account_ref, callback=self._plan_loaded)
+        argv = [self._actions._executable, "google", "provision-plan", account_ref, "--json"]
+        self._actions.provision_plan(
+            account_ref, callback=lambda result: self._plan_loaded(result, argv=argv)
+        )
 
-    def _plan_loaded(self, result: CommandResult) -> bool:
+    def _plan_loaded(self, result: CommandResult, *, argv=None) -> bool:
         if not result.ok:
-            self._status.set_text(f"Plan fehlgeschlagen: {result.code}")
+            self._operation_finished(result, argv=argv)
             return False
         try:
             preview = self.model.preview_plan(result.payload)
@@ -553,7 +571,23 @@ class GoogleAccountsPage(SettingsWidget):
             self._status.set_text("Planvorschau unvollständig · Apply gesperrt")
             return False
         try:
-            applied = self._actions.apply(preview, callback=self._operation_finished)
+            apply_argv = [
+                self._actions._executable,
+                "google",
+                "provision-apply",
+                preview.account_ref,
+                preview.plan_id,
+                "--plan-digest",
+                preview.plan_digest,
+                "--confirm",
+                "--json",
+            ]
+            applied = self._actions.apply(
+                preview,
+                callback=lambda applied_result: self._operation_finished(
+                    applied_result, argv=apply_argv
+                ),
+            )
         except RuntimeError:
             applied = False
         if not applied and not self._actions.projection_ready:
@@ -566,6 +600,7 @@ class GoogleAccountsPage(SettingsWidget):
             and argv is not None
             and not result.ok
             and result.code == "control.step_up_required"
+            and result.step_up_retry_safe is True
             and self._actions.projection_ready
         ):
             code = self.prompt_step_up()
@@ -622,8 +657,19 @@ class GoogleAccountsPage(SettingsWidget):
                 return
             filename = dialog.get_filename()
             if isinstance(filename, str):
+                argv = [
+                    self._actions._executable,
+                    "google",
+                    "add",
+                    account_ref,
+                    "--oauth-client-json",
+                    filename,
+                    "--json",
+                ]
                 self._actions.import_oauth_client(
-                    account_ref, Path(filename), callback=self._operation_finished
+                    account_ref,
+                    Path(filename),
+                    callback=lambda result: self._operation_finished(result, argv=argv),
                 )
         finally:
             dialog.destroy()

@@ -1383,7 +1383,11 @@ def test_account_auth_sync_json_error_is_redacted_for_bounded_runner(monkeypatch
     assert main(["account", "auth-sync", "openai-1", "--format", "json"]) == 2
 
     output = capsys.readouterr()
-    assert json.loads(output.out) == {"ok": False, "code": "control.step_up_required"}
+    assert json.loads(output.out) == {
+        "ok": False,
+        "code": "control.step_up_required",
+        "step_up_retry_safe": False,
+    }
     assert output.err == ""
 
 
@@ -1645,6 +1649,65 @@ def test_google_operation_terminal_failure_is_nonzero_structured_and_redacted(
     assert output["code"] == f"control.operation_{state}"
     assert output["state"] == state
     assert "secret" not in json.dumps(output).casefold()
+
+
+def test_google_inventory_challenge_explicitly_allows_bound_process_retry(monkeypatch, capsys):
+    class Controller:
+        def inventory_refresh(self, _account):
+            raise cli_module.GoogleAccountsError("control.step_up_required")
+
+    monkeypatch.setattr(cli_module, "_new_google_controller_for_args", lambda _args: Controller())
+
+    assert main(["google", "inventory-refresh", "google-one", "--json"]) == 2
+
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "code": "control.step_up_required",
+        "step_up_retry_safe": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("command", "method"),
+    [
+        (["google", "oauth-begin", "google-one", "--browser", "firefox", "--json"], "oauth_begin"),
+        (["google", "provision-plan", "google-one", "--json"], "provision_plan"),
+        (
+            [
+                "google",
+                "provision-apply",
+                "google-one",
+                "plan-one",
+                "--plan-digest",
+                "sha256:" + "a" * 64,
+                "--confirm",
+                "--json",
+            ],
+            "provision_apply",
+        ),
+    ],
+)
+def test_google_single_mutation_challenges_explicitly_allow_bound_retry(
+    monkeypatch, capsys, command, method
+):
+    class Controller:
+        def __getattr__(self, name):
+            if name != method:
+                raise AttributeError(name)
+            return lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                cli_module.GoogleAccountsError("control.step_up_required")
+            )
+
+    monkeypatch.setattr(cli_module, "_new_google_controller_for_args", lambda _args: Controller())
+    monkeypatch.setattr(cli_module, "_new_google_oauth_controller", lambda _path: Controller())
+
+    assert main(command) == 2
+
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "code": "control.step_up_required",
+        "step_up_retry_safe": True,
+    }
 
 
 @pytest.mark.parametrize("state", ["partial", "failed", "blocked"])

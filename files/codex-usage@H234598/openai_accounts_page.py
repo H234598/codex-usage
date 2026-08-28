@@ -216,6 +216,7 @@ class CommandResult:
     ok: bool
     payload: object
     code: str
+    step_up_retry_safe: bool = False
 
 
 class BoundedJsonRunner:
@@ -306,7 +307,12 @@ class BoundedJsonRunner:
             if returncode == 0:
                 return CommandResult(True, payload, "")
             code = payload.get("code") if isinstance(payload, dict) else None
-            return CommandResult(False, None, _redacted_code(code))
+            retry_safe = (
+                payload.get("step_up_retry_safe") is True
+                if isinstance(payload, dict)
+                else False
+            )
+            return CommandResult(False, None, _redacted_code(code), retry_safe)
         except (OSError, UnicodeError, ValueError, TimeoutError, subprocess.TimeoutExpired):
             return CommandResult(False, None, "control.transport_unavailable")
         finally:
@@ -788,6 +794,7 @@ class OpenAIAccountsPage(SettingsWidget):
             and argv is not None
             and not result.ok
             and result.code == "control.step_up_required"
+            and result.step_up_retry_safe is True
             and self._actions.projection_ready
         ):
             code = self.prompt_step_up()
@@ -805,6 +812,31 @@ class OpenAIAccountsPage(SettingsWidget):
                     pass
         self._status.set_text("Operation abgeschlossen" if result.ok else f"Fehler: {result.code}")
         return False
+
+    def prompt_step_up(self) -> str | None:
+        dialog = Gtk.Dialog(
+            title="TOTP-Step-up",
+            transient_for=self.get_toplevel()
+            if isinstance(self.get_toplevel(), Gtk.Window)
+            else None,
+            flags=Gtk.DialogFlags.MODAL,
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL,
+            Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OK,
+            Gtk.ResponseType.OK,
+        )
+        entry = Gtk.Entry()
+        entry.set_visibility(False)
+        entry.set_input_purpose(Gtk.InputPurpose.DIGITS)
+        dialog.get_content_area().pack_start(entry, False, False, 8)
+        dialog.show_all()
+        try:
+            return entry.get_text() if dialog.run() == Gtk.ResponseType.OK else None
+        finally:
+            entry.set_text("")
+            dialog.destroy()
 
     def row(self, account_ref: str) -> OpenAIAccountRow:
         return self.model.row(account_ref)

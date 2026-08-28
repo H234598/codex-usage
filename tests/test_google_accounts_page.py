@@ -13,6 +13,7 @@ import threading
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -172,7 +173,9 @@ def _task9_unix_control_server(socket_path: Path):
 
 
 @contextmanager
-def _task9_https_control_server(tmp_path: Path):
+def _task9_https_control_server(
+    tmp_path: Path, *, openai_challenge_operation: str | None = None
+):
     openssl = shutil.which("openssl")
     if openssl is None:
         pytest.skip("openssl unavailable for stdlib TLS fixture")
@@ -211,6 +214,7 @@ def _task9_https_control_server(tmp_path: Path):
     finished = threading.Event()
     requests = []
     authenticated = {"google": False, "openai": False}
+    challenged_operations = set()
     now = datetime.now(UTC)
 
     def timestamp(offset: timedelta) -> str:
@@ -246,6 +250,11 @@ def _task9_https_control_server(tmp_path: Path):
             operation = json.loads(request["body"])["operation"]
         request["operation"] = operation
         family = "google" if operation.startswith("google.") else "openai"
+        if operation == openai_challenge_operation and operation not in challenged_operations:
+            challenged_operations.add(operation)
+            return challenge
+        if family == "openai" and openai_challenge_operation is not None:
+            authenticated[family] = True
         if operation in {"google.accounts.list", "openai.accounts.list"} and not authenticated[
             family
         ]:
@@ -759,25 +768,178 @@ def test_totp_is_transient_stdin_not_argv_env_model() -> None:
     assert marker not in repr(actions)
 
 
-def test_google_page_retries_only_first_step_up_challenge_with_current_projection() -> None:
+def test_google_step_up_checks_stale_before_prompting_or_submitting() -> None:
     module = _module()
     calls = []
+    prompted = []
+
+    class Runner:
+        def submit(self, argv, *, stdin_data=None, callback=None):
+            calls.append((tuple(argv), stdin_data, callback))
+
+    actions = module.GoogleActions(Runner(), executable="/opt/codex-usage")
+
+    with pytest.raises(RuntimeError, match="STALE"):
+        actions.with_step_up(
+            ["/opt/codex-usage", "google", "inventory-refresh", "google-one", "--json"],
+            lambda: prompted.append(True) or "739104",
+        )
+
+    assert prompted == []
+    assert calls == []
+
+
+def test_google_page_binds_every_sensitive_action_to_its_original_argv(monkeypatch) -> None:
+    module = _module()
+    page = module.GoogleAccountsPage(None, None, None)
+    pending = {}
+    retries = []
+
+    class Entry:
+        def set_visibility(self, _visible):
+            return None
+
+        def set_input_purpose(self, _purpose):
+            return None
+
+        def get_text(self):
+            return "739104"
+
+        def set_text(self, _text):
+            return None
+
+    class Dialog:
+        def __init__(self, **_kwargs):
+            pass
+
+        def add_buttons(self, *_args):
+            return None
+
+        def get_content_area(self):
+            return type("Area", (), {"pack_start": lambda *_args: None})()
+
+        def show_all(self):
+            return None
+
+        def run(self):
+            return 1
+
+        def destroy(self):
+            return None
+
+    class FileChooserDialog(Dialog):
+        def get_filename(self):
+            return "/tmp/oauth-client.json"
+
+    monkeypatch.setattr(
+        module,
+        "Gtk",
+        type(
+            "FakeGtk",
+            (),
+            {
+                "Dialog": Dialog,
+                "Entry": Entry,
+                "FileChooserDialog": FileChooserDialog,
+                "Window": type("Window", (), {}),
+                "DialogFlags": type("Flags", (), {"MODAL": 1}),
+                "ResponseType": type("Response", (), {"CANCEL": 0, "OK": 1}),
+                "FileChooserAction": type("Action", (), {"OPEN": 1}),
+                "InputPurpose": type("Purpose", (), {"DIGITS": 1}),
+                "STOCK_CANCEL": "cancel",
+                "STOCK_OK": "ok",
+                "STOCK_OPEN": "open",
+            },
+        ),
+    )
 
     class Actions:
+        _executable = "/opt/codex-usage"
         projection_ready = True
 
+        def oauth_begin(self, _account, *, browser, callback):
+            assert browser == "firefox"
+            pending["oauth"] = callback
+
+        def import_oauth_client(self, _account, _source, *, callback):
+            pending["import"] = callback
+
+        def inventory_refresh(self, _account, *, callback):
+            pending["inventory"] = callback
+
+        def provision_plan(self, _account, *, callback):
+            pending["plan"] = callback
+
+        def apply(self, _preview, *, callback):
+            pending["apply"] = callback
+            return True
+
         def with_step_up(self, argv, provider, *, callback=None):
-            calls.append((argv, provider(), callback))
+            retries.append((tuple(argv), provider(), callback))
 
-    page = module.GoogleAccountsPage(None, None, None)
     page._actions = Actions()
-    page.prompt_step_up = lambda: "739104"
-    argv = ["/opt/codex-usage", "google", "inventory-refresh", "google-one", "--json"]
+    challenge = module.CommandResult(False, None, "control.step_up_required", True)
+    page._oauth_begin(None, "google-one")
+    pending["oauth"](challenge)
+    page.choose_oauth_client("google-one")
+    pending["import"](challenge)
+    page._inventory(None, "google-one")
+    pending["inventory"](challenge)
+    page._plan(None, "google-one")
+    pending["plan"](challenge)
+    page._plan_loaded(
+        module.CommandResult(
+            True,
+            {
+                "account_ref": "google-one",
+                "plan_id": "plan-one",
+                "expected_generation": 4,
+                "plan_digest": "sha256:" + "a" * 64,
+                "expires_at": "2026-08-28T18:00:00Z",
+                "step_count": 1,
+                "projects": [{"project_name": "Amber Meadow", "key_name": "Quiet River"}],
+            },
+            "",
+        )
+    )
+    pending["apply"](challenge)
 
-    page._operation_finished(module.CommandResult(False, None, "control.step_up_required"), argv=argv)
-    calls[0][2](module.CommandResult(False, None, "control.step_up_required"))
-
-    assert calls == [(argv, "739104", calls[0][2])]
+    assert [item[0] for item in retries] == [
+        (
+            "/opt/codex-usage",
+            "google",
+            "oauth-begin",
+            "google-one",
+            "--browser",
+            "firefox",
+            "--json",
+        ),
+        (
+            "/opt/codex-usage",
+            "google",
+            "add",
+            "google-one",
+            "--oauth-client-json",
+            "/tmp/oauth-client.json",
+            "--json",
+        ),
+        ("/opt/codex-usage", "google", "inventory-refresh", "google-one", "--json"),
+        ("/opt/codex-usage", "google", "provision-plan", "google-one", "--json"),
+        (
+            "/opt/codex-usage",
+            "google",
+            "provision-apply",
+            "google-one",
+            "plan-one",
+            "--plan-digest",
+            "sha256:" + "a" * 64,
+            "--confirm",
+            "--json",
+        ),
+    ]
+    for _argv, _code, callback in tuple(retries):
+        callback(challenge)
+    assert len(retries) == 5
 
 
 def test_google_actions_use_own_cli_and_never_masterjet_binary() -> None:
@@ -840,7 +1002,7 @@ def test_live_projection_failure_revokes_previous_google_mutations() -> None:
     assert model.cards == ()
 
 
-def test_https_page_challenges_retry_once_through_real_runner_and_cli_dispatch(
+def test_https_page_late_auth_sync_challenge_fails_closed_without_replaying_stages(
     tmp_path, monkeypatch
 ) -> None:
     google_module = _module()
@@ -863,9 +1025,10 @@ def test_https_page_challenges_retry_once_through_real_runner_and_cli_dispatch(
     diagnostics = tmp_path / "runner-diagnostics.jsonl"
     completed = queue.Queue()
     submissions = []
-    prompts = []
 
-    with _task9_https_control_server(tmp_path) as (port, certificate, requests):
+    with _task9_https_control_server(
+        tmp_path, openai_challenge_operation="openai.auth-sync.apply"
+    ) as (port, certificate, requests):
         config_path = home / ".config" / "codex-usage" / "config.toml"
         save_config(
             AppConfig(
@@ -942,7 +1105,52 @@ def test_https_page_challenges_retry_once_through_real_runner_and_cli_dispatch(
             runner, executable=str(executable), confirm=lambda _preview: True
         )
         google_page._actions.set_projection_ready(True)
-        google_page.prompt_step_up = lambda: prompts.append("google") or "739104"
+        class StepUpEntry:
+            def set_visibility(self, _visible):
+                return None
+
+            def set_input_purpose(self, _purpose):
+                return None
+
+            def get_text(self):
+                return "739104"
+
+            def set_text(self, _text):
+                return None
+
+        class StepUpDialog:
+            def __init__(self, **_kwargs):
+                pass
+
+            def add_buttons(self, *_args):
+                return None
+
+            def get_content_area(self):
+                return SimpleNamespace(pack_start=lambda *_args: None)
+
+            def show_all(self):
+                return None
+
+            def run(self):
+                return 1
+
+            def destroy(self):
+                return None
+
+        monkeypatch.setattr(
+            google_module,
+            "Gtk",
+            SimpleNamespace(
+                Dialog=StepUpDialog,
+                Entry=StepUpEntry,
+                Window=type("Window", (), {}),
+                DialogFlags=SimpleNamespace(MODAL=1),
+                ResponseType=SimpleNamespace(CANCEL=0, OK=1),
+                STOCK_CANCEL="cancel",
+                STOCK_OK="ok",
+                InputPurpose=SimpleNamespace(DIGITS="digits"),
+            ),
+        )
         google_page._inventory(None, "google-one")
         google_challenge = dispatch_one()
         assert google_challenge.code == "control.step_up_required", (
@@ -973,15 +1181,12 @@ def test_https_page_challenges_retry_once_through_real_runner_and_cli_dispatch(
             runner, reauth_runner=runner, executable=str(executable)
         )
         openai_page._actions.set_projection_ready(True)
-        openai_page.prompt_step_up = lambda: prompts.append("openai") or "739104"
         openai_page._sync_auth(None, "openai-one")
         openai_challenge = dispatch_one()
         assert openai_challenge.code == "control.step_up_required"
-        assert len(submissions) == 4
-        openai_result = dispatch_one()
-
-        assert openai_result.ok is True
-        assert openai_page._status.get_text() == "Operation abgeschlossen"
+        assert openai_challenge.step_up_retry_safe is False
+        assert len(submissions) == 3
+        assert openai_page._status.get_text() == "Fehler: control.step_up_required"
         openai_calls = len(submissions)
         openai_page._operation_finished(
             openai_module.CommandResult(False, None, "control.step_up_required"),
@@ -995,8 +1200,7 @@ def test_https_page_challenges_retry_once_through_real_runner_and_cli_dispatch(
         )
         assert len(submissions) == openai_calls
 
-    assert prompts == ["google", "openai"]
-    assert [stdin for _argv, stdin in submissions] == [None, b"739104\n", None, b"739104\n"]
+    assert [stdin for _argv, stdin in submissions] == [None, b"739104\n", None]
     assert submissions[1][0][1:] == (
         "--step-up-stdin",
         "google",
@@ -1004,18 +1208,10 @@ def test_https_page_challenges_retry_once_through_real_runner_and_cli_dispatch(
         "google-one",
         "--json",
     )
-    assert submissions[3][0][1:] == (
-        "--step-up-stdin",
-        "account",
-        "auth-sync",
-        "openai-one",
-        "--format",
-        "json",
-    )
     assert all(bearer not in " ".join(argv) for argv, _stdin in submissions)
     assert all("739104" not in " ".join(argv) for argv, _stdin in submissions)
     observed = [json.loads(line) for line in diagnostics.read_text(encoding="utf-8").splitlines()]
-    assert len(observed) == 4
+    assert len(observed) == 3
     assert all(
         item["env"].get("CREDENTIALS_DIRECTORY") == str(credential_directory)
         for item in observed
@@ -1028,13 +1224,31 @@ def test_https_page_challenges_retry_once_through_real_runner_and_cli_dispatch(
     assert all(
         request["headers"]["Authorization"] == f"Bearer {bearer}" for request in requests
     )
-    for operation in ("google.accounts.list", "openai.accounts.list"):
-        account_requests = [request for request in requests if request["operation"] == operation]
-        assert [request["headers"].get("X-Masterjet-Step-Up") for request in account_requests] == [
-            None,
-            None,
-            "739104",
-        ]
+    google_requests = [
+        request for request in requests if request["operation"] == "google.accounts.list"
+    ]
+    assert [request["headers"].get("X-Masterjet-Step-Up") for request in google_requests] == [
+        None,
+        None,
+        "739104",
+    ]
+    openai_requests = [
+        request for request in requests if request["operation"] == "openai.accounts.list"
+    ]
+    assert [request["headers"].get("X-Masterjet-Step-Up") for request in openai_requests] == [None]
+    assert [
+        request["operation"] for request in requests if request["operation"].startswith("openai.")
+    ] == [
+        "openai.accounts.list",
+        "openai.auth-sync.plan",
+        "openai.auth-sync.apply",
+    ]
+    assert [
+        request["operation"] for request in requests if request["operation"].startswith("secret.")
+    ] == [
+        "secret.ingress.create",
+        "secret.ingress.put",
+    ]
     assert [request["body"] for request in requests if request["method"] == "PUT"] == [raw_auth]
 
 

@@ -7,6 +7,7 @@ import signal
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -609,7 +610,76 @@ def test_openai_step_up_uses_explicit_transient_stdin_channel() -> None:
     assert stdin_data == b"739104\n"
 
 
-def test_openai_page_retries_only_first_step_up_challenge_with_current_projection() -> None:
+def _install_totp_dialog(module, monkeypatch, value: str):
+    entries = []
+
+    class Entry:
+        def __init__(self):
+            self.visible = True
+            self.purpose = None
+            self.text = value
+            entries.append(self)
+
+        def set_visibility(self, visible):
+            self.visible = visible
+
+        def set_input_purpose(self, purpose):
+            self.purpose = purpose
+
+        def get_text(self):
+            return self.text
+
+        def set_text(self, text):
+            self.text = text
+
+    class Dialog:
+        def __init__(self, **_kwargs):
+            self.destroyed = False
+
+        def add_buttons(self, *_args):
+            return None
+
+        def get_content_area(self):
+            return SimpleNamespace(pack_start=lambda *_args: None)
+
+        def show_all(self):
+            return None
+
+        def run(self):
+            return 1
+
+        def destroy(self):
+            self.destroyed = True
+
+    monkeypatch.setattr(
+        module,
+        "Gtk",
+        SimpleNamespace(
+            Dialog=Dialog,
+            Entry=Entry,
+            Window=type("Window", (), {}),
+            DialogFlags=SimpleNamespace(MODAL=1),
+            ResponseType=SimpleNamespace(CANCEL=0, OK=1),
+            STOCK_CANCEL="cancel",
+            STOCK_OK="ok",
+            InputPurpose=SimpleNamespace(DIGITS="digits"),
+        ),
+    )
+    return entries
+
+
+def test_openai_page_prompt_step_up_is_hidden_and_wipes_entry(monkeypatch) -> None:
+    module = _module()
+    page = module.OpenAIAccountsPage(None, None, None)
+    entries = _install_totp_dialog(module, monkeypatch, "739104")
+
+    assert page.prompt_step_up() == "739104"
+    assert entries[0].visible is False
+    assert entries[0].purpose == "digits"
+    assert entries[0].text == ""
+
+
+def test_openai_page_requires_typed_safe_step_up_projection() -> None:
     module = _module()
     calls = []
 
@@ -621,13 +691,13 @@ def test_openai_page_retries_only_first_step_up_challenge_with_current_projectio
 
     page = module.OpenAIAccountsPage(None, None, None)
     page._actions = Actions()
-    page.prompt_step_up = lambda: "739104"
     argv = ["/opt/codex-usage", "account", "auth-sync", "openai-one", "--format", "json"]
 
-    page._operation_finished(module.CommandResult(False, None, "control.step_up_required"), argv=argv)
-    calls[0][2](module.CommandResult(False, None, "control.step_up_required"))
+    page._operation_finished(
+        module.CommandResult(False, None, "control.step_up_required"), argv=argv
+    )
 
-    assert calls == [(argv, "739104", calls[0][2])]
+    assert calls == []
 
 
 def test_openai_action_guard_checks_current_projection_before_mutation_argv() -> None:
