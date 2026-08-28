@@ -1472,11 +1472,8 @@ def test_config_round_trip_auth_json_path(tmp_path):
 
 def test_auth_sync_required_round_trips_and_unrelated_update_preserves_it(tmp_path):
     config_path = tmp_path / "config.toml"
-    add_or_update_account(
-        "privat",
-        auth_sync_required=True,
-        path=config_path,
-    )
+    add_or_update_account("privat", path=config_path)
+    config_module.mark_account_auth_sync_required("privat", path=config_path)
 
     restarted = load_config(config_path)
     assert restarted.accounts[0].auth_sync_required is True
@@ -1484,7 +1481,91 @@ def test_auth_sync_required_round_trips_and_unrelated_update_preserves_it(tmp_pa
 
     _, updated = add_or_update_account("privat", label="Privat", path=config_path)
     assert updated.auth_sync_required is True
+    assert updated.auth_sync_generation == 1
     assert load_config(config_path).accounts[0].auth_sync_required is True
+
+
+def test_auth_sync_revision_is_monotone_and_old_clear_cannot_lose_newer_mark(
+    tmp_path,
+):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("privat", path=config_path)
+
+    first = config_module.mark_account_auth_sync_required("privat", path=config_path)
+    assert first.auth_sync_generation == 1
+    assert first.auth_sync_required is True
+    assert load_config(config_path).accounts[0] == first
+
+    second = config_module.mark_account_auth_sync_required("privat", path=config_path)
+    assert second.auth_sync_generation == 2
+    assert second.auth_sync_required is True
+
+    assert (
+        config_module.compare_and_clear_account_auth_sync_required(
+            first, path=config_path
+        )
+        is False
+    )
+    restarted = load_config(config_path).accounts[0]
+    assert restarted.auth_sync_generation == 2
+    assert restarted.auth_sync_required is True
+
+    assert (
+        config_module.compare_and_clear_account_auth_sync_required(
+            second, path=config_path
+        )
+        is True
+    )
+    cleared = load_config(config_path).accounts[0]
+    assert cleared.auth_sync_generation == 2
+    assert cleared.auth_sync_required is False
+    assert (
+        config_module.compare_and_clear_account_auth_sync_required(
+            cleared, path=config_path
+        )
+        is True
+    )
+
+
+def test_auth_sync_clear_rejects_changed_canonical_source(tmp_path):
+    config_path = tmp_path / "config.toml"
+    first_profile = tmp_path / "first-profile"
+    second_profile = tmp_path / "second-profile"
+    add_or_update_account("privat", profile_dir=str(first_profile), path=config_path)
+    snapshot = config_module.mark_account_auth_sync_required("privat", path=config_path)
+
+    add_or_update_account("privat", profile_dir=str(second_profile), path=config_path)
+
+    assert (
+        config_module.compare_and_clear_account_auth_sync_required(
+            snapshot, path=config_path
+        )
+        is False
+    )
+    restarted = load_config(config_path).accounts[0]
+    assert restarted.profile_dir == str(second_profile)
+    assert restarted.auth_sync_required is True
+    assert restarted.auth_sync_generation == snapshot.auth_sync_generation
+
+
+def test_concurrent_auth_sync_marks_serialize_monotone_generation(tmp_path):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("privat", path=config_path)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        marked = tuple(
+            executor.map(
+                lambda _index: config_module.mark_account_auth_sync_required(
+                    "privat", path=config_path
+                ),
+                range(2),
+            )
+        )
+
+    assert {account.auth_sync_generation for account in marked} == {1, 2}
+    restarted = load_config(config_path).accounts[0]
+    assert restarted.auth_sync_generation == 2
+    assert restarted.auth_sync_required is True
 
 
 def test_legacy_account_defaults_auth_sync_required_to_false(tmp_path):
@@ -1493,6 +1574,7 @@ def test_legacy_account_defaults_auth_sync_required_to_false(tmp_path):
     )
 
     assert account.auth_sync_required is False
+    assert account.auth_sync_generation == 0
 
 
 def test_auth_sync_required_rejects_non_boolean_values(tmp_path):
@@ -1505,12 +1587,44 @@ def test_auth_sync_required_rejects_non_boolean_values(tmp_path):
             }
         )
 
-    with pytest.raises(ValueError, match=r"auth_sync_required must be (?:a )?boolean"):
-        add_or_update_account(
-            "invalid",
-            auth_sync_required=1,
-            path=tmp_path / "config.toml",
+@pytest.mark.parametrize("value", [-1, 2**63, True, 1.0, "1"])
+def test_auth_sync_generation_rejects_invalid_values(tmp_path, value):
+    with pytest.raises(ValueError, match="auth_sync_generation"):
+        config_module._account_from_data(
+            {
+                "id": "invalid",
+                "profile_dir": str(tmp_path / "profile"),
+                "auth_sync_generation": value,
+            }
         )
+
+
+def test_auth_sync_mark_rejects_generation_exhaustion_without_change(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config = AppConfig(
+        accounts=(
+            Account(
+                id="privat",
+                label="Privat",
+                profile_dir=str(tmp_path / "profile"),
+                auth_sync_required=True,
+                auth_sync_generation=2**63 - 1,
+            ),
+        )
+    )
+    save_config(config, config_path)
+
+    with pytest.raises(ValueError, match="auth_sync_generation"):
+        config_module.mark_account_auth_sync_required("privat", path=config_path)
+
+    assert load_config(config_path) == config
+    assert (
+        config_module.compare_and_clear_account_auth_sync_required(
+            config.accounts[0], path=config_path
+        )
+        is False
+    )
+    assert load_config(config_path) == config
 
 
 def test_reconfiguring_account_clears_old_usage_state(tmp_path, monkeypatch):

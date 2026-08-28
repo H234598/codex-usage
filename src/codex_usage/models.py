@@ -88,6 +88,7 @@ class Account:
     series: str = ""
     series_active: bool = False
     auth_sync_required: bool = False
+    auth_sync_generation: int = 0
 
 
 @dataclass(frozen=True)

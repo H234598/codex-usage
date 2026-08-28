@@ -8,7 +8,7 @@ import subprocess
 import tomllib
 from collections.abc import Callable
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -32,6 +32,7 @@ MAX_CONFIG_ACCOUNTS = 100
 MAX_CONFIG_LABEL_CHARS = 256
 MAX_CONFIG_PATH_CHARS = 4096
 MAX_CONFIG_URL_CHARS = 2048
+MAX_AUTH_SYNC_GENERATION = 2**63 - 1
 _CODEX_HELP_ENV_NAMES = frozenset(
     {
         "HOME",
@@ -209,7 +210,6 @@ def add_or_update_account(
     reactivation_browser: str | None = None,
     series: str | None = None,
     series_active: bool | None = None,
-    auth_sync_required: bool | None = None,
     clear_auth_json: bool = False,
     test_home: bool = False,
     path: Path | None = None,
@@ -237,8 +237,6 @@ def add_or_update_account(
         series = series.upper()
     if series_active is not None and not isinstance(series_active, bool):
         raise ValueError("series_active must be boolean")
-    if auth_sync_required is not None and type(auth_sync_required) is not bool:
-        raise ValueError("auth_sync_required must be boolean")
     if not isinstance(clear_auth_json, bool):
         raise ValueError("clear_auth_json must be boolean")
     if not isinstance(test_home, bool):
@@ -320,10 +318,9 @@ def add_or_update_account(
                 if series_active is not None
                 else (existing.series_active if existing else False)
             ),
-            auth_sync_required=(
-                auth_sync_required
-                if auth_sync_required is not None
-                else (existing.auth_sync_required if existing else False)
+            auth_sync_required=(existing.auth_sync_required if existing else False),
+            auth_sync_generation=(
+                existing.auth_sync_generation if existing else 0
             ),
         )
 
@@ -451,6 +448,91 @@ def add_or_update_account(
                 ) from None
             raise original_error
     return updated, account
+
+
+def mark_account_auth_sync_required(
+    account_id: str,
+    *,
+    path: Path | None = None,
+) -> Account:
+    _validate_account_id(account_id)
+    config_path = _select_config_path(path)
+    _prepare_config_directory(config_path.parent)
+    from .account_lock import account_lock
+
+    with account_lock("__all_accounts__"), private_path_lock(
+        config_path, label="config lock"
+    ):
+        config = load_config(config_path)
+        existing = next(
+            (account for account in config.accounts if account.id == account_id),
+            None,
+        )
+        if existing is None:
+            raise KeyError("unknown account")
+        if existing.auth_sync_generation >= MAX_AUTH_SYNC_GENERATION:
+            raise ValueError("auth_sync_generation is exhausted")
+        updated = replace(
+            existing,
+            auth_sync_required=True,
+            auth_sync_generation=existing.auth_sync_generation + 1,
+        )
+        _save_auth_sync_account(config, updated, config_path)
+        return updated
+
+
+def compare_and_clear_account_auth_sync_required(
+    snapshot: Account,
+    *,
+    path: Path | None = None,
+) -> bool:
+    _validate_account(snapshot)
+    config_path = _select_config_path(path)
+    _prepare_config_directory(config_path.parent)
+    from .account_lock import account_lock
+
+    with account_lock("__all_accounts__"), private_path_lock(
+        config_path, label="config lock"
+    ):
+        config = load_config(config_path)
+        existing = next(
+            (account for account in config.accounts if account.id == snapshot.id),
+            None,
+        )
+        if existing is None or (
+            existing.auth_sync_generation != snapshot.auth_sync_generation
+            or existing.profile_dir != snapshot.profile_dir
+            or existing.auth_json_path != snapshot.auth_json_path
+        ):
+            return False
+        if existing.auth_sync_generation == MAX_AUTH_SYNC_GENERATION:
+            return False
+        if existing.auth_sync_required:
+            _save_auth_sync_account(
+                config,
+                replace(existing, auth_sync_required=False),
+                config_path,
+            )
+        return True
+
+
+def _save_auth_sync_account(
+    config: AppConfig,
+    account: Account,
+    config_path: Path,
+) -> None:
+    updated = AppConfig(
+        accounts=tuple(
+            account if existing.id == account.id else existing
+            for existing in config.accounts
+        ),
+        interval_seconds=config.interval_seconds,
+        analytics_url=config.analytics_url,
+        headless=config.headless,
+        masterjet=config.masterjet,
+    )
+    _validate_config(updated)
+    _save_config_unlocked(updated, config_path)
 
 
 def remove_account(
@@ -632,6 +714,9 @@ def _account_from_data(item: object) -> Account:
         item.get("auth_sync_required", False),
         "auth_sync_required",
     )
+    auth_sync_generation = _auth_sync_generation(
+        item.get("auth_sync_generation", 0)
+    )
     return Account(
         id=account_id,
         label=label,
@@ -644,6 +729,7 @@ def _account_from_data(item: object) -> Account:
         series=series,
         series_active=series_active,
         auth_sync_required=auth_sync_required,
+        auth_sync_generation=auth_sync_generation,
     )
 
 
@@ -1102,6 +1188,12 @@ def _validate_account(account: object) -> None:
         raise ValueError("series_active must be boolean")
     if type(account.auth_sync_required) is not bool:
         raise ValueError("auth_sync_required must be boolean")
+    _auth_sync_generation(account.auth_sync_generation)
+    if (
+        account.auth_sync_generation == MAX_AUTH_SYNC_GENERATION
+        and not account.auth_sync_required
+    ):
+        raise ValueError("auth_sync_generation exhaustion must remain sync_required")
     if account.series_active and not account.series:
         raise ValueError("active series requires a series name")
     if account.auth_json_path is not None:
@@ -1223,6 +1315,15 @@ def _strict_bool(value: object, name: str) -> bool:
     return value
 
 
+def _auth_sync_generation(value: object) -> int:
+    if (
+        type(value) is not int
+        or not 0 <= value <= MAX_AUTH_SYNC_GENERATION
+    ):
+        raise ValueError("auth_sync_generation must be a bounded integer")
+    return value
+
+
 def _to_toml(config: AppConfig) -> str:
     lines = [
         f"interval_seconds = {config.interval_seconds}",
@@ -1254,6 +1355,7 @@ def _to_toml(config: AppConfig) -> str:
                 f"series = {_quote(account.series)}",
                 f"series_active = {'true' if account.series_active else 'false'}",
                 f"auth_sync_required = {'true' if account.auth_sync_required else 'false'}",
+                f"auth_sync_generation = {account.auth_sync_generation}",
                 *(
                     [f"auth_json_path = {_quote(account.auth_json_path)}"]
                     if account.auth_json_path

@@ -91,14 +91,15 @@ def _sync_account_auth(
             type(candidate) is not OpenAIControlAccount for candidate in accounts
         ):
             raise MasterjetClientError("control.response_invalid")
-        matches = [candidate for candidate in accounts if candidate.ref == account.id]
+        matches = [candidate for candidate in accounts if candidate.local_profile_ref == account.id]
         if len(matches) != 1:
             raise MasterjetClientError("control.response_invalid")
-        expected_generation = matches[0].credential_generation
+        remote_account = matches[0]
+        expected_generation = remote_account.credential_generation
 
         plan = client.call(
             "openai.auth-sync.plan",
-            {"account_ref": account.id},
+            {"account_ref": remote_account.ref},
             expected_generation=expected_generation,
             idempotency_key=_idempotency_key(),
         )
@@ -116,10 +117,11 @@ def _sync_account_auth(
 
         secret = _read_auth_json(auth_path)
         try:
+            _require_unexpired(plan.expires_at, clock, "control.plan_stale")
             session = client.call(
                 "secret.ingress.create",
                 {
-                    "account_ref": account.id,
+                    "account_ref": remote_account.ref,
                     "credential_type": "openai_auth_json",
                     "plan_id": plan.id,
                 },
@@ -130,7 +132,7 @@ def _sync_account_auth(
                 raise MasterjetClientError("control.response_invalid")
             session = cast(SecretIngressSession, session)
             if (
-                session.account_ref != account.id
+                session.account_ref != remote_account.ref
                 or session.plan_id != plan.id
                 or session.expected_generation != plan.expected_generation
             ):
@@ -152,7 +154,7 @@ def _sync_account_auth(
             receipt = cast(SecretIngressReceipt, receipt)
             if (
                 receipt.session_id != session.id
-                or receipt.account_ref != account.id
+                or receipt.account_ref != remote_account.ref
                 or receipt.state != "consumed"
             ):
                 raise MasterjetClientError("control.response_invalid")
@@ -160,7 +162,7 @@ def _sync_account_auth(
 
             applied = client.call(
                 "openai.auth-sync.apply",
-                {"account_ref": account.id, "plan_id": plan.id},
+                {"account_ref": remote_account.ref, "plan_id": plan.id},
                 expected_generation=plan.expected_generation,
                 idempotency_key=_idempotency_key(),
             )
@@ -176,7 +178,7 @@ def _sync_account_auth(
             ):
                 raise MasterjetClientError("control.response_invalid")
             return AuthSyncResult(
-                account_ref=account.id,
+                account_ref=remote_account.ref,
                 generation=receipt.generation,
                 status=applied.state,
             )

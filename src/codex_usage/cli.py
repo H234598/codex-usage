@@ -37,9 +37,11 @@ from .config import (
     SUPPORTED_BROWSERS,
     SUPPORTED_REACTIVATION_BROWSERS,
     add_or_update_account,
+    compare_and_clear_account_auth_sync_required,
     default_config_path,
     default_state_dir,
     load_config,
+    mark_account_auth_sync_required,
     remove_account,
     resolve_account,
     restore_account,
@@ -846,6 +848,7 @@ def _account_json(account: Any) -> dict[str, object]:
         "series_active": account.series_active,
         "backend": account.backend,
         "auth_sync_required": account.auth_sync_required,
+        "auth_sync_generation": account.auth_sync_generation,
     }
 
 
@@ -869,6 +872,7 @@ def _cmd_account_overview(args: argparse.Namespace) -> int:
                     "series": account.series,
                     "series_active": account.series_active,
                     "auth_sync_required": account.auth_sync_required,
+                    "auth_sync_generation": account.auth_sync_generation,
                     "backend": account.backend,
                     "backend_used": usage.backend_used if usage else None,
                     "fallback_reason": usage.fallback_reason if usage else None,
@@ -1402,11 +1406,7 @@ def _cmd_login(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     account = resolve_account(config, args.account)
     login_account(account, config)
-    add_or_update_account(
-        account.id,
-        auth_sync_required=True,
-        path=args.config,
-    )
+    mark_account_auth_sync_required(account.id, path=args.config)
     print("Auth-Sync: sync_required")
     return 0
 
@@ -1420,11 +1420,7 @@ def _cmd_account_auth_sync(args: argparse.Namespace) -> int:
     except AuthSyncError as exc:
         print(f"Fehler: {exc.code}", file=sys.stderr)
         return 2
-    add_or_update_account(
-        account.id,
-        auth_sync_required=False,
-        path=args.config,
-    )
+    compare_and_clear_account_auth_sync_required(account, path=args.config)
     projection = {
         "account_ref": result.account_ref,
         "generation": result.generation,
@@ -1445,11 +1441,7 @@ def _cmd_reactivate(args: argparse.Namespace) -> int:
     try:
         result = dict(reactivate_account(account, browser=args.browser))
         if result.get("ok") is True:
-            add_or_update_account(
-                account.id,
-                auth_sync_required=True,
-                path=args.config,
-            )
+            mark_account_auth_sync_required(account.id, path=args.config)
             result["auth_sync_required"] = True
     except ReactivationError as exc:
         result = {

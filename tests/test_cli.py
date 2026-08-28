@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import codex_usage.cli as cli_module
+import codex_usage.config as config_module
 from codex_usage import __version__
 from codex_usage.account_lock import AccountLockError, account_lock
 from codex_usage.bridge import MAX_INGEST_BYTES, bridge_token_for_account, load_latest_usages
@@ -1142,7 +1143,9 @@ def test_login_accepts_unique_label_and_marks_projection_sync_required(
     assert main(["--config", str(config_path), "login", "BW_Privat"]) == 0
 
     assert "sync_required" in capsys.readouterr().out
-    assert load_config(config_path).accounts[0].auth_sync_required is True
+    restarted = load_config(config_path).accounts[0]
+    assert restarted.auth_sync_required is True
+    assert restarted.auth_sync_generation == 1
     assert called == {
         "account_id": "privat",
         "label": "BW_Privat",
@@ -1180,7 +1183,9 @@ def test_reactivate_success_persists_sync_required_without_upload(
         == 0
     )
 
-    assert load_config(config_path).accounts[0].auth_sync_required is True
+    restarted = load_config(config_path).accounts[0]
+    assert restarted.auth_sync_required is True
+    assert restarted.auth_sync_generation == 1
     assert "sync_required" in capsys.readouterr().out
 
 
@@ -1202,8 +1207,8 @@ def test_account_auth_sync_uses_resolved_account_and_authenticated_client(
     monkeypatch.setattr(cli_module, "MasterjetControlClient", lambda connection: client)
     monkeypatch.setattr(
         cli_module,
-        "add_or_update_account",
-        lambda account_id, **kwargs: persisted.append((account_id, kwargs)),
+        "compare_and_clear_account_auth_sync_required",
+        lambda snapshot, **kwargs: persisted.append((snapshot, kwargs)) or True,
     )
     monkeypatch.setattr(
         cli_module,
@@ -1216,7 +1221,7 @@ def test_account_auth_sync_uses_resolved_account_and_authenticated_client(
 
     assert calls == [(account, client)]
     assert persisted == [
-        ("openai-1", {"auth_sync_required": False, "path": None})
+        (account, {"path": None})
     ]
     assert json.loads(capsys.readouterr().out) == {
         "account_ref": "openai-1",
@@ -1229,11 +1234,8 @@ def test_account_auth_sync_success_clears_persisted_sync_required(
     tmp_path, monkeypatch, capsys
 ):
     config_path = tmp_path / "config.toml"
-    add_or_update_account(
-        "openai-1",
-        auth_sync_required=True,
-        path=config_path,
-    )
+    add_or_update_account("openai-1", path=config_path)
+    config_module.mark_account_auth_sync_required("openai-1", path=config_path)
     monkeypatch.setattr(cli_module, "MasterjetControlClient", lambda _connection: object())
     monkeypatch.setattr(
         cli_module,
@@ -1245,8 +1247,55 @@ def test_account_auth_sync_success_clears_persisted_sync_required(
 
     assert main(["--config", str(config_path), "account", "auth-sync", "openai-1"]) == 0
 
-    assert load_config(config_path).accounts[0].auth_sync_required is False
+    restarted = load_config(config_path).accounts[0]
+    assert restarted.auth_sync_required is False
+    assert restarted.auth_sync_generation == 1
     assert "succeeded" in capsys.readouterr().out
+
+
+def test_account_auth_sync_old_completion_cannot_clear_newer_reauth_and_retry_can(
+    tmp_path, monkeypatch, capsys
+):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("openai-1", path=config_path)
+    first = config_module.mark_account_auth_sync_required(
+        "openai-1", path=config_path
+    )
+    assert first.auth_sync_generation == 1
+    monkeypatch.setattr(cli_module, "MasterjetControlClient", lambda _connection: object())
+
+    def sync_with_concurrent_reauth(account, _client):
+        assert account.auth_sync_generation == 1
+        config_module.mark_account_auth_sync_required(
+            account.id, path=config_path
+        )
+        return SimpleNamespace(
+            account_ref="remote-openai-7",
+            generation=5,
+            status="succeeded",
+        )
+
+    monkeypatch.setattr(cli_module, "sync_account_auth", sync_with_concurrent_reauth)
+
+    assert main(["--config", str(config_path), "account", "auth-sync", "openai-1"]) == 0
+    raced = load_config(config_path).accounts[0]
+    assert raced.auth_sync_required is True
+    assert raced.auth_sync_generation == 2
+
+    monkeypatch.setattr(
+        cli_module,
+        "sync_account_auth",
+        lambda *_args: SimpleNamespace(
+            account_ref="remote-openai-7",
+            generation=6,
+            status="succeeded",
+        ),
+    )
+    assert main(["--config", str(config_path), "account", "auth-sync", "openai-1"]) == 0
+    retried = load_config(config_path).accounts[0]
+    assert retried.auth_sync_required is False
+    assert retried.auth_sync_generation == 2
+    assert "remote-openai-7" in capsys.readouterr().out
 
 
 def test_account_auth_sync_has_no_secret_path_or_provider_argv(monkeypatch, capsys):
@@ -4947,7 +4996,7 @@ def test_reactivation_and_account_handlers_cover_success_and_errors(monkeypatch,
     monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: account)
     monkeypatch.setattr(
         cli_module,
-        "add_or_update_account",
+        "mark_account_auth_sync_required",
         lambda account_id, **kwargs: persisted.append((account_id, kwargs)),
     )
 
@@ -4990,8 +5039,8 @@ def test_reactivation_and_account_handlers_cover_success_and_errors(monkeypatch,
     ) == 2
     assert json.loads(capsys.readouterr().out)["error"] == "reactivation failed"
     assert persisted == [
-        ("alpha", {"auth_sync_required": True, "path": None}),
-        ("alpha", {"auth_sync_required": True, "path": None}),
+        ("alpha", {"path": None}),
+        ("alpha", {"path": None}),
     ]
 
     monkeypatch.setattr(
