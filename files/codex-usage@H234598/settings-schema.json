@@ -6,7 +6,8 @@
       "format-page",
       "forecast-page",
       "status-page",
-      "accounts-page",
+      "openai-accounts-page",
+      "google-accounts-page",
       "routing-page",
       "alerts-page",
       "help-page"
@@ -41,6 +42,22 @@
       "sections": [
         "credit-status-section",
         "reset-display-section"
+      ]
+    },
+    "openai-accounts-page": {
+      "type": "page",
+      "title": "Accounts · OpenAI",
+      "sections": [
+        "openai-accounts-section",
+        "masterjet-connection-section",
+        "reactivation-options-section"
+      ]
+    },
+    "google-accounts-page": {
+      "type": "page",
+      "title": "Accounts · Google",
+      "sections": [
+        "google-accounts-section"
       ]
     },
     "accounts-page": {
@@ -109,6 +126,28 @@
         "poll-owner",
         "refresh-interval",
         "refresh-on-open"
+      ]
+    },
+    "openai-accounts-section": {
+      "type": "section",
+      "title": "OpenAI-Profile und Status",
+      "keys": [
+        "account-backends",
+        "openai-account-status"
+      ]
+    },
+    "google-accounts-section": {
+      "type": "section",
+      "title": "Google-Control",
+      "keys": [
+        "google-account-control"
+      ]
+    },
+    "masterjet-connection-section": {
+      "type": "section",
+      "title": "Masterjet-Verbindung",
+      "keys": [
+        "masterjet-connection"
       ]
     },
     "backend-section": {
@@ -399,6 +438,33 @@
     "description": "Alle GUI-Hilfetexte",
     "tooltip": "Diese Seite sammelt Beschreibungen und Tooltips aus allen anderen Seiten, Tabellen und Feldern. Sie wird automatisch aus dem aktuellen Schema aufgebaut.",
     "default": ""
+  },
+  "openai-account-status": {
+    "type": "custom",
+    "file": "openai_accounts_page.py",
+    "widget": "OpenAIAccountsPage",
+    "description": "Lokaler Auth-, Vault-, Ablauf- und Hive-Status",
+    "tooltip": "Zeigt ausschließlich redigierte OpenAI-Zustände. Re-Auth und Auth-Sync laufen über die lokale Codex-Usage-CLI; Credentialwerte werden weder angezeigt noch gespeichert.",
+    "default": ""
+  },
+  "google-account-control": {
+    "type": "custom",
+    "file": "google_accounts_page.py",
+    "widget": "GoogleAccountsPage",
+    "description": "Google-Accounts, Projekte und Control-Aktionen",
+    "tooltip": "Zeigt redigierte Account- und Projektzustände. Jede Mutation läuft begrenzt im Hintergrund; Apply folgt erst auf eine sichtbare Planbestätigung.",
+    "default": ""
+  },
+  "masterjet-connection": {
+    "type": "custom",
+    "file": "openai_accounts_page.py",
+    "widget": "MasterjetConnectionWidget",
+    "description": "Transport, Socket- oder HTTPS-Endpoint und Verbindungsstatus",
+    "tooltip": "Ungültige Endpoints werden vor dem Speichern abgewiesen. Bearer und TOTP sind keine Settingswerte.",
+    "default": {
+      "transport": "local",
+      "endpoint": "/run/user/1000/masterjet.sock"
+    }
   },
   "panel-value-count": {
     "type": "entry",
