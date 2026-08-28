@@ -1357,6 +1357,36 @@ def test_account_auth_sync_without_productive_providers_fails_closed(
     assert capsys.readouterr().err.strip() == "Fehler: control.authentication_required"
 
 
+def test_account_auth_sync_json_error_is_redacted_for_bounded_runner(monkeypatch, capsys):
+    account = Account(
+        id="openai-1",
+        label="OpenAI",
+        profile_dir="/private/profile",
+        auth_json_path="/private/profile/codex-home/auth.json",
+    )
+    config = SimpleNamespace(masterjet=object())
+    monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
+    monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: account)
+    monkeypatch.setattr(
+        cli_module,
+        "_new_masterjet_client",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "sync_account_auth",
+        lambda *_args: (_ for _ in ()).throw(
+            cli_module.AuthSyncError("control.step_up_required")
+        ),
+    )
+
+    assert main(["account", "auth-sync", "openai-1", "--format", "json"]) == 2
+
+    output = capsys.readouterr()
+    assert json.loads(output.out) == {"ok": False, "code": "control.step_up_required"}
+    assert output.err == ""
+
+
 def test_google_provision_apply_requires_confirm_before_config_or_request(
     monkeypatch, capsys
 ):

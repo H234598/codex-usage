@@ -20,7 +20,9 @@ import pytest
 
 import codex_usage.masterjet_client as client_module
 import codex_usage.masterjet_contracts as contracts_module
+import codex_usage.masterjet_credentials as credentials_module
 from codex_usage.config import MasterjetConnection
+from codex_usage.google_accounts import GoogleAccountsController
 from codex_usage.masterjet_auth_sync import sync_account_auth
 from codex_usage.masterjet_client import (
     MAX_REQUEST_BYTES,
@@ -28,6 +30,10 @@ from codex_usage.masterjet_client import (
     MAX_SECRET_BYTES,
     MasterjetClientError,
     MasterjetControlClient,
+)
+from codex_usage.masterjet_credentials import (
+    bearer_provider_from_fd,
+    bearer_provider_from_systemd_credentials,
 )
 from codex_usage.models import Account
 
@@ -509,6 +515,211 @@ def test_https_client_caches_one_shot_bearer_across_multiple_requests(monkeypatc
     client.call("google.accounts.list", {})
 
     assert calls == 1
+
+
+def test_google_account_details_over_real_https_reads_system_credential_once(
+    tmp_path, monkeypatch
+):
+    credential_directory = tmp_path / "credentials"
+    credential_directory.mkdir(mode=0o700)
+    credential = credential_directory / "masterjet-control-bearer"
+    credential.write_bytes(b"google-system-bearer")
+    credential.chmod(0o400)
+    account_payload = google_accounts_payload()
+    account_payload["accounts"][0]["project_count"] = 1
+    projects_payload = {
+        "schema_version": 1,
+        "account_ref": "google-1",
+        "inventory_generation": 4,
+        "projects": [
+            {
+                "ref": "project-1",
+                "project_name": "Amber Meadow",
+                "purpose": "quota_probe",
+                "key_name": "Quiet River",
+                "billing_ref": None,
+                "status": "ready",
+                "probe_state": "ready",
+                "quota_state": "available",
+            }
+        ],
+    }
+    reads = 0
+    real_read = credentials_module._read_bearer_from_directory
+
+    def count_read(directory):
+        nonlocal reads
+        reads += 1
+        return real_read(directory)
+
+    monkeypatch.setattr(credentials_module, "_read_bearer_from_directory", count_read)
+    provider = bearer_provider_from_systemd_credentials(
+        environ={"CREDENTIALS_DIRECTORY": str(credential_directory)}
+    )
+    original_default_context = ssl.create_default_context
+    with real_tls_server(
+        tmp_path, responses=[account_payload, projects_payload]
+    ) as (port, certificate, capture):
+        monkeypatch.setattr(client_module, "_open_https_connection", _REAL_OPEN_HTTPS_CONNECTION)
+        monkeypatch.setattr(
+            client_module.ssl,
+            "create_default_context",
+            lambda: original_default_context(cafile=certificate),
+        )
+        client = MasterjetControlClient(
+            MasterjetConnection(
+                transport="https",
+                endpoint=f"https://localhost:{port}/control",
+                timeout_seconds=2,
+            ),
+            bearer_provider=provider,
+        )
+
+        details = GoogleAccountsController(client).account_details()
+
+    assert reads == 1
+    assert details[0].account.ref == "google-1"
+    assert [project.ref for project in details[0].projects] == ["project-1"]
+    assert [
+        json.loads(request["body"])["operation"] for request in capture["requests"]
+    ] == ["google.accounts.list", "google.projects.list"]
+    assert all(
+        request["headers"]["Authorization"] == "Bearer google-system-bearer"
+        for request in capture["requests"]
+    )
+
+
+def test_complete_openai_auth_sync_over_real_https_reads_fd_once_and_raw_secret_only_in_put(
+    tmp_path, monkeypatch
+):
+    operation_base = {
+        "schema_version": 1,
+        "expected_generation": 4,
+        "plan_digest": "sha256:" + "a" * 64,
+        "created_at": "2026-08-28T12:00:00Z",
+        "expires_at": "2026-08-28T12:30:00Z",
+        "failed_count": 0,
+        "reason_codes": [],
+    }
+    responses = [
+        {
+            "schema_version": 1,
+            "accounts": [
+                {
+                    "ref": "openai-remote",
+                    "label": "OpenAI synthetic",
+                    "enabled": True,
+                    "local_profile_ref": "profile-1",
+                    "source_host_ref": "host-1",
+                    "auth_state": "ready",
+                    "access_expires_at": None,
+                    "credential_generation": 4,
+                    "vault_projection_state": "current",
+                    "usage_state": "fresh",
+                }
+            ],
+        },
+        operation_base
+        | {
+            "id": "plan-1",
+            "kind": "openai.auth-sync.plan",
+            "state": "planned",
+            "resulting_generation": None,
+            "completed_count": 0,
+            "not_attempted_count": 1,
+        },
+        {
+            "schema_version": 1,
+            "id": "ingress-1",
+            "account_ref": "openai-remote",
+            "plan_id": "plan-1",
+            "expires_at": "2026-08-28T12:15:00Z",
+            "expected_generation": 4,
+        },
+        {
+            "schema_version": 1,
+            "session_id": "ingress-1",
+            "account_ref": "openai-remote",
+            "state": "consumed",
+            "generation": 5,
+        },
+        operation_base
+        | {
+            "id": "apply-1",
+            "kind": "openai.auth-sync.apply",
+            "state": "succeeded",
+            "resulting_generation": 5,
+            "completed_count": 1,
+            "not_attempted_count": 0,
+        },
+    ]
+    credential = tmp_path / "fd-credential"
+    credential.write_bytes(b"openai-fd-bearer")
+    credential.chmod(0o400)
+    original_fd = os.open(credential, os.O_RDONLY)
+    provider = bearer_provider_from_fd(original_fd)
+    os.close(original_fd)
+    reads = 0
+    real_read = credentials_module._read_bearer_from_fd
+
+    def count_read(fd):
+        nonlocal reads
+        reads += 1
+        return real_read(fd)
+
+    monkeypatch.setattr(credentials_module, "_read_bearer_from_fd", count_read)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "state"))
+    profile = tmp_path / "profile"
+    auth_directory = profile / "codex-home"
+    auth_directory.mkdir(parents=True, mode=0o700)
+    raw_secret = b'{"tokens":"raw-openai-auth-marker"}'
+    auth_path = auth_directory / "auth.json"
+    auth_path.write_bytes(raw_secret)
+    auth_path.chmod(0o600)
+    account = Account(
+        id="profile-1",
+        label="OpenAI synthetic",
+        profile_dir=str(profile),
+        auth_json_path=str(auth_path),
+    )
+    original_default_context = ssl.create_default_context
+    with real_tls_server(tmp_path, responses=responses) as (port, certificate, capture):
+        monkeypatch.setattr(client_module, "_open_https_connection", _REAL_OPEN_HTTPS_CONNECTION)
+        monkeypatch.setattr(
+            client_module.ssl,
+            "create_default_context",
+            lambda: original_default_context(cafile=certificate),
+        )
+        client = MasterjetControlClient(
+            MasterjetConnection(
+                transport="https",
+                endpoint=f"https://localhost:{port}/control",
+                timeout_seconds=2,
+            ),
+            bearer_provider=provider,
+        )
+
+        result = sync_account_auth(
+            account,
+            client,
+            clock=lambda: datetime(2026, 8, 28, 12, 5, tzinfo=UTC),
+        )
+
+    requests = capture["requests"]
+    assert reads == 1
+    assert (result.account_ref, result.generation, result.status) == (
+        "openai-remote",
+        5,
+        "succeeded",
+    )
+    assert [request["method"] for request in requests] == ["POST", "POST", "POST", "PUT", "POST"]
+    assert all(
+        request["headers"]["Authorization"] == "Bearer openai-fd-bearer"
+        for request in requests
+    )
+    assert requests[3]["body"] == raw_secret
+    assert all(raw_secret not in request["body"] for request in requests[:3] + requests[4:])
+    assert raw_secret not in repr([request["headers"] for request in requests]).encode()
 
 
 def blocking_resolver_worker(_host: str, _port: int, _sender: object) -> None:

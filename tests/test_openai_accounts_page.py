@@ -521,6 +521,50 @@ def test_bounded_runner_passes_only_audited_gui_session_environment(monkeypatch)
     assert result.payload == {**allowed, **dict.fromkeys(blocked)}
 
 
+def test_bounded_runner_wipes_copied_stdin_when_thread_start_fails(monkeypatch) -> None:
+    module = _module()
+    events = []
+    copies = []
+    real_bytearray = bytearray
+
+    class ObservedBytearray(bytearray):
+        def __setitem__(self, key, value):
+            if isinstance(key, slice):
+                events.append(("wipe", bytes(value)))
+            return super().__setitem__(key, value)
+
+        def clear(self):
+            events.append(("clear", bytes(self)))
+            return super().clear()
+
+    def observed_copy(value=b""):
+        copy = ObservedBytearray(value)
+        copies.append(copy)
+        return copy
+
+    class FailingThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("thread unavailable")
+
+    monkeypatch.setattr(module, "bytearray", observed_copy, raising=False)
+    monkeypatch.setattr(module.threading, "Thread", FailingThread)
+    source = real_bytearray(b"739104\n")
+
+    with pytest.raises(RuntimeError, match="thread unavailable"):
+        module.BoundedJsonRunner().submit(["/opt/codex-usage", "once"], stdin_data=source)
+
+    assert source == b"739104\n"
+    assert len(copies) == 1
+    assert copies[0] == b""
+    assert events == [
+        ("wipe", b"\x00" * len(source)),
+        ("clear", b"\x00" * len(source)),
+    ]
+
+
 def test_masterjet_schema_has_no_bearer_or_totp_settings() -> None:
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
 

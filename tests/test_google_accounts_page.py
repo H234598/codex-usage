@@ -3,11 +3,15 @@ from __future__ import annotations
 import importlib.util
 import json
 import queue
+import shutil
 import site
 import socket
+import ssl
+import subprocess
 import sys
 import threading
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -164,6 +168,185 @@ def _task9_unix_control_server(socket_path: Path):
     finally:
         if not stopped.is_set():
             stop()
+        thread.join(timeout=0)
+
+
+@contextmanager
+def _task9_https_control_server(tmp_path: Path):
+    openssl = shutil.which("openssl")
+    if openssl is None:
+        pytest.skip("openssl unavailable for stdlib TLS fixture")
+    certificate = tmp_path / "runner-server.crt"
+    private_key = tmp_path / "runner-server.key"
+    subprocess.run(
+        [
+            openssl,
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-days",
+            "1",
+            "-subj",
+            "/CN=localhost",
+            "-addext",
+            "subjectAltName=DNS:localhost",
+            "-keyout",
+            str(private_key),
+            "-out",
+            str(certificate),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certificate, private_key)
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(16)
+    listener.settimeout(0.1)
+    port = listener.getsockname()[1]
+    stopped = threading.Event()
+    finished = threading.Event()
+    requests = []
+    authenticated = {"google": False, "openai": False}
+    now = datetime.now(UTC)
+
+    def timestamp(offset: timedelta) -> str:
+        return (now + offset).isoformat().replace("+00:00", "Z")
+
+    operation_base = {
+        "schema_version": 1,
+        "expected_generation": 4,
+        "plan_digest": "sha256:" + "a" * 64,
+        "created_at": timestamp(timedelta(minutes=-1)),
+        "expires_at": timestamp(timedelta(minutes=30)),
+        "failed_count": 0,
+        "reason_codes": [],
+    }
+    challenge = {
+        "schema_version": 1,
+        "code": "control.step_up_required",
+        "severity": "warning",
+        "title": "Step-up required",
+        "detail": "Additional authentication is required.",
+        "effect": "Operation is paused.",
+        "action": "Complete step-up authentication.",
+        "retryable": False,
+        "retry_after_seconds": None,
+        "correlation_id": "runner-correlation",
+        "occurred_at": timestamp(timedelta()),
+    }
+
+    def response_for(request):
+        if request["method"] == "PUT":
+            operation = "secret.ingress.put"
+        else:
+            operation = json.loads(request["body"])["operation"]
+        request["operation"] = operation
+        family = "google" if operation.startswith("google.") else "openai"
+        if operation in {"google.accounts.list", "openai.accounts.list"} and not authenticated[
+            family
+        ]:
+            step_up = request["headers"].get("X-Masterjet-Step-Up")
+            if step_up == "739104":
+                authenticated[family] = True
+            else:
+                return challenge
+        if operation == "google.accounts.list":
+            return {"schema_version": 1, "accounts": _payload()["accounts"]}
+        if operation == "google.inventory.refresh":
+            return operation_base | {
+                "id": "inventory-1",
+                "kind": operation,
+                "state": "succeeded",
+                "resulting_generation": 5,
+                "completed_count": 1,
+                "not_attempted_count": 0,
+            }
+        if operation == "openai.accounts.list":
+            return _openai_payload()
+        if operation == "openai.auth-sync.plan":
+            return operation_base | {
+                "id": "plan-1",
+                "kind": operation,
+                "state": "planned",
+                "resulting_generation": None,
+                "completed_count": 0,
+                "not_attempted_count": 1,
+            }
+        if operation == "secret.ingress.create":
+            return {
+                "schema_version": 1,
+                "id": "ingress-1",
+                "account_ref": "openai-remote",
+                "plan_id": "plan-1",
+                "expires_at": timestamp(timedelta(minutes=15)),
+                "expected_generation": 4,
+            }
+        if operation == "secret.ingress.put":
+            return {
+                "schema_version": 1,
+                "session_id": "ingress-1",
+                "account_ref": "openai-remote",
+                "state": "consumed",
+                "generation": 5,
+            }
+        if operation == "openai.auth-sync.apply":
+            return operation_base | {
+                "id": "apply-1",
+                "kind": operation,
+                "state": "succeeded",
+                "resulting_generation": 5,
+                "completed_count": 1,
+                "not_attempted_count": 0,
+            }
+        raise AssertionError(f"unexpected operation: {operation}")
+
+    def serve() -> None:
+        try:
+            while not stopped.is_set():
+                try:
+                    connection, _ = listener.accept()
+                except TimeoutError:
+                    continue
+                with connection:
+                    with context.wrap_socket(connection, server_side=True) as tls_socket:
+                        raw = bytearray()
+                        while b"\r\n\r\n" not in raw:
+                            raw.extend(tls_socket.recv(4096))
+                        head, body = raw.split(b"\r\n\r\n", 1)
+                        lines = head.decode("ascii").split("\r\n")
+                        headers = dict(line.split(": ", 1) for line in lines[1:])
+                        length = int(headers["Content-Length"])
+                        while len(body) < length:
+                            body.extend(tls_socket.recv(length - len(body)))
+                        request = {
+                            "method": lines[0].split(" ", 1)[0],
+                            "target": lines[0].split(" ")[1],
+                            "headers": headers,
+                            "body": bytes(body),
+                        }
+                        response = json.dumps(response_for(request), separators=(",", ":")).encode()
+                        requests.append(request)
+                        tls_socket.sendall(
+                            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                            + f"Content-Length: {len(response)}\r\n".encode()
+                            + b"Connection: close\r\n\r\n"
+                            + response
+                        )
+        finally:
+            listener.close()
+            finished.set()
+
+    thread = threading.Thread(target=serve, name="task9-https-control", daemon=True)
+    thread.start()
+    try:
+        yield port, certificate, requests
+    finally:
+        stopped.set()
+        assert finished.wait(2)
         thread.join(timeout=0)
 
 
@@ -655,6 +838,204 @@ def test_live_projection_failure_revokes_previous_google_mutations() -> None:
     with pytest.raises(RuntimeError, match="STALE"):
         actions.provision_plan("google-one")
     assert model.cards == ()
+
+
+def test_https_page_challenges_retry_once_through_real_runner_and_cli_dispatch(
+    tmp_path, monkeypatch
+) -> None:
+    google_module = _module()
+    openai_module = sys.modules["openai_accounts_page"]
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    profile = home / "profile"
+    auth_directory = profile / "codex-home"
+    auth_directory.mkdir(parents=True, mode=0o700)
+    raw_auth = b'{"tokens":"runner-raw-auth-marker"}'
+    auth_path = auth_directory / "auth.json"
+    auth_path.write_bytes(raw_auth)
+    auth_path.chmod(0o600)
+    credential_directory = tmp_path / "credentials"
+    credential_directory.mkdir(mode=0o700)
+    bearer = "runner-system-bearer-marker"
+    credential = credential_directory / "masterjet-control-bearer"
+    credential.write_text(bearer, encoding="ascii")
+    credential.chmod(0o400)
+    diagnostics = tmp_path / "runner-diagnostics.jsonl"
+    completed = queue.Queue()
+    submissions = []
+    prompts = []
+
+    with _task9_https_control_server(tmp_path) as (port, certificate, requests):
+        config_path = home / ".config" / "codex-usage" / "config.toml"
+        save_config(
+            AppConfig(
+                accounts=(
+                    Account(
+                        id="openai-one",
+                        label="OpenAI One",
+                        profile_dir=str(profile),
+                        auth_json_path=str(auth_path),
+                        auth_sync_required=True,
+                    ),
+                ),
+                masterjet=MasterjetConnection(
+                    transport="https",
+                    endpoint=f"https://localhost:{port}/control",
+                    timeout_seconds=5,
+                ),
+            ),
+            config_path,
+        )
+        executable = tmp_path / "codex-usage-task9-https"
+        private_lock_root = tmp_path / "runner-private-locks"
+        user_site = site.getusersitepackages()
+        executable.write_text(
+            f"#!{sys.executable}\n"
+            "import json, os, ssl, sys\n"
+            "from pathlib import Path\n"
+            f"sys.path.insert(0, {user_site!r})\n"
+            f"sys.path.insert(0, {str(ROOT / 'src')!r})\n"
+            "import codex_usage.private_io as private_io\n"
+            f"private_io._private_lock_root = lambda: Path({str(private_lock_root)!r})\n"
+            "from codex_usage.cli import main\n"
+            "if __name__ == '__main__':\n"
+            f"    with Path({str(diagnostics)!r}).open('a', encoding='utf-8') as stream:\n"
+            "        stream.write(\n"
+            "            json.dumps({'argv': sys.argv[1:], 'env': dict(os.environ)}) + '\\n'\n"
+            "        )\n"
+            "    real_default_context = ssl.create_default_context\n"
+            "    ssl.create_default_context = lambda *args, **kwargs: "
+            f"real_default_context(cafile={str(certificate)!r})\n"
+            "    raise SystemExit(main())\n",
+            encoding="utf-8",
+        )
+        executable.chmod(0o700)
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(credential_directory))
+        monkeypatch.setenv("MASTERJET_BEARER", bearer)
+        monkeypatch.setenv("TOTP_CODE", "739104")
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+
+        class Runner(openai_module.BoundedJsonRunner):
+            def __init__(self):
+                super().__init__(
+                    timeout_seconds=15,
+                    dispatcher=lambda callback, result: completed.put((callback, result)),
+                )
+
+            def submit(self, argv, *, stdin_data=None, callback=None):
+                submissions.append(
+                    (tuple(argv), None if stdin_data is None else bytes(stdin_data))
+                )
+                return super().submit(argv, stdin_data=stdin_data, callback=callback)
+
+        runner = Runner()
+
+        def dispatch_one():
+            callback, result = completed.get(timeout=20)
+            callback(result)
+            return result
+
+        google_page = google_module.GoogleAccountsPage(None, None, None)
+        google_page._actions = google_module.GoogleActions(
+            runner, executable=str(executable), confirm=lambda _preview: True
+        )
+        google_page._actions.set_projection_ready(True)
+        google_page.prompt_step_up = lambda: prompts.append("google") or "739104"
+        google_page._inventory(None, "google-one")
+        google_challenge = dispatch_one()
+        assert google_challenge.code == "control.step_up_required", (
+            google_challenge,
+            requests,
+            diagnostics.read_text(encoding="utf-8"),
+        )
+        assert len(submissions) == 2
+        google_result = dispatch_one()
+
+        assert google_result.ok is True
+        assert google_page._status.get_text() == "Operation abgeschlossen"
+        google_calls = len(submissions)
+        google_page._operation_finished(
+            google_module.CommandResult(False, None, "control.step_up_required"),
+            argv=list(submissions[0][0]),
+            retried=True,
+        )
+        google_page._actions.set_projection_ready(False)
+        google_page._operation_finished(
+            google_module.CommandResult(False, None, "control.step_up_required"),
+            argv=list(submissions[0][0]),
+        )
+        assert len(submissions) == google_calls
+
+        openai_page = openai_module.OpenAIAccountsPage(None, None, None)
+        openai_page._actions = openai_module.OpenAIActions(
+            runner, reauth_runner=runner, executable=str(executable)
+        )
+        openai_page._actions.set_projection_ready(True)
+        openai_page.prompt_step_up = lambda: prompts.append("openai") or "739104"
+        openai_page._sync_auth(None, "openai-one")
+        openai_challenge = dispatch_one()
+        assert openai_challenge.code == "control.step_up_required"
+        assert len(submissions) == 4
+        openai_result = dispatch_one()
+
+        assert openai_result.ok is True
+        assert openai_page._status.get_text() == "Operation abgeschlossen"
+        openai_calls = len(submissions)
+        openai_page._operation_finished(
+            openai_module.CommandResult(False, None, "control.step_up_required"),
+            argv=list(submissions[2][0]),
+            retried=True,
+        )
+        openai_page._actions.set_projection_ready(False)
+        openai_page._operation_finished(
+            openai_module.CommandResult(False, None, "control.step_up_required"),
+            argv=list(submissions[2][0]),
+        )
+        assert len(submissions) == openai_calls
+
+    assert prompts == ["google", "openai"]
+    assert [stdin for _argv, stdin in submissions] == [None, b"739104\n", None, b"739104\n"]
+    assert submissions[1][0][1:] == (
+        "--step-up-stdin",
+        "google",
+        "inventory-refresh",
+        "google-one",
+        "--json",
+    )
+    assert submissions[3][0][1:] == (
+        "--step-up-stdin",
+        "account",
+        "auth-sync",
+        "openai-one",
+        "--format",
+        "json",
+    )
+    assert all(bearer not in " ".join(argv) for argv, _stdin in submissions)
+    assert all("739104" not in " ".join(argv) for argv, _stdin in submissions)
+    observed = [json.loads(line) for line in diagnostics.read_text(encoding="utf-8").splitlines()]
+    assert len(observed) == 4
+    assert all(
+        item["env"].get("CREDENTIALS_DIRECTORY") == str(credential_directory)
+        for item in observed
+    )
+    assert all("MASTERJET_BEARER" not in item["env"] for item in observed)
+    assert all("TOTP_CODE" not in item["env"] for item in observed)
+    assert bearer not in diagnostics.read_text(encoding="utf-8")
+    assert "739104" not in diagnostics.read_text(encoding="utf-8")
+    assert raw_auth.decode("ascii") not in diagnostics.read_text(encoding="utf-8")
+    assert all(
+        request["headers"]["Authorization"] == f"Bearer {bearer}" for request in requests
+    )
+    for operation in ("google.accounts.list", "openai.accounts.list"):
+        account_requests = [request for request in requests if request["operation"] == operation]
+        assert [request["headers"].get("X-Masterjet-Step-Up") for request in account_requests] == [
+            None,
+            None,
+            "739104",
+        ]
+    assert [request["body"] for request in requests if request["method"] == "PUT"] == [raw_auth]
 
 
 def test_task9_remote_outage_fail_closes_both_pages_and_all_account_writes(

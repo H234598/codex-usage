@@ -2040,7 +2040,10 @@ def _cmd_account_auth_sync(args: argparse.Namespace) -> int:
     try:
         result = sync_account_auth(account, client)
     except AuthSyncError as exc:
-        print(f"Fehler: {exc.code}", file=sys.stderr)
+        if args.format == "json":
+            print(json.dumps({"ok": False, "code": exc.code}, ensure_ascii=False))
+        else:
+            print(f"Fehler: {exc.code}", file=sys.stderr)
         return 2
     compare_and_clear_account_auth_sync_required(account, path=args.config)
     projection = {
