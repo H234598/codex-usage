@@ -13,6 +13,7 @@ from codex_usage.bridge import load_latest_usages
 from codex_usage.config import (
     MAX_CONFIG_BYTES,
     AppConfig,
+    MasterjetConnection,
     add_or_update_account,
     get_account,
     load_config,
@@ -40,12 +41,165 @@ def test_loads_local_masterjet_connection(tmp_path):
     assert config.masterjet.transport == "local"
 
 
-def test_https_endpoint_rejects_credentials_in_url(tmp_path):
+def test_load_config_defaults_masterjet_to_local_connection(tmp_path):
+    config = load_text(tmp_path, "")
+
+    assert config.masterjet.transport == "local"
+    assert config.masterjet.endpoint == ""
+    assert config.masterjet.timeout_seconds == 10
+
+
+def test_save_and_load_preserves_https_masterjet_connection(tmp_path):
+    config_path = tmp_path / "config.toml"
+    save_config(
+        AppConfig(
+            accounts=(),
+            masterjet=MasterjetConnection(
+                transport="https",
+                endpoint="https://masterjet.example.test/control",
+                timeout_seconds=25,
+            ),
+        ),
+        config_path,
+    )
+
+    loaded = load_config(config_path)
+
+    assert loaded.masterjet.transport == "https"
+    assert loaded.masterjet.endpoint == "https://masterjet.example.test/control"
+    assert loaded.masterjet.timeout_seconds == 25
+
+
+def test_masterjet_https_endpoint_rejects_credentials_in_url(tmp_path):
     with pytest.raises(ValueError, match="masterjet endpoint must not contain credentials"):
         load_text(
             tmp_path,
             '[masterjet]\ntransport="https"\nendpoint="https://u:p@example.test"\n',
         )
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        (
+            '[masterjet]\ntransport="local"\nendpoint="masterjet.sock"\n',
+            "local masterjet endpoint must be an absolute socket path",
+        ),
+        (
+            '[masterjet]\ntransport="https"\nendpoint=""\n',
+            "masterjet endpoint must not be empty",
+        ),
+        (
+            '[masterjet]\ntransport="https"\nendpoint="http://masterjet.example.test"\n',
+            "masterjet endpoint must be an HTTPS URL",
+        ),
+        (
+            '[masterjet]\ntransport="https"\nendpoint="https://masterjet.example.test/?debug=1"\n',
+            "masterjet endpoint must not contain a query or fragment",
+        ),
+        (
+            '[masterjet]\ntransport="https"\nendpoint="https://masterjet.example.test/#section"\n',
+            "masterjet endpoint must not contain a query or fragment",
+        ),
+        (
+            '[masterjet]\ntransport="tcp"\nendpoint="/run/user/1000/masterjet.sock"\n',
+            "masterjet transport must be one of",
+        ),
+        (
+            '[masterjet]\ntimeout_seconds="10"\n',
+            "masterjet timeout_seconds must be an integer",
+        ),
+        (
+            '[masterjet]\ntimeout_seconds=0\n',
+            "masterjet timeout_seconds must be at least 1",
+        ),
+    ],
+)
+def test_masterjet_rejects_invalid_connection_boundaries(tmp_path, text, message):
+    with pytest.raises(ValueError, match=message):
+        load_text(tmp_path, text)
+
+
+def test_adding_account_preserves_masterjet_connection(tmp_path):
+    config_path = tmp_path / "config.toml"
+    save_config(
+        AppConfig(
+            accounts=(),
+            masterjet=MasterjetConnection(
+                transport="https",
+                endpoint="https://masterjet.example.test/control",
+                timeout_seconds=25,
+            ),
+        ),
+        config_path,
+    )
+
+    add_or_update_account(
+        "added",
+        profile_dir=str(tmp_path / "profiles" / "added"),
+        path=config_path,
+    )
+
+    loaded = load_config(config_path)
+    assert loaded.masterjet.transport == "https"
+    assert loaded.masterjet.endpoint == "https://masterjet.example.test/control"
+    assert loaded.masterjet.timeout_seconds == 25
+
+
+def test_removing_account_preserves_masterjet_connection(tmp_path):
+    config_path = tmp_path / "config.toml"
+    account = Account(
+        id="removed",
+        label="Removed",
+        profile_dir=str(tmp_path / "profile"),
+    )
+    save_config(
+        AppConfig(
+            accounts=(account,),
+            masterjet=MasterjetConnection(
+                transport="https",
+                endpoint="https://masterjet.example.test/control",
+                timeout_seconds=25,
+            ),
+        ),
+        config_path,
+    )
+
+    remove_account("removed", path=config_path)
+
+    loaded = load_config(config_path)
+    assert loaded.masterjet.transport == "https"
+    assert loaded.masterjet.endpoint == "https://masterjet.example.test/control"
+    assert loaded.masterjet.timeout_seconds == 25
+
+
+def test_restoring_account_preserves_masterjet_connection(tmp_path):
+    config_path = tmp_path / "config.toml"
+    save_config(
+        AppConfig(
+            accounts=(),
+            masterjet=MasterjetConnection(
+                transport="https",
+                endpoint="https://masterjet.example.test/control",
+                timeout_seconds=25,
+            ),
+        ),
+        config_path,
+    )
+
+    restore_account(
+        Account(
+            id="restored",
+            label="Restored",
+            profile_dir=str(tmp_path / "profile"),
+        ),
+        path=config_path,
+    )
+
+    loaded = load_config(config_path)
+    assert loaded.masterjet.transport == "https"
+    assert loaded.masterjet.endpoint == "https://masterjet.example.test/control"
+    assert loaded.masterjet.timeout_seconds == 25
 
 
 class _BrokenInt(int):
