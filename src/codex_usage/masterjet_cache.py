@@ -889,29 +889,29 @@ class ControlSnapshotCache:
                 token.clear()
         if token:
             tokens.append("".join(token).casefold())
-        normalized_identifiers: set[str] = set()
+        normalized_identifiers: list[str] = []
         identifier: list[str] = []
         for character in normalized.casefold():
             if character.isalnum():
                 identifier.append(character)
             elif identifier:
-                normalized_identifiers.add("".join(identifier))
+                normalized_identifiers.append("".join(identifier))
                 identifier.clear()
         if identifier:
-            normalized_identifiers.add("".join(identifier))
+            normalized_identifiers.append("".join(identifier))
         pairs = set(pairwise(tokens))
         has_assignment = "=" in normalized or ":" in normalized
         compound_assignment = has_assignment and bool(
-            _PRIVATE_COMPOUND_IDENTIFIERS & normalized_identifiers
+            _PRIVATE_COMPOUND_IDENTIFIERS & set(normalized_identifiers)
         )
         compound_context = any(
-            token in _PRIVATE_COMPOUND_IDENTIFIERS
-            and index + 1 < len(tokens)
+            identifier in _PRIVATE_COMPOUND_IDENTIFIERS
+            and index + 1 < len(normalized_identifiers)
             and bool(
                 {"auth", "authorization", "cookie", "diagnostic", "error", "header"}
-                & set(tokens[:index])
+                & set(normalized_identifiers[:index])
             )
-            for index, token in enumerate(tokens)
+            for index, identifier in enumerate(normalized_identifiers)
         )
         structured_header = "header" in tokens and bool(
             {"authorization", "cookie", "private", "secret", "token", "value"} & set(tokens)

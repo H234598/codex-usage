@@ -985,6 +985,11 @@ def test_recovery_read_close_failure_is_code_only_and_root_is_closed(
         "cookie setcookie topsecret",
         "error clientsecret topsecret",
         "diagnostic accesstoken topsecret",
+        "header SeSsIoNiD topsecret",
+        "auth ClIeNtSeCrEt topsecret",
+        "error AcCeSsToKeN topsecret",
+        "cookie SeTcOoKiE value",
+        "diagnostic ClIeNtPaSsWoRd value",
     ],
 )
 def test_common_secret_header_cookie_and_error_markers_are_not_cached(
