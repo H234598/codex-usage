@@ -1650,7 +1650,7 @@ def test_google_operation_terminal_failure_is_nonzero_structured_and_redacted(
     assert "secret" not in json.dumps(output).casefold()
 
 
-def test_google_inventory_challenge_explicitly_allows_bound_process_retry(monkeypatch, capsys):
+def test_google_inventory_challenge_has_no_process_retry_metadata(monkeypatch, capsys):
     class Controller:
         def inventory_refresh(self, _account):
             raise cli_module.GoogleAccountsError("control.step_up_required")
@@ -1685,7 +1685,7 @@ def test_google_inventory_challenge_explicitly_allows_bound_process_retry(monkey
         ),
     ],
 )
-def test_google_single_mutation_challenges_explicitly_allow_bound_retry(
+def test_google_single_mutation_challenges_have_no_process_retry_metadata(
     monkeypatch, capsys, command, method
 ):
     class Controller:

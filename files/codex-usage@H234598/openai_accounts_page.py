@@ -244,7 +244,7 @@ class BoundedJsonRunner:
         *,
         stdin_data: bytes | bytearray | None = None,
         callback: Callable[[CommandResult], object] | None = None,
-        challenge_callback: Callable[[], str | None] | None = None,
+        challenge_callback: Callable[[], str | bytearray | None] | None = None,
     ) -> None:
         command = tuple(argv)
         if not command or any(
@@ -276,7 +276,7 @@ class BoundedJsonRunner:
         self,
         argv: tuple[str, ...],
         stdin_data: bytearray | None,
-        challenge_callback: Callable[[], str | None] | None = None,
+        challenge_callback: Callable[[], str | bytearray | None] | None = None,
     ) -> CommandResult:
         process = None
         process_group = None
@@ -323,21 +323,24 @@ class BoundedJsonRunner:
                             raise ValueError("output too large")
                         continue
                     control.extend(chunk)
-                    if len(control) > len(STEP_UP_SENTINEL) * 2:
-                        raise ValueError("control output too large")
-                    if STEP_UP_SENTINEL not in control:
+                    if len(control) > len(STEP_UP_SENTINEL):
+                        raise ValueError("invalid step-up control")
+                    if not STEP_UP_SENTINEL.startswith(control):
+                        raise ValueError("invalid step-up control")
+                    if control != STEP_UP_SENTINEL:
                         continue
                     if (
-                        control.count(STEP_UP_SENTINEL) != 1
-                        or prompted
+                        prompted
                         or challenge_callback is None
                         or process.stdin is None
                     ):
                         raise ValueError("invalid step-up control")
                     prompted = True
-                    value = self._request_step_up(challenge_callback, deadline)
-                    secret = bytearray(value.encode("ascii") + b"\n")
+                    secret = self._request_step_up(challenge_callback, deadline, process)
                     try:
+                        if process.poll() is not None:
+                            raise ValueError("step-up process exited")
+                        secret.append(ord("\n"))
                         process.stdin.write(secret)
                         process.stdin.flush()
                         process.stdin.close()
@@ -358,24 +361,75 @@ class BoundedJsonRunner:
             control[:] = b"\x00" * len(control)
             control.clear()
 
-    def _request_step_up(self, callback: Callable[[], str | None], deadline: float) -> str:
-        result: list[str | None] = [None]
+    def _request_step_up(
+        self,
+        callback: Callable[[], str | bytearray | None],
+        deadline: float,
+        process: subprocess.Popen[bytes],
+    ) -> bytearray:
+        result: list[bytearray | None] = [None]
         completed = threading.Event()
+        lock = threading.Lock()
+        active = [True]
+
+        def wipe(value: bytearray | None) -> None:
+            if value is not None:
+                value[:] = b"\x00" * len(value)
+                value.clear()
+
+        def cancel() -> None:
+            with lock:
+                active[0] = False
+                value = result[0]
+                result[0] = None
+            wipe(value)
 
         def prompt() -> bool:
+            secret = None
             try:
-                result[0] = callback()
+                with lock:
+                    if not active[0]:
+                        return False
+                value = callback()
+                if type(value) is bytearray:
+                    secret = value
+                elif type(value) is str:
+                    secret = bytearray(value, "ascii")
+                value = None
+                if secret is None or len(secret) not in {6, 7, 8} or not secret.isdigit():
+                    wipe(secret)
+                    secret = None
+            except (TypeError, UnicodeError, ValueError):
+                wipe(secret)
+                secret = None
             finally:
+                with lock:
+                    if active[0] and secret is not None:
+                        result[0] = secret
+                        secret = None
+                wipe(secret)
                 completed.set()
             return False
 
-        self._prompt_dispatcher(prompt)
-        if not completed.wait(max(0.0, deadline - time.monotonic())):
-            raise TimeoutError
-        value = result[0]
-        if not isinstance(value, str) or not value.isascii() or not value.isdigit():
-            raise ValueError("invalid step-up code")
-        if len(value) not in {6, 7, 8}:
+        try:
+            self._prompt_dispatcher(prompt)
+        except Exception:
+            cancel()
+            raise ValueError("step-up dispatch failed") from None
+        while not completed.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                cancel()
+                raise TimeoutError
+            if process.poll() is not None:
+                cancel()
+                raise ValueError("step-up process exited")
+            completed.wait(min(remaining, 0.05))
+        with lock:
+            active[0] = False
+            value = result[0]
+            result[0] = None
+        if value is None:
             raise ValueError("invalid step-up code")
         return value
 
@@ -443,10 +497,12 @@ def _terminate_process_group(process: subprocess.Popen[bytes], process_group: in
         process.kill()
         process.wait(timeout=0.5)
     finally:
-        if process.stdin is not None and not process.stdin.closed:
-            process.stdin.close()
-        if process.stdout is not None:
-            process.stdout.close()
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None and not stream.closed:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
 
 
 def validate_masterjet_endpoint(transport: object, endpoint: object) -> str:
@@ -493,7 +549,13 @@ def default_masterjet_socket(
 
 
 class OpenAIActions:
-    __slots__ = ("_executable", "_projection_ready", "_reauth_runner", "_runner")
+    __slots__ = (
+        "_executable",
+        "_projection_ready",
+        "_projection_version",
+        "_reauth_runner",
+        "_runner",
+    )
 
     def __init__(
         self,
@@ -506,12 +568,18 @@ class OpenAIActions:
         self._reauth_runner = reauth_runner or runner
         self._executable = executable or str(Path.home() / ".local/bin/codex-usage")
         self._projection_ready = False
+        self._projection_version = 0
 
     @property
     def projection_ready(self) -> bool:
         return self._projection_ready
 
+    @property
+    def projection_version(self) -> int:
+        return self._projection_version
+
     def set_projection_ready(self, ready: bool) -> None:
+        self._projection_version += 1
         self._projection_ready = _boolean(ready, "projection_ready")
 
     def _require_projection(self) -> None:
@@ -519,7 +587,7 @@ class OpenAIActions:
             raise RuntimeError("STALE")
 
     def refresh(self, *, callback=None) -> None:
-        self._projection_ready = False
+        self.set_projection_ready(False)
         self._runner.submit(
             [self._executable, "masterjet", "openai-accounts", "--json"],
             callback=callback,
@@ -829,12 +897,22 @@ class OpenAIAccountsPage(SettingsWidget):
         self._status.set_text("Operation abgeschlossen" if result.ok else f"Fehler: {result.code}")
         return False
 
-    def _prompt_running_step_up(self) -> str | None:
+    def _prompt_running_step_up(self) -> bytearray | None:
         if not self._actions.projection_ready:
             return None
-        return self.prompt_step_up()
+        projection_version = self._actions.projection_version
+        code = self.prompt_step_up()
+        if (
+            not self._actions.projection_ready
+            or self._actions.projection_version != projection_version
+        ):
+            if type(code) is bytearray:
+                code[:] = b"\x00" * len(code)
+                code.clear()
+            return None
+        return code
 
-    def prompt_step_up(self) -> str | None:
+    def prompt_step_up(self) -> bytearray | None:
         dialog = Gtk.Dialog(
             title="TOTP-Step-up",
             transient_for=self.get_toplevel()
@@ -854,7 +932,11 @@ class OpenAIAccountsPage(SettingsWidget):
         dialog.get_content_area().pack_start(entry, False, False, 8)
         dialog.show_all()
         try:
-            return entry.get_text() if dialog.run() == Gtk.ResponseType.OK else None
+            if dialog.run() != Gtk.ResponseType.OK:
+                return None
+            return bytearray(entry.get_text(), "ascii")
+        except (TypeError, UnicodeError, ValueError):
+            return None
         finally:
             entry.set_text("")
             dialog.destroy()

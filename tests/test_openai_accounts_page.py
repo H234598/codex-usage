@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -655,10 +656,16 @@ def test_openai_page_prompt_step_up_is_hidden_and_wipes_entry(monkeypatch) -> No
     page = module.OpenAIAccountsPage(None, None, None)
     entries = _install_totp_dialog(module, monkeypatch, "739104")
 
-    assert page.prompt_step_up() == "739104"
-    assert entries[0].visible is False
-    assert entries[0].purpose == "digits"
-    assert entries[0].text == ""
+    code = page.prompt_step_up()
+    try:
+        assert code == b"739104"
+        assert entries[0].visible is False
+        assert entries[0].purpose == "digits"
+        assert entries[0].text == ""
+    finally:
+        assert code is not None
+        code[:] = b"\x00" * len(code)
+        code.clear()
 
 
 def test_openai_page_does_not_restart_a_failed_process() -> None:
@@ -712,6 +719,289 @@ def test_bounded_runner_rejects_duplicate_step_up_sentinel_without_second_prompt
 
     assert result.ok is False
     assert prompts == []
+
+
+def test_bounded_runner_rejects_fragmented_duplicate_without_second_prompt() -> None:
+    module = _module()
+    prompts = []
+    sentinel = "CODEX_USAGE_STEP_UP_REQUIRED\n"
+    script = (
+        "import sys; "
+        f"sys.stderr.write({sentinel!r}); sys.stderr.flush(); "
+        "assert sys.stdin.buffer.readline() == b'739104\\n'; "
+        f"sys.stderr.write({sentinel[:11]!r}); sys.stderr.flush(); "
+        f"sys.stderr.write({sentinel[11:]!r}); sys.stderr.flush()"
+    )
+    runner = module.BoundedJsonRunner(prompt_dispatcher=lambda callback: callback())
+
+    result = runner._run(
+        (sys.executable, "-c", script),
+        None,
+        lambda: prompts.append("prompt") or "739104",
+    )
+
+    assert result.ok is False
+    assert prompts == ["prompt"]
+
+
+@pytest.mark.parametrize(
+    "control",
+    [
+        b"xCODEX_USAGE_STEP_UP_REQUIRED\n",
+        b"CODEX_USAGE_STEP_UP_REQUIRED\nx",
+        b"x" * 59,
+    ],
+)
+def test_bounded_runner_rejects_noncanonical_or_oversize_control_without_prompt(
+    control,
+) -> None:
+    module = _module()
+    prompts = []
+    script = f"import sys; sys.stderr.buffer.write({control!r}); sys.stderr.flush()"
+    runner = module.BoundedJsonRunner(prompt_dispatcher=lambda callback: callback())
+
+    result = runner._run(
+        (sys.executable, "-c", script),
+        None,
+        lambda: prompts.append("prompt") or "739104",
+    )
+
+    assert result.ok is False
+    assert prompts == []
+
+
+@pytest.mark.parametrize("page_kind", ["openai", "google"])
+@pytest.mark.parametrize("restore_projection", [False, True])
+def test_running_step_up_revoked_during_prompt_writes_no_code_or_effect(
+    tmp_path, monkeypatch, page_kind, restore_projection
+) -> None:
+    openai_module = _module()
+    if page_kind == "openai":
+        page = openai_module.OpenAIAccountsPage(None, None, None)
+        actions = openai_module.OpenAIActions(openai_module.BoundedJsonRunner())
+    else:
+        google_path = APPLET_DIR / "google_accounts_page.py"
+        spec = importlib.util.spec_from_file_location("google_accounts_page", google_path)
+        assert spec is not None and spec.loader is not None
+        google_module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = google_module
+        spec.loader.exec_module(google_module)
+        page = google_module.GoogleAccountsPage(None, None, None)
+        actions = google_module.GoogleActions(openai_module.BoundedJsonRunner())
+    page._actions = actions
+    actions.set_projection_ready(True)
+    marker = tmp_path / f"{page_kind}-{restore_projection}-step-up-write"
+    pid_file = tmp_path / f"{page_kind}-{restore_projection}-step-up-pid"
+
+    def revoke_during_prompt():
+        actions.set_projection_ready(False)
+        if restore_projection:
+            actions.set_projection_ready(True)
+        return "739104"
+
+    monkeypatch.setattr(type(page), "prompt_step_up", lambda _self: revoke_during_prompt())
+    sentinel = "CODEX_USAGE_STEP_UP_REQUIRED\n"
+    script = (
+        "import os,pathlib,sys; "
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid())); "
+        f"sys.stderr.write({sentinel!r}); sys.stderr.flush(); "
+        "code=sys.stdin.buffer.readline(); "
+        f"pathlib.Path({str(marker)!r}).write_bytes(code) if code else None; "
+        "sys.stdout.write('{\"ok\":true}')"
+    )
+    runner = openai_module.BoundedJsonRunner(
+        timeout_seconds=1,
+        prompt_dispatcher=lambda callback: callback(),
+    )
+
+    result = runner._run(
+        (sys.executable, "-c", script),
+        None,
+        page._prompt_running_step_up,
+    )
+
+    assert result.ok is False
+    assert actions.projection_ready is restore_projection
+    assert not marker.exists()
+    assert not _process_running(int(pid_file.read_text(encoding="ascii")))
+
+
+@pytest.mark.parametrize("emit_sentinel", [False, True])
+def test_bounded_runner_handles_child_exit_before_or_after_sentinel_without_late_prompt(
+    tmp_path, emit_sentinel
+) -> None:
+    module = _module()
+    queued = []
+    prompts = []
+    pid_file = tmp_path / f"child-exit-{emit_sentinel}.pid"
+    sentinel_write = (
+        "sys.stderr.write('CODEX_USAGE_STEP_UP_REQUIRED\\n'); sys.stderr.flush();"
+        if emit_sentinel
+        else ""
+    )
+    script = (
+        "import os,pathlib,sys; "
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid())); "
+        f"{sentinel_write} "
+    )
+    runner = module.BoundedJsonRunner(
+        timeout_seconds=2,
+        prompt_dispatcher=lambda callback: queued.append(callback),
+    )
+    started = time.monotonic()
+
+    result = runner._run(
+        (sys.executable, "-c", script),
+        None,
+        lambda: prompts.append("prompt") or "739104",
+    )
+    elapsed = time.monotonic() - started
+    for callback in queued:
+        callback()
+
+    assert result.ok is False
+    assert elapsed < 1
+    assert prompts == []
+    assert not _process_running(int(pid_file.read_text(encoding="ascii")))
+
+
+def test_bounded_runner_prompt_timeout_cancels_late_prompt_and_leaks_no_worker_or_child(
+    tmp_path,
+) -> None:
+    module = _module()
+    completed = []
+    done = threading.Event()
+    queued = []
+    prompts = []
+    pid_file = tmp_path / "prompt-timeout.pid"
+    marker = tmp_path / "prompt-timeout-write"
+    sentinel = "CODEX_USAGE_STEP_UP_REQUIRED\n"
+    script = (
+        "import os,pathlib,sys,time; "
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid())); "
+        f"sys.stderr.write({sentinel!r}); sys.stderr.flush(); "
+        "code=sys.stdin.buffer.readline(); "
+        f"pathlib.Path({str(marker)!r}).write_bytes(code) if code else None; "
+        "time.sleep(30)"
+    )
+    runner = module.BoundedJsonRunner(
+        timeout_seconds=0.2,
+        dispatcher=lambda callback, result: (completed.append(result), done.set()),
+        prompt_dispatcher=lambda callback: queued.append(callback),
+    )
+
+    runner.submit(
+        (sys.executable, "-c", script),
+        callback=lambda _result: None,
+        challenge_callback=lambda: prompts.append("prompt") or "739104",
+    )
+
+    assert done.wait(2)
+    assert completed == [module.CommandResult(False, None, "control.transport_unavailable")]
+    assert len(queued) == 1
+    queued[0]()
+    assert prompts == []
+    assert not marker.exists()
+    assert not _process_running(int(pid_file.read_text(encoding="ascii")))
+    deadline = time.monotonic() + 1
+    while any(thread.name == "codex-usage-control" for thread in threading.enumerate()):
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+
+
+def test_bounded_runner_wipes_code_returned_after_prompt_timeout(tmp_path) -> None:
+    module = _module()
+    completed = threading.Event()
+    prompt_started = threading.Event()
+    release_prompt = threading.Event()
+    prompt_threads = []
+    code = bytearray(b"739104")
+    pid_file = tmp_path / "running-prompt-timeout.pid"
+    sentinel = "CODEX_USAGE_STEP_UP_REQUIRED\n"
+    script = (
+        "import os,pathlib,sys,time; "
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid())); "
+        f"sys.stderr.write({sentinel!r}); sys.stderr.flush(); "
+        "sys.stdin.buffer.readline(); time.sleep(30)"
+    )
+
+    def dispatch_prompt(callback):
+        thread = threading.Thread(target=callback, name="test-gtk-step-up")
+        prompt_threads.append(thread)
+        thread.start()
+
+    def provide_code():
+        prompt_started.set()
+        assert release_prompt.wait(2)
+        return code
+
+    runner = module.BoundedJsonRunner(
+        timeout_seconds=0.2,
+        dispatcher=lambda _callback, _result: completed.set(),
+        prompt_dispatcher=dispatch_prompt,
+    )
+    runner.submit(
+        (sys.executable, "-c", script),
+        callback=lambda _result: None,
+        challenge_callback=provide_code,
+    )
+
+    assert prompt_started.wait(1)
+    assert completed.wait(2)
+    release_prompt.set()
+    prompt_threads[0].join(timeout=1)
+
+    assert not prompt_threads[0].is_alive()
+    assert code == b""
+    assert not _process_running(int(pid_file.read_text(encoding="ascii")))
+
+
+def test_bounded_runner_wipes_callback_bytearray_after_stdin_write() -> None:
+    module = _module()
+    code = bytearray(b"739104")
+    sentinel = "CODEX_USAGE_STEP_UP_REQUIRED\n"
+    script = (
+        "import sys; "
+        f"sys.stderr.write({sentinel!r}); sys.stderr.flush(); "
+        "assert sys.stdin.buffer.readline() == b'739104\\n'; "
+        "sys.stdout.write('{\"ok\":true}')"
+    )
+    runner = module.BoundedJsonRunner(prompt_dispatcher=lambda callback: callback())
+
+    result = runner._run((sys.executable, "-c", script), None, lambda: code)
+
+    assert result.ok is True
+    assert code == b""
+
+
+def test_bounded_runner_closes_all_child_pipes(monkeypatch) -> None:
+    module = _module()
+    processes = []
+    real_popen = module.subprocess.Popen
+
+    def recording_popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(module.subprocess, "Popen", recording_popen)
+    sentinel = "CODEX_USAGE_STEP_UP_REQUIRED\n"
+    script = (
+        "import sys; "
+        f"sys.stderr.write({sentinel!r}); sys.stderr.flush(); "
+        "assert sys.stdin.buffer.readline() == b'739104\\n'; "
+        "sys.stdout.write('{\"ok\":true}')"
+    )
+
+    result = module.BoundedJsonRunner(
+        prompt_dispatcher=lambda callback: callback()
+    )._run((sys.executable, "-c", script), None, lambda: "739104")
+
+    assert result.ok is True
+    assert len(processes) == 1
+    assert processes[0].stdin is not None and processes[0].stdin.closed
+    assert processes[0].stdout is not None and processes[0].stdout.closed
+    assert processes[0].stderr is not None and processes[0].stderr.closed
 
 
 def test_openai_action_guard_checks_current_projection_before_mutation_argv() -> None:

@@ -291,7 +291,13 @@ class GoogleAccountsModel:
 
 
 class GoogleActions:
-    __slots__ = ("_confirm", "_executable", "_projection_ready", "_runner")
+    __slots__ = (
+        "_confirm",
+        "_executable",
+        "_projection_ready",
+        "_projection_version",
+        "_runner",
+    )
 
     def __init__(
         self,
@@ -304,13 +310,19 @@ class GoogleActions:
         self._executable = executable or str(Path.home() / ".local/bin/codex-usage")
         self._confirm = confirm or (lambda _preview: False)
         self._projection_ready = False
+        self._projection_version = 0
 
     def set_projection_ready(self, ready: bool) -> None:
+        self._projection_version += 1
         self._projection_ready = bool(ready)
 
     @property
     def projection_ready(self) -> bool:
         return self._projection_ready
+
+    @property
+    def projection_version(self) -> int:
+        return self._projection_version
 
     def _submit(
         self, arguments, *, stdin_data=None, callback=None, mutation=True, challenge_callback=None
@@ -580,10 +592,20 @@ class GoogleAccountsPage(SettingsWidget):
         self._status.set_text("Operation abgeschlossen" if result.ok else f"Fehler: {result.code}")
         return False
 
-    def _prompt_running_step_up(self) -> str | None:
+    def _prompt_running_step_up(self) -> bytearray | None:
         if not self._actions.projection_ready:
             return None
-        return self.prompt_step_up()
+        projection_version = self._actions.projection_version
+        code = self.prompt_step_up()
+        if (
+            not self._actions.projection_ready
+            or self._actions.projection_version != projection_version
+        ):
+            if type(code) is bytearray:
+                code[:] = b"\x00" * len(code)
+                code.clear()
+            return None
+        return code
 
     def _confirm_plan(self, preview: GooglePlanPreview) -> bool:
         names = "\n".join(
@@ -660,7 +682,7 @@ class GoogleAccountsPage(SettingsWidget):
         finally:
             dialog.destroy()
 
-    def prompt_step_up(self) -> str | None:
+    def prompt_step_up(self) -> bytearray | None:
         dialog = Gtk.Dialog(
             title="TOTP-Step-up",
             transient_for=self.get_toplevel()
@@ -680,7 +702,11 @@ class GoogleAccountsPage(SettingsWidget):
         dialog.get_content_area().pack_start(entry, False, False, 8)
         dialog.show_all()
         try:
-            return entry.get_text() if dialog.run() == Gtk.ResponseType.OK else None
+            if dialog.run() != Gtk.ResponseType.OK:
+                return None
+            return bytearray(entry.get_text(), "ascii")
+        except (TypeError, UnicodeError, ValueError):
+            return None
         finally:
             entry.set_text("")
             dialog.destroy()

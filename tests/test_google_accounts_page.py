@@ -174,7 +174,10 @@ def _task9_unix_control_server(socket_path: Path):
 
 @contextmanager
 def _task9_https_control_server(
-    tmp_path: Path, *, openai_challenge_operation: str | None = None
+    tmp_path: Path,
+    *,
+    google_challenge_operation: str | None = None,
+    openai_challenge_operation: str | None = None,
 ):
     openssl = shutil.which("openssl")
     if openssl is None:
@@ -215,6 +218,7 @@ def _task9_https_control_server(
     requests = []
     authenticated = {"google": False, "openai": False}
     challenged_operations = set()
+    ingress_accounts = {}
     now = datetime.now(UTC)
 
     def timestamp(offset: timedelta) -> str:
@@ -246,12 +250,27 @@ def _task9_https_control_server(
     def response_for(request):
         if request["method"] == "PUT":
             operation = "secret.ingress.put"
+            arguments = None
         else:
-            operation = json.loads(request["body"])["operation"]
+            envelope = json.loads(request["body"])
+            operation = envelope["operation"]
+            arguments = envelope["arguments"]
         request["operation"] = operation
-        family = "google" if operation.startswith("google.") else "openai"
-        if operation == openai_challenge_operation and operation not in challenged_operations:
-            challenged_operations.add(operation)
+        family = (
+            "google"
+            if operation.startswith("google.")
+            or (
+                operation == "secret.ingress.create"
+                and arguments["account_ref"].startswith("google-")
+            )
+            else "openai"
+        )
+        challenge_operation = (
+            google_challenge_operation if family == "google" else openai_challenge_operation
+        )
+        challenge_key = (family, operation)
+        if operation == challenge_operation and challenge_key not in challenged_operations:
+            challenged_operations.add(challenge_key)
             return challenge
         if family == "openai" and openai_challenge_operation is not None:
             authenticated[family] = True
@@ -285,12 +304,22 @@ def _task9_https_control_server(
                 "completed_count": 0,
                 "not_attempted_count": 1,
             }
+        if operation == "google.oauth-client-import.plan":
+            return operation_base | {
+                "id": "google-import-plan-1",
+                "kind": operation,
+                "state": "planned",
+                "resulting_generation": None,
+                "completed_count": 0,
+                "not_attempted_count": 1,
+            }
         if operation == "secret.ingress.create":
+            ingress_accounts["ingress-1"] = arguments["account_ref"]
             return {
                 "schema_version": 1,
                 "id": "ingress-1",
-                "account_ref": "openai-remote",
-                "plan_id": "plan-1",
+                "account_ref": arguments["account_ref"],
+                "plan_id": arguments["plan_id"],
                 "expires_at": timestamp(timedelta(minutes=15)),
                 "expected_generation": 4,
             }
@@ -298,13 +327,22 @@ def _task9_https_control_server(
             return {
                 "schema_version": 1,
                 "session_id": "ingress-1",
-                "account_ref": "openai-remote",
+                "account_ref": ingress_accounts["ingress-1"],
                 "state": "consumed",
                 "generation": 5,
             }
         if operation == "openai.auth-sync.apply":
             return operation_base | {
                 "id": "apply-1",
+                "kind": operation,
+                "state": "succeeded",
+                "resulting_generation": 5,
+                "completed_count": 1,
+                "not_attempted_count": 0,
+            }
+        if operation == "google.oauth-client-import.apply":
+            return operation_base | {
+                "id": "google-import-apply-1",
                 "kind": operation,
                 "state": "succeeded",
                 "resulting_generation": 5,
@@ -953,6 +991,12 @@ def test_https_auth_sync_challenge_resumes_running_process(
     auth_path = auth_directory / "auth.json"
     auth_path.write_bytes(raw_auth)
     auth_path.chmod(0o600)
+    oauth_directory = home / "oauth-client"
+    oauth_directory.mkdir(mode=0o700)
+    raw_oauth_client = b'{"client_secret":"google-runner-secret-marker"}'
+    oauth_client_path = oauth_directory / "client.json"
+    oauth_client_path.write_bytes(raw_oauth_client)
+    oauth_client_path.chmod(0o600)
     credential_directory = tmp_path / "credentials"
     credential_directory.mkdir(mode=0o700)
     bearer = "runner-system-bearer-marker"
@@ -962,9 +1006,12 @@ def test_https_auth_sync_challenge_resumes_running_process(
     diagnostics = tmp_path / "runner-diagnostics.jsonl"
     completed = queue.Queue()
     submissions = []
+    prompts = []
 
     with _task9_https_control_server(
-        tmp_path, openai_challenge_operation=challenge_operation
+        tmp_path,
+        google_challenge_operation="secret.ingress.create",
+        openai_challenge_operation=challenge_operation,
     ) as (port, certificate, requests):
         config_path = home / ".config" / "codex-usage" / "config.toml"
         save_config(
@@ -1061,6 +1108,7 @@ def test_https_auth_sync_challenge_resumes_running_process(
                 return None
 
             def get_text(self):
+                prompts.append("prompt")
                 return "739104"
 
             def set_text(self, _text):
@@ -1107,20 +1155,46 @@ def test_https_auth_sync_challenge_resumes_running_process(
         assert google_page._status.get_text() == "Operation abgeschlossen"
         assert len(submissions) == 1
 
+        google_page._actions.import_oauth_client(
+            "google-one",
+            oauth_client_path,
+            callback=google_page._operation_finished,
+            challenge_callback=google_page._prompt_running_step_up,
+        )
+        google_import_result = dispatch_one()
+        assert google_import_result.ok is True
+        assert google_import_result.payload == {
+            "account_ref": "google-one",
+            "generation": 5,
+            "status": "succeeded",
+            "ok": True,
+        }
+        assert len(submissions) == 2
+
         openai_page._sync_auth(None, "openai-one")
         openai_result = dispatch_one()
         assert openai_result.ok is True
         assert openai_page._status.get_text() == "Operation abgeschlossen"
-        assert len(submissions) == 2
+        assert len(submissions) == 3
 
-    assert [stdin for _argv, stdin in submissions] == [None, None]
+    assert prompts == ["prompt", "prompt", "prompt"]
+    assert [stdin for _argv, stdin in submissions] == [None, None, None]
     assert submissions[0][0][1:] == (
         "--step-up-stdin", "google", "inventory-refresh", "google-one", "--json"
+    )
+    assert submissions[1][0][1:] == (
+        "--step-up-stdin",
+        "google",
+        "add",
+        "google-one",
+        "--oauth-client-json",
+        str(oauth_client_path),
+        "--json",
     )
     assert all(bearer not in " ".join(argv) for argv, _stdin in submissions)
     assert all("739104" not in " ".join(argv) for argv, _stdin in submissions)
     observed = [json.loads(line) for line in diagnostics.read_text(encoding="utf-8").splitlines()]
-    assert len(observed) == 2
+    assert len(observed) == 3
     assert all(
         item["env"].get("CREDENTIALS_DIRECTORY") == str(credential_directory)
         for item in observed
@@ -1130,13 +1204,33 @@ def test_https_auth_sync_challenge_resumes_running_process(
     assert bearer not in diagnostics.read_text(encoding="utf-8")
     assert "739104" not in diagnostics.read_text(encoding="utf-8")
     assert raw_auth.decode("ascii") not in diagnostics.read_text(encoding="utf-8")
+    assert raw_oauth_client.decode("ascii") not in diagnostics.read_text(encoding="utf-8")
     assert all(
         request["headers"]["Authorization"] == f"Bearer {bearer}" for request in requests
     )
-    google_requests = [request for request in requests if request["operation"] == "google.accounts.list"]
-    assert [request["headers"].get("X-Masterjet-Step-Up") for request in google_requests] == [
-        None, "739104"
+    google_requests = [
+        request for request in requests if request["operation"] == "google.accounts.list"
     ]
+    assert [request["headers"].get("X-Masterjet-Step-Up") for request in google_requests] == [
+        None,
+        "739104",
+        None,
+    ]
+    google_create_requests = [
+        request
+        for request in requests
+        if request["operation"] == "secret.ingress.create"
+        and json.loads(request["body"])["arguments"]["account_ref"] == "google-one"
+    ]
+    assert len(google_create_requests) == 2
+    assert google_create_requests[0]["body"] == google_create_requests[1]["body"]
+    assert [
+        request["headers"].get("X-Masterjet-Step-Up")
+        for request in google_create_requests
+    ] == [None, "739104"]
+    google_create_envelopes = [json.loads(request["body"]) for request in google_create_requests]
+    assert {item["expected_generation"] for item in google_create_envelopes} == {4}
+    assert len({item["idempotency_key"] for item in google_create_envelopes}) == 1
     openai_requests = [
         request for request in requests if request["operation"] == "openai.accounts.list"
     ]
@@ -1146,8 +1240,16 @@ def test_https_auth_sync_challenge_resumes_running_process(
     ] == openai_operations
     assert [
         request["operation"] for request in requests if request["operation"].startswith("secret.")
-    ] == secret_operations
-    assert [request["body"] for request in requests if request["method"] == "PUT"] == [raw_auth]
+    ] == [
+        "secret.ingress.create",
+        "secret.ingress.create",
+        "secret.ingress.put",
+        *secret_operations,
+    ]
+    assert [request["body"] for request in requests if request["method"] == "PUT"] == [
+        raw_oauth_client,
+        raw_auth,
+    ]
 
 
 def test_task9_remote_outage_fail_closes_both_pages_and_all_account_writes(
