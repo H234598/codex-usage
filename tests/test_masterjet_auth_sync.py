@@ -12,22 +12,32 @@ from codex_usage.masterjet_auth_sync import (
 from codex_usage.masterjet_client import MasterjetClientError
 from codex_usage.masterjet_contracts import (
     ControlOperation,
+    OpenAIControlAccount,
     SecretIngressReceipt,
     SecretIngressSession,
 )
 from codex_usage.models import Account
 
+NOW = datetime(2026, 8, 28, 12, 5, tzinfo=UTC)
 
-def operation(*, kind: str, state: str, resulting_generation: int | None) -> ControlOperation:
+
+def operation(
+    *,
+    kind: str,
+    state: str,
+    resulting_generation: int | None,
+    expires_at: datetime = datetime(2026, 8, 28, 12, 30, tzinfo=UTC),
+    plan_digest: str = "sha256:" + "a" * 64,
+) -> ControlOperation:
     return ControlOperation(
         id="plan-1" if state == "planned" else "apply-1",
         kind=kind,
         state=state,
         expected_generation=4,
         resulting_generation=resulting_generation,
-        plan_digest="sha256:" + "a" * 64,
+        plan_digest=plan_digest,
         created_at=datetime(2026, 8, 28, 12, tzinfo=UTC),
-        expires_at=datetime(2026, 8, 28, 12, 30, tzinfo=UTC),
+        expires_at=expires_at,
         completed_count=1 if state == "succeeded" else 0,
         failed_count=0,
         not_attempted_count=0 if state == "succeeded" else 1,
@@ -36,11 +46,21 @@ def operation(*, kind: str, state: str, resulting_generation: int | None) -> Con
 
 
 class AuthenticatedClient:
-    def __init__(self, *, fail_put: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_put: bool = False,
+        plan_expires_at: datetime = datetime(2026, 8, 28, 12, 30, tzinfo=UTC),
+        session_expires_at: datetime = datetime(2026, 8, 28, 12, 10, tzinfo=UTC),
+        apply_plan_digest: str = "sha256:" + "a" * 64,
+    ) -> None:
         self.calls: list[tuple[str, object, int | None, str | None]] = []
         self.secret_views: list[bytearray] = []
         self.secret_at_put: bytes | None = None
         self.fail_put = fail_put
+        self.plan_expires_at = plan_expires_at
+        self.session_expires_at = session_expires_at
+        self.apply_plan_digest = apply_plan_digest
 
     def call(
         self,
@@ -50,18 +70,34 @@ class AuthenticatedClient:
         idempotency_key: str | None = None,
     ) -> object:
         self.calls.append((operation_name, arguments, expected_generation, idempotency_key))
+        if operation_name == "openai.accounts.list":
+            return (
+                OpenAIControlAccount(
+                    ref="openai-1",
+                    label="OpenAI",
+                    enabled=True,
+                    local_profile_ref="profile-1",
+                    source_host_ref="host-1",
+                    auth_state="ready",
+                    access_expires_at=None,
+                    credential_generation=4,
+                    vault_projection_state="current",
+                    usage_state="fresh",
+                ),
+            )
         if operation_name == "openai.auth-sync.plan":
             return operation(
                 kind="openai.auth-sync.plan",
                 state="planned",
                 resulting_generation=None,
+                expires_at=self.plan_expires_at,
             )
         if operation_name == "secret.ingress.create":
             return SecretIngressSession(
                 id="ingress-1",
                 account_ref="openai-1",
                 plan_id="plan-1",
-                expires_at=datetime(2026, 8, 28, 12, 1, tzinfo=UTC),
+                expires_at=self.session_expires_at,
                 expected_generation=4,
             )
         assert operation_name == "openai.auth-sync.apply"
@@ -69,6 +105,7 @@ class AuthenticatedClient:
             kind="openai.auth-sync.apply",
             state="succeeded",
             resulting_generation=5,
+            plan_digest=self.apply_plan_digest,
         )
 
     def put_secret(
@@ -114,18 +151,19 @@ def test_auth_sync_binds_canonical_source_session_plan_and_apply(tmp_path, monke
     account = canonical_account(tmp_path)
     client = AuthenticatedClient()
 
-    result = sync_account_auth(account, client)
+    result = sync_account_auth(account, client, clock=lambda: NOW)
 
     assert result.account_ref == "openai-1"
     assert result.generation == 5
     assert result.status == "succeeded"
     assert client.secret_at_put == b'{"tokens":"top-secret"}'
-    assert client.calls[0][0:3] == (
+    assert client.calls[0][0:3] == ("openai.accounts.list", {}, None)
+    assert client.calls[1][0:3] == (
         "openai.auth-sync.plan",
         {"account_ref": "openai-1"},
-        None,
+        4,
     )
-    assert client.calls[1][0:3] == (
+    assert client.calls[2][0:3] == (
         "secret.ingress.create",
         {
             "account_ref": "openai-1",
@@ -134,16 +172,69 @@ def test_auth_sync_binds_canonical_source_session_plan_and_apply(tmp_path, monke
         },
         4,
     )
-    assert client.calls[2][0:3] == (
+    assert client.calls[3][0:3] == (
         "openai.auth-sync.apply",
         {"account_ref": "openai-1", "plan_id": "plan-1"},
         4,
     )
-    assert all(client.calls[index][3] for index in range(3))
+    assert client.calls[0][3] is None
+    assert all(client.calls[index][3] for index in range(1, 4))
     assert all(byte == 0 for byte in client.secret_views[0])
     combined = repr(result) + repr(client.calls)
     assert "top-secret" not in combined
     assert str(account.auth_json_path) not in combined
+
+
+def test_auth_sync_rejects_expired_plan_before_secret_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "state"))
+    account = canonical_account(tmp_path)
+    client = AuthenticatedClient(plan_expires_at=NOW)
+
+    with pytest.raises(AuthSyncError, match=r"control\.plan_stale"):
+        sync_account_auth(account, client, clock=lambda: NOW)
+
+    assert [call[0] for call in client.calls] == [
+        "openai.accounts.list",
+        "openai.auth-sync.plan",
+    ]
+
+
+def test_auth_sync_rejects_expired_session_before_secret_put(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "state"))
+    account = canonical_account(tmp_path)
+    client = AuthenticatedClient(session_expires_at=NOW)
+
+    with pytest.raises(AuthSyncError, match=r"credential\.upload_expired"):
+        sync_account_auth(account, client, clock=lambda: NOW)
+
+    assert client.secret_at_put is None
+    assert [call[0] for call in client.calls] == [
+        "openai.accounts.list",
+        "openai.auth-sync.plan",
+        "secret.ingress.create",
+    ]
+
+
+def test_auth_sync_rechecks_plan_expiry_before_apply(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "state"))
+    account = canonical_account(tmp_path)
+    client = AuthenticatedClient()
+    times = iter((NOW, NOW, datetime(2026, 8, 28, 12, 30, tzinfo=UTC)))
+
+    with pytest.raises(AuthSyncError, match=r"control\.plan_stale"):
+        sync_account_auth(account, client, clock=lambda: next(times))
+
+    assert client.secret_at_put == b'{"tokens":"top-secret"}'
+    assert [call[0] for call in client.calls][-1] == "secret.ingress.create"
+
+
+def test_auth_sync_rejects_apply_with_different_plan_digest(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "state"))
+    account = canonical_account(tmp_path)
+    client = AuthenticatedClient(apply_plan_digest="sha256:" + "b" * 64)
+
+    with pytest.raises(AuthSyncError, match=r"control\.response_invalid"):
+        sync_account_auth(account, client, clock=lambda: NOW)
 
 
 @pytest.mark.parametrize("variant", ["alternate", "relative", "missing"])
@@ -161,7 +252,7 @@ def test_auth_sync_rejects_noncanonical_auth_path_before_remote_call(
     client = AuthenticatedClient()
 
     with pytest.raises(AuthSyncError, match=r"credential\.source_unavailable") as caught:
-        sync_account_auth(account, client)
+        sync_account_auth(account, client, clock=lambda: NOW)
 
     assert client.calls == []
     assert caught.value.__context__ is None
@@ -177,14 +268,32 @@ def test_auth_sync_rejects_unsafe_auth_file_and_does_not_touch_other_account(tmp
     client = AuthenticatedClient()
 
     with pytest.raises(AuthSyncError, match=r"credential\.source_unavailable") as caught:
-        sync_account_auth(account, client)
+        sync_account_auth(account, client, clock=lambda: NOW)
 
-    assert client.calls[0][0] == "openai.auth-sync.plan"
-    assert len(client.calls) == 1
+    assert [call[0] for call in client.calls] == [
+        "openai.accounts.list",
+        "openai.auth-sync.plan",
+    ]
     other_auth = tmp_path / "other" / "profile" / "codex-home" / "auth.json"
     assert other_auth.read_bytes() == b"other-secret"
     assert "top-secret" not in repr(caught.value)
     assert other.id == "openai-1"
+
+
+def test_auth_sync_rejects_world_writable_custom_profile_parent(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "state"))
+    untrusted = tmp_path / "untrusted"
+    account = canonical_account(untrusted)
+    untrusted.chmod(0o777)
+    client = AuthenticatedClient()
+
+    with pytest.raises(AuthSyncError, match=r"credential\.source_unavailable"):
+        sync_account_auth(account, client, clock=lambda: NOW)
+
+    assert [call[0] for call in client.calls] == [
+        "openai.accounts.list",
+        "openai.auth-sync.plan",
+    ]
 
 
 @pytest.mark.parametrize("variant", ["symlink", "hardlink", "oversize", "empty"])
@@ -207,9 +316,12 @@ def test_auth_sync_private_source_boundaries_fail_closed(tmp_path, monkeypatch, 
     client = AuthenticatedClient()
 
     with pytest.raises(AuthSyncError, match=r"credential\.source_unavailable"):
-        sync_account_auth(account, client)
+        sync_account_auth(account, client, clock=lambda: NOW)
 
-    assert [call[0] for call in client.calls] == ["openai.auth-sync.plan"]
+    assert [call[0] for call in client.calls] == [
+        "openai.accounts.list",
+        "openai.auth-sync.plan",
+    ]
 
 
 def test_auth_sync_maps_put_failure_without_secret_or_exception_context(tmp_path, monkeypatch):
@@ -218,7 +330,7 @@ def test_auth_sync_maps_put_failure_without_secret_or_exception_context(tmp_path
     client = AuthenticatedClient(fail_put=True)
 
     with pytest.raises(AuthSyncError, match=r"credential\.upload_expired") as caught:
-        sync_account_auth(account, client)
+        sync_account_auth(account, client, clock=lambda: NOW)
 
     assert caught.value.__context__ is None
     assert "top-secret" not in repr(caught.value)
@@ -234,7 +346,7 @@ def test_auth_sync_sanitizes_unexpected_authenticated_client_failure(tmp_path, m
             raise RuntimeError("top-secret")
 
     with pytest.raises(AuthSyncError, match=r"control\.transport_unavailable") as caught:
-        sync_account_auth(account, ExplodingClient())
+        sync_account_auth(account, ExplodingClient(), clock=lambda: NOW)
 
     assert caught.value.__context__ is None
     assert "top-secret" not in repr(caught.value)

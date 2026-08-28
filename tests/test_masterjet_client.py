@@ -596,12 +596,32 @@ def test_https_secret_uses_bounded_raw_body_not_json(monkeypatch):
     method, target, body, headers = FakeHTTPSConnection.instances[0].requests[0]
     assert (method, target, body) == (
         "PUT",
-        "/control/secret-ingress-sessions/ingress-1",
+        "/admin/v1/secret-ingress-sessions/ingress-1",
         bytes(secret),
     )
     assert headers["Content-Type"] == "application/octet-stream"
     assert bytes(secret) not in target.encode()
     assert all(bytes(secret) not in value.encode() for value in headers.values())
+
+
+def test_https_secret_uses_encoded_session_id_on_fixed_admin_route(monkeypatch):
+    receipt = ingress_receipt_payload()
+    receipt["session_id"] = "ingress:one"
+    FakeHTTPSConnection.response = FakeHTTPResponse(
+        json.dumps(receipt).encode()
+    )
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    https_client(
+        bearer_provider=lambda: "remote-bearer",
+        step_up_provider=lambda: "123456",
+    ).put_secret("ingress:one", b"private")
+
+    method, target, _body, _headers = FakeHTTPSConnection.instances[0].requests[0]
+    assert (method, target) == (
+        "PUT",
+        "/admin/v1/secret-ingress-sessions/ingress%3Aone",
+    )
 
 
 def test_secret_larger_than_limit_is_rejected_before_connect(monkeypatch):

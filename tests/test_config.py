@@ -1470,6 +1470,49 @@ def test_config_round_trip_auth_json_path(tmp_path):
     assert f'auth_json_path = "{auth_path}"' in config_path.read_text(encoding="utf-8")
 
 
+def test_auth_sync_required_round_trips_and_unrelated_update_preserves_it(tmp_path):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account(
+        "privat",
+        auth_sync_required=True,
+        path=config_path,
+    )
+
+    restarted = load_config(config_path)
+    assert restarted.accounts[0].auth_sync_required is True
+    assert "auth_sync_required = true" in config_path.read_text(encoding="utf-8")
+
+    _, updated = add_or_update_account("privat", label="Privat", path=config_path)
+    assert updated.auth_sync_required is True
+    assert load_config(config_path).accounts[0].auth_sync_required is True
+
+
+def test_legacy_account_defaults_auth_sync_required_to_false(tmp_path):
+    account = config_module._account_from_data(
+        {"id": "legacy", "profile_dir": str(tmp_path / "profile")}
+    )
+
+    assert account.auth_sync_required is False
+
+
+def test_auth_sync_required_rejects_non_boolean_values(tmp_path):
+    with pytest.raises(ValueError, match=r"auth_sync_required must be (?:a )?boolean"):
+        config_module._account_from_data(
+            {
+                "id": "invalid",
+                "profile_dir": str(tmp_path / "profile"),
+                "auth_sync_required": 1,
+            }
+        )
+
+    with pytest.raises(ValueError, match=r"auth_sync_required must be (?:a )?boolean"):
+        add_or_update_account(
+            "invalid",
+            auth_sync_required=1,
+            path=tmp_path / "config.toml",
+        )
+
+
 def test_reconfiguring_account_clears_old_usage_state(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     config_path = tmp_path / "config.toml"

@@ -1142,11 +1142,46 @@ def test_login_accepts_unique_label_and_marks_projection_sync_required(
     assert main(["--config", str(config_path), "login", "BW_Privat"]) == 0
 
     assert "sync_required" in capsys.readouterr().out
+    assert load_config(config_path).accounts[0].auth_sync_required is True
     assert called == {
         "account_id": "privat",
         "label": "BW_Privat",
         "url": "https://chatgpt.com/codex/cloud/settings/analytics",
     }
+
+
+def test_reactivate_success_persists_sync_required_without_upload(
+    tmp_path, monkeypatch, capsys
+):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("openai-1", path=config_path)
+    monkeypatch.setattr(
+        cli_module,
+        "reactivate_account",
+        lambda *_args, **kwargs: {"ok": True, "browser": kwargs["browser"]},
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "sync_account_auth",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("must remain explicit")),
+    )
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "reactivate",
+                "openai-1",
+                "--browser",
+                "firefox",
+            ]
+        )
+        == 0
+    )
+
+    assert load_config(config_path).accounts[0].auth_sync_required is True
+    assert "sync_required" in capsys.readouterr().out
 
 
 def test_account_auth_sync_uses_resolved_account_and_authenticated_client(
@@ -1161,9 +1196,15 @@ def test_account_auth_sync_uses_resolved_account_and_authenticated_client(
     config = SimpleNamespace(masterjet=object())
     client = object()
     calls = []
+    persisted = []
     monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
     monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: account)
     monkeypatch.setattr(cli_module, "MasterjetControlClient", lambda connection: client)
+    monkeypatch.setattr(
+        cli_module,
+        "add_or_update_account",
+        lambda account_id, **kwargs: persisted.append((account_id, kwargs)),
+    )
     monkeypatch.setattr(
         cli_module,
         "sync_account_auth",
@@ -1174,11 +1215,38 @@ def test_account_auth_sync_uses_resolved_account_and_authenticated_client(
     assert main(["account", "auth-sync", "OpenAI", "--format", "json"]) == 0
 
     assert calls == [(account, client)]
+    assert persisted == [
+        ("openai-1", {"auth_sync_required": False, "path": None})
+    ]
     assert json.loads(capsys.readouterr().out) == {
         "account_ref": "openai-1",
         "generation": 5,
         "status": "succeeded",
     }
+
+
+def test_account_auth_sync_success_clears_persisted_sync_required(
+    tmp_path, monkeypatch, capsys
+):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account(
+        "openai-1",
+        auth_sync_required=True,
+        path=config_path,
+    )
+    monkeypatch.setattr(cli_module, "MasterjetControlClient", lambda _connection: object())
+    monkeypatch.setattr(
+        cli_module,
+        "sync_account_auth",
+        lambda *_args: SimpleNamespace(
+            account_ref="openai-1", generation=5, status="succeeded"
+        ),
+    )
+
+    assert main(["--config", str(config_path), "account", "auth-sync", "openai-1"]) == 0
+
+    assert load_config(config_path).accounts[0].auth_sync_required is False
+    assert "succeeded" in capsys.readouterr().out
 
 
 def test_account_auth_sync_has_no_secret_path_or_provider_argv(monkeypatch, capsys):
@@ -4874,8 +4942,14 @@ def test_profile_command_handlers_cover_text_errors_and_job_results(monkeypatch,
 
 def test_reactivation_and_account_handlers_cover_success_and_errors(monkeypatch, capsys):
     account = Account(id="alpha", label="Alpha", profile_dir="/tmp/alpha")
+    persisted = []
     monkeypatch.setattr(cli_module, "load_config", lambda _path: object())
     monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: account)
+    monkeypatch.setattr(
+        cli_module,
+        "add_or_update_account",
+        lambda account_id, **kwargs: persisted.append((account_id, kwargs)),
+    )
 
     monkeypatch.setattr(
         cli_module,
@@ -4902,7 +4976,7 @@ def test_reactivation_and_account_handlers_cover_success_and_errors(monkeypatch,
     assert cli_module._cmd_reactivate(
         SimpleNamespace(config=None, account="alpha", browser="firefox", format="json")
     ) == 0
-    assert json.loads(capsys.readouterr().out)["vault_projection_state"] == "sync_required"
+    assert json.loads(capsys.readouterr().out)["auth_sync_required"] is True
 
     monkeypatch.setattr(
         cli_module,
@@ -4915,6 +4989,10 @@ def test_reactivation_and_account_handlers_cover_success_and_errors(monkeypatch,
         SimpleNamespace(config=None, account="alpha", browser="auto", format="json")
     ) == 2
     assert json.loads(capsys.readouterr().out)["error"] == "reactivation failed"
+    assert persisted == [
+        ("alpha", {"auth_sync_required": True, "path": None}),
+        ("alpha", {"auth_sync_required": True, "path": None}),
+    ]
 
     monkeypatch.setattr(
         cli_module,

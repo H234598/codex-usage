@@ -87,6 +87,7 @@ class Account:
     reactivation_browser: str = "auto"
     series: str = ""
     series_active: bool = False
+    auth_sync_required: bool = False
 
 
 @dataclass(frozen=True)

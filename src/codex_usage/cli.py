@@ -833,7 +833,7 @@ def _cmd_account_add(args: argparse.Namespace) -> int:
     return 0
 
 
-def _account_json(account: Any) -> dict[str, str | None]:
+def _account_json(account: Any) -> dict[str, object]:
     return {
         "id": account.id,
         "label": account.label,
@@ -845,6 +845,7 @@ def _account_json(account: Any) -> dict[str, str | None]:
         "series": account.series,
         "series_active": account.series_active,
         "backend": account.backend,
+        "auth_sync_required": account.auth_sync_required,
     }
 
 
@@ -867,6 +868,7 @@ def _cmd_account_overview(args: argparse.Namespace) -> int:
                     "reactivation_browser": account.reactivation_browser,
                     "series": account.series,
                     "series_active": account.series_active,
+                    "auth_sync_required": account.auth_sync_required,
                     "backend": account.backend,
                     "backend_used": usage.backend_used if usage else None,
                     "fallback_reason": usage.fallback_reason if usage else None,
@@ -1398,8 +1400,14 @@ def _parse_history_datetime(value: str, label: str) -> datetime:
 
 def _cmd_login(args: argparse.Namespace) -> int:
     config = load_config(args.config)
-    login_account(resolve_account(config, args.account), config)
-    print("Vaultprojektion: sync_required")
+    account = resolve_account(config, args.account)
+    login_account(account, config)
+    add_or_update_account(
+        account.id,
+        auth_sync_required=True,
+        path=args.config,
+    )
+    print("Auth-Sync: sync_required")
     return 0
 
 
@@ -1412,6 +1420,11 @@ def _cmd_account_auth_sync(args: argparse.Namespace) -> int:
     except AuthSyncError as exc:
         print(f"Fehler: {exc.code}", file=sys.stderr)
         return 2
+    add_or_update_account(
+        account.id,
+        auth_sync_required=False,
+        path=args.config,
+    )
     projection = {
         "account_ref": result.account_ref,
         "generation": result.generation,
@@ -1432,7 +1445,12 @@ def _cmd_reactivate(args: argparse.Namespace) -> int:
     try:
         result = dict(reactivate_account(account, browser=args.browser))
         if result.get("ok") is True:
-            result["vault_projection_state"] = "sync_required"
+            add_or_update_account(
+                account.id,
+                auth_sync_required=True,
+                path=args.config,
+            )
+            result["auth_sync_required"] = True
     except ReactivationError as exc:
         result = {
             "ok": False,
@@ -1446,7 +1464,7 @@ def _cmd_reactivate(args: argparse.Namespace) -> int:
     elif result["ok"]:
         print(f"Account reaktiviert: {account.id} ({account.label})")
         print(f"Browserprofil: isoliert ({result['browser']})")
-        print("Vaultprojektion: sync_required")
+        print("Auth-Sync: sync_required")
     else:
         print(f"Reaktivierung fehlgeschlagen: {result['error']}")
     return 0 if result["ok"] else 2

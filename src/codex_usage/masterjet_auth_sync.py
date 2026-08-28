@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -10,6 +12,7 @@ from .account_lock import AccountLockError, account_lock
 from .masterjet_client import MasterjetClientError
 from .masterjet_contracts import (
     ControlOperation,
+    OpenAIControlAccount,
     SecretIngressReceipt,
     SecretIngressSession,
 )
@@ -55,10 +58,16 @@ class AuthSyncResult:
 def sync_account_auth(
     account: Account,
     client: AuthenticatedControlClient,
+    *,
+    clock: Callable[[], datetime] | None = None,
 ) -> AuthSyncResult:
     failure: str | None = None
     try:
-        return _sync_account_auth(account, client)
+        return _sync_account_auth(
+            account,
+            client,
+            clock if clock is not None else _utc_now,
+        )
     except MasterjetClientError as exc:
         failure = exc.code
     except (AccountLockError, OSError, TypeError, ValueError):
@@ -73,12 +82,24 @@ def sync_account_auth(
 def _sync_account_auth(
     account: Account,
     client: AuthenticatedControlClient,
+    clock: Callable[[], datetime],
 ) -> AuthSyncResult:
     auth_path = _canonical_auth_path(account)
     with account_lock(account.id):
+        accounts = client.call("openai.accounts.list", {})
+        if type(accounts) is not tuple or any(
+            type(candidate) is not OpenAIControlAccount for candidate in accounts
+        ):
+            raise MasterjetClientError("control.response_invalid")
+        matches = [candidate for candidate in accounts if candidate.ref == account.id]
+        if len(matches) != 1:
+            raise MasterjetClientError("control.response_invalid")
+        expected_generation = matches[0].credential_generation
+
         plan = client.call(
             "openai.auth-sync.plan",
             {"account_ref": account.id},
+            expected_generation=expected_generation,
             idempotency_key=_idempotency_key(),
         )
         if type(plan) is not ControlOperation:
@@ -87,9 +108,11 @@ def _sync_account_auth(
         if (
             plan.kind != "openai.auth-sync.plan"
             or plan.state != "planned"
+            or plan.expected_generation != expected_generation
             or plan.resulting_generation is not None
         ):
             raise MasterjetClientError("control.response_invalid")
+        _require_unexpired(plan.expires_at, clock, "control.plan_stale")
 
         secret = _read_auth_json(auth_path)
         try:
@@ -112,6 +135,11 @@ def _sync_account_auth(
                 or session.expected_generation != plan.expected_generation
             ):
                 raise MasterjetClientError("control.response_invalid")
+            now = _clock_value(clock)
+            if session.expires_at <= now:
+                raise MasterjetClientError("credential.upload_expired")
+            if plan.expires_at <= now:
+                raise MasterjetClientError("control.plan_stale")
 
             receipt = client.put_secret(
                 session.id,
@@ -128,6 +156,7 @@ def _sync_account_auth(
                 or receipt.state != "consumed"
             ):
                 raise MasterjetClientError("control.response_invalid")
+            _require_unexpired(plan.expires_at, clock, "control.plan_stale")
 
             applied = client.call(
                 "openai.auth-sync.apply",
@@ -142,6 +171,7 @@ def _sync_account_auth(
                 applied.kind != "openai.auth-sync.apply"
                 or applied.state != "succeeded"
                 or applied.expected_generation != plan.expected_generation
+                or applied.plan_digest != plan.plan_digest
                 or applied.resulting_generation != receipt.generation
             ):
                 raise MasterjetClientError("control.response_invalid")
@@ -196,6 +226,29 @@ def _idempotency_key() -> str:
         return str(uuid.uuid4())
     except Exception:
         raise MasterjetClientError("control.request_invalid") from None
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _clock_value(clock: Callable[[], datetime]) -> datetime:
+    try:
+        now = clock()
+    except Exception:
+        raise MasterjetClientError("control.response_invalid") from None
+    if type(now) is not datetime or now.tzinfo is not UTC:
+        raise MasterjetClientError("control.response_invalid")
+    return now
+
+
+def _require_unexpired(
+    expires_at: datetime,
+    clock: Callable[[], datetime],
+    code: str,
+) -> None:
+    if expires_at <= _clock_value(clock):
+        raise MasterjetClientError(code)
 
 
 def _zero_secret(secret: bytearray) -> None:

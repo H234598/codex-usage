@@ -369,8 +369,7 @@ class _HttpsTransport:
                     raise MasterjetClientError("control.request_invalid")
                 body = secret.tobytes()
                 target = (
-                    target.rstrip("/")
-                    + "/secret-ingress-sessions/"
+                    "/admin/v1/secret-ingress-sessions/"
                     + quote(secret_session_id, safe="")
                 )
                 headers.update(

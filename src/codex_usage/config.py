@@ -209,6 +209,7 @@ def add_or_update_account(
     reactivation_browser: str | None = None,
     series: str | None = None,
     series_active: bool | None = None,
+    auth_sync_required: bool | None = None,
     clear_auth_json: bool = False,
     test_home: bool = False,
     path: Path | None = None,
@@ -236,6 +237,8 @@ def add_or_update_account(
         series = series.upper()
     if series_active is not None and not isinstance(series_active, bool):
         raise ValueError("series_active must be boolean")
+    if auth_sync_required is not None and type(auth_sync_required) is not bool:
+        raise ValueError("auth_sync_required must be boolean")
     if not isinstance(clear_auth_json, bool):
         raise ValueError("clear_auth_json must be boolean")
     if not isinstance(test_home, bool):
@@ -316,6 +319,11 @@ def add_or_update_account(
                 series_active
                 if series_active is not None
                 else (existing.series_active if existing else False)
+            ),
+            auth_sync_required=(
+                auth_sync_required
+                if auth_sync_required is not None
+                else (existing.auth_sync_required if existing else False)
             ),
         )
 
@@ -620,6 +628,10 @@ def _account_from_data(item: object) -> Account:
     _validate_series(series, allow_empty=True)
     raw_series_active = item.get("series_active", False)
     series_active = _strict_bool(raw_series_active, "series_active")
+    auth_sync_required = _strict_bool(
+        item.get("auth_sync_required", False),
+        "auth_sync_required",
+    )
     return Account(
         id=account_id,
         label=label,
@@ -631,6 +643,7 @@ def _account_from_data(item: object) -> Account:
         reactivation_browser=reactivation_browser,
         series=series,
         series_active=series_active,
+        auth_sync_required=auth_sync_required,
     )
 
 
@@ -1087,6 +1100,8 @@ def _validate_account(account: object) -> None:
     _validate_series(account.series, allow_empty=True)
     if not isinstance(account.series_active, bool):
         raise ValueError("series_active must be boolean")
+    if type(account.auth_sync_required) is not bool:
+        raise ValueError("auth_sync_required must be boolean")
     if account.series_active and not account.series:
         raise ValueError("active series requires a series name")
     if account.auth_json_path is not None:
@@ -1238,6 +1253,7 @@ def _to_toml(config: AppConfig) -> str:
                 f"reactivation_browser = {_quote(account.reactivation_browser)}",
                 f"series = {_quote(account.series)}",
                 f"series_active = {'true' if account.series_active else 'false'}",
+                f"auth_sync_required = {'true' if account.auth_sync_required else 'false'}",
                 *(
                     [f"auth_json_path = {_quote(account.auth_json_path)}"]
                     if account.auth_json_path
