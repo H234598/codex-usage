@@ -181,7 +181,14 @@ class GoogleAccountsModel:
             if account_ref in seen:
                 raise ValueError("duplicate Google account")
             seen.add(account_ref)
-            project_rows = self._projects(account_ref, projects.get(account_ref, []))
+            if details_available and account_ref not in projects:
+                raise ValueError("private or invalid Google project owner")
+            project_rows = self._projects(
+                account_ref, projects[account_ref] if details_available else []
+            )
+            project_count = _count(account["project_count"], "project_count")
+            if details_available and len(project_rows) != project_count:
+                raise ValueError("invalid Google project_count projection")
             cards.append(
                 GoogleAccountCard(
                     ref=account_ref,
@@ -193,7 +200,7 @@ class GoogleAccountsModel:
                         account["inventory_generation"], "inventory_generation"
                     ),
                     quota_state=_text(account["quota_state"], "quota_state", maximum=64),
-                    project_count=_count(account["project_count"], "project_count"),
+                    project_count=project_count,
                     billing_count=_count(account["billing_count"], "billing_count"),
                     reload_state=_text(account["reload_state"], "reload_state", maximum=64),
                     projects=project_rows,
@@ -204,7 +211,7 @@ class GoogleAccountsModel:
                     apply_enabled=mutations_enabled,
                 )
             )
-        if set(projects) - seen:
+        if details_available and set(projects) != seen:
             raise ValueError("private or invalid Google project owner")
         self._cards = tuple(cards)
         self.details_available = details_available

@@ -167,6 +167,104 @@ def test_non_boolean_account_projection_is_rejected(field, invalid_value) -> Non
     assert model.cards == ()
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    ["missing-owner", "zero-missing", "too-few", "too-many"],
+)
+def test_incomplete_project_projection_is_rejected(mutation) -> None:
+    payload = _payload()
+    if mutation == "missing-owner":
+        payload["projects"] = {}
+    elif mutation == "zero-missing":
+        payload["accounts"][0]["project_count"] = 0
+        payload["projects"] = {}
+    elif mutation == "too-few":
+        payload["projects"]["google-one"].pop()
+    else:
+        payload["accounts"][0]["project_count"] = 1
+    model = _module().GoogleAccountsModel()
+
+    with pytest.raises(ValueError, match="project"):
+        model.render(payload)
+
+    assert model.stale is True
+    assert model.details_available is False
+    assert model.cards == ()
+
+
+def test_zero_project_count_requires_explicit_empty_projection() -> None:
+    payload = _payload()
+    payload["accounts"][0]["project_count"] = 0
+    payload["projects"]["google-one"] = []
+    model = _module().GoogleAccountsModel()
+
+    model.render(payload)
+
+    card = model.card("google-one")
+    assert card.projects == ()
+    assert card.project_count == 0
+    assert card.plan_enabled is True
+
+
+def test_duplicate_and_foreign_project_refs_are_rejected() -> None:
+    duplicate = _payload()
+    duplicate["projects"]["google-one"][1]["ref"] = "hive-one"
+    foreign = _payload()
+    foreign["projects"]["google-foreign"] = []
+    module = _module()
+
+    with pytest.raises(ValueError, match="duplicate Google project"):
+        module.GoogleAccountsModel().render(duplicate)
+    with pytest.raises(ValueError, match="project owner"):
+        module.GoogleAccountsModel().render(foreign)
+
+
+def test_incomplete_projection_revokes_all_mutations_without_argv(tmp_path) -> None:
+    module = _module()
+    model = module.GoogleAccountsModel()
+    calls = []
+
+    class Runner:
+        def submit(self, argv, *, stdin_data=None, callback=None):
+            calls.append(tuple(argv))
+
+    actions = module.GoogleActions(Runner())
+    model.render(_payload())
+    actions.set_projection_ready(True)
+    preview = model.preview_plan(
+        {
+            "account_ref": "google-one",
+            "plan_id": "plan-one",
+            "expected_generation": 4,
+            "expires_at": "2026-08-28T18:00:00Z",
+            "step_count": 1,
+            "projects": [{"project_name": "Amber Meadow", "key_name": "Quiet River"}],
+        }
+    )
+    invalid = _payload()
+    invalid["projects"] = {}
+
+    with pytest.raises(ValueError, match="project"):
+        model.render(invalid)
+    model.fail_closed()
+    actions.set_projection_ready(False)
+
+    operations = (
+        lambda: actions.import_oauth_client("google-one", tmp_path / "oauth.json"),
+        lambda: actions.oauth_begin("google-one", browser="firefox"),
+        lambda: actions.inventory_refresh("google-one"),
+        lambda: actions.provision_plan("google-one"),
+        lambda: actions.apply(preview),
+    )
+    for operation in operations:
+        with pytest.raises(RuntimeError, match="STALE"):
+            operation()
+
+    assert model.stale is True
+    assert model.cards == ()
+    assert calls == []
+
+
 def test_google_widget_never_persists_secret_or_provider_id_fields() -> None:
     page = _module().GoogleAccountsModel()
     payload = _payload()
