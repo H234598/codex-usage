@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import os
+import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol, TypeVar
+from typing import Protocol, TypeVar, cast
 
 from .masterjet_client import MasterjetClientError
 from .masterjet_contracts import (
@@ -48,6 +49,8 @@ class GoogleOAuthCallbackLease(Protocol):
     @property
     def redirect_uri(self) -> str: ...
 
+    def close(self) -> None: ...
+
 
 class GoogleOAuthCallbackProvider(Protocol):
     def acquire(self) -> GoogleOAuthCallbackLease: ...
@@ -80,7 +83,9 @@ class GoogleOAuthClientImportResult:
 class GoogleAccountsController:
     __slots__ = (
         "_callback_lease",
+        "_callback_lock",
         "_callback_provider",
+        "_callback_transaction",
         "_client",
         "_clock",
         "_idempotency_key_factory",
@@ -101,6 +106,8 @@ class GoogleAccountsController:
         )
         self._callback_provider = callback_provider
         self._callback_lease: GoogleOAuthCallbackLease | None = None
+        self._callback_transaction: GoogleOAuthTransactionV1 | None = None
+        self._callback_lock = threading.Lock()
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"
@@ -113,6 +120,9 @@ class GoogleAccountsController:
 
     def oauth_complete(self, transaction: GoogleOAuthTransactionV1) -> ControlOperation:
         return self._guard(lambda: self._oauth_complete(transaction))
+
+    def oauth_cancel(self, transaction: GoogleOAuthTransactionV1) -> None:
+        self._guard(lambda: self._oauth_cancel(transaction))
 
     def inventory_refresh(self, account_ref: str) -> ControlOperation:
         return self._guard(lambda: self._inventory_refresh(account_ref))
@@ -159,15 +169,34 @@ class GoogleAccountsController:
         return matches[0]
 
     def _oauth_begin(self, account_ref: str, browser: str) -> GoogleOAuthTransactionV1:
-        provider = self._callback_provider
-        if provider is None:
-            raise MasterjetClientError("oauth.callback_unavailable")
-        try:
-            lease = provider.acquire()
-            redirect_uri = validate_google_oauth_redirect_uri(lease.redirect_uri)
-        except Exception:
-            raise MasterjetClientError("oauth.callback_unavailable") from None
-        self._callback_lease = lease
+        with self._callback_lock:
+            if self._callback_lease is not None:
+                raise MasterjetClientError("oauth.callback_active")
+            provider = self._callback_provider
+            if provider is None:
+                raise MasterjetClientError("oauth.callback_unavailable")
+            lease: GoogleOAuthCallbackLease | None = None
+            try:
+                lease = provider.acquire()
+                transaction = self._begin_with_callback(
+                    lease, account_ref=account_ref, browser=browser
+                )
+            except BaseException:
+                if lease is not None:
+                    _close_callback_lease(lease)
+                raise
+            self._callback_lease = lease
+            self._callback_transaction = transaction
+            return transaction
+
+    def _begin_with_callback(
+        self,
+        lease: GoogleOAuthCallbackLease,
+        *,
+        account_ref: str,
+        browser: str,
+    ) -> GoogleOAuthTransactionV1:
+        redirect_uri = validate_google_oauth_redirect_uri(lease.redirect_uri)
         account = self._account(account_ref)
         result = self._client.call(
             "google.oauth.begin",
@@ -181,7 +210,7 @@ class GoogleAccountsController:
         )
         if type(result) is not GoogleOAuthTransactionV1:
             raise MasterjetClientError("control.response_invalid")
-        transaction = result
+        transaction = cast(GoogleOAuthTransactionV1, result)
         if (
             transaction.account_ref != account.ref
             or transaction.generation != account.inventory_generation
@@ -199,22 +228,43 @@ class GoogleAccountsController:
     def _oauth_complete(self, transaction: GoogleOAuthTransactionV1) -> ControlOperation:
         if type(transaction) is not GoogleOAuthTransactionV1:
             raise MasterjetClientError("control.request_invalid")
-        account = self._account(transaction.account_ref)
-        if account.inventory_generation != transaction.generation:
-            raise MasterjetClientError("credential.generation_conflict")
-        idempotency_key = self._idempotency_key()
-        _require_unexpired(transaction.expires_at, self._clock, "oauth.transaction_expired")
-        result = self._client.call(
-            "google.oauth.complete",
-            {"account_ref": account.ref, "transaction_id": transaction.id},
-            expected_generation=transaction.generation,
-            idempotency_key=idempotency_key,
-        )
-        return _require_operation(
-            result,
-            kind="google.oauth.complete",
-            expected_generation=transaction.generation,
-        )
+        with self._callback_lock:
+            if transaction != self._callback_transaction:
+                raise MasterjetClientError("control.request_invalid")
+            try:
+                account = self._account(transaction.account_ref)
+                if account.inventory_generation != transaction.generation:
+                    raise MasterjetClientError("credential.generation_conflict")
+                idempotency_key = self._idempotency_key()
+                _require_unexpired(transaction.expires_at, self._clock, "oauth.transaction_expired")
+                result = self._client.call(
+                    "google.oauth.complete",
+                    {"account_ref": account.ref, "transaction_id": transaction.id},
+                    expected_generation=transaction.generation,
+                    idempotency_key=idempotency_key,
+                )
+                return _require_operation(
+                    result,
+                    kind="google.oauth.complete",
+                    expected_generation=transaction.generation,
+                )
+            finally:
+                self._close_active_callback()
+
+    def _oauth_cancel(self, transaction: GoogleOAuthTransactionV1) -> None:
+        if type(transaction) is not GoogleOAuthTransactionV1:
+            raise MasterjetClientError("control.request_invalid")
+        with self._callback_lock:
+            if transaction != self._callback_transaction:
+                raise MasterjetClientError("control.request_invalid")
+            self._close_active_callback()
+
+    def _close_active_callback(self) -> None:
+        lease = self._callback_lease
+        self._callback_lease = None
+        self._callback_transaction = None
+        if lease is not None:
+            _close_callback_lease(lease)
 
     def _inventory_refresh(self, account_ref: str) -> ControlOperation:
         account = self._account(account_ref)
@@ -469,3 +519,10 @@ def _uuid_key() -> str:
 def _zero_secret(secret: bytearray) -> None:
     for index in range(len(secret)):
         secret[index] = 0
+
+
+def _close_callback_lease(lease: GoogleOAuthCallbackLease) -> None:
+    try:
+        lease.close()
+    except BaseException:
+        raise MasterjetClientError("oauth.callback_unavailable") from None

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -73,6 +74,7 @@ class FakeControlClient:
         self.stored_plan = operation("google.provision.plan")
         self.stored_plan_account_ref = "google-one"
         self.authorization_url = AUTHORIZATION_URL
+        self.oauth_expires_at = NOW + timedelta(minutes=5)
 
     def call(
         self,
@@ -89,7 +91,7 @@ class FakeControlClient:
                 id="oauth-1",
                 account_ref="google-one",
                 authorization_url=self.authorization_url,
-                expires_at=NOW + timedelta(minutes=5),
+                expires_at=self.oauth_expires_at,
                 generation=4,
             )
         if name == "google.oauth.complete":
@@ -163,16 +165,27 @@ class FakeControlClient:
 class FakeCallbackLease:
     def __init__(self, redirect_uri: str = REDIRECT_URI) -> None:
         self.redirect_uri = redirect_uri
+        self.close_count = 0
+
+    def close(self) -> None:
+        self.close_count += 1
 
 
 class FakeCallbackProvider:
     def __init__(self, redirect_uri: str = REDIRECT_URI) -> None:
-        self.lease = FakeCallbackLease(redirect_uri)
-        self.acquired = False
+        self.redirect_uri = redirect_uri
+        self.leases: list[FakeCallbackLease] = []
+        self.acquire_count = 0
+
+    @property
+    def lease(self) -> FakeCallbackLease:
+        return self.leases[-1]
 
     def acquire(self) -> FakeCallbackLease:
-        self.acquired = True
-        return self.lease
+        self.acquire_count += 1
+        lease = FakeCallbackLease(self.redirect_uri)
+        self.leases.append(lease)
+        return lease
 
 
 def controller(client: FakeControlClient, *, clock=lambda: NOW) -> GoogleAccountsController:
@@ -234,7 +247,7 @@ def test_oauth_begin_without_bound_callback_provider_makes_no_request() -> None:
     assert client.calls == []
 
 
-def test_oauth_begin_sends_exact_bound_redirect_from_acquired_lease() -> None:
+def test_oauth_begin_holds_exact_bound_lease_until_matching_complete() -> None:
     client = FakeControlClient()
     provider = FakeCallbackProvider()
     subject = GoogleAccountsController(
@@ -252,7 +265,183 @@ def test_oauth_begin_sends_exact_bound_redirect_from_acquired_lease() -> None:
         "browser": "firefox",
         "redirect_uri": REDIRECT_URI,
     }
-    assert provider.acquired is True
+    assert provider.acquire_count == 1
+    assert provider.lease.close_count == 0
+
+    subject.oauth_complete(transaction)
+
+    assert provider.lease.close_count == 1
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["account", "transport", "response", "expired"],
+)
+def test_oauth_begin_closes_lease_once_on_every_pre_transaction_failure(
+    failure,
+) -> None:
+    client = FakeControlClient()
+    if failure == "account":
+        client.accounts = ()
+    elif failure == "response":
+        client.authorization_url = (
+            "https://accounts.google.com/o/oauth2/v2/auth?"
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A8766%2Foauth%2Fcallback"
+        )
+    elif failure == "expired":
+        client.oauth_expires_at = NOW - timedelta(seconds=1)
+
+    class FailingClient(FakeControlClient):
+        def call(self, name, arguments, expected_generation=None, idempotency_key=None):
+            if failure == "transport" and name == "google.oauth.begin":
+                raise MasterjetClientError("control.transport_unavailable")
+            return client.call(name, arguments, expected_generation, idempotency_key)
+
+    provider = FakeCallbackProvider()
+    subject = GoogleAccountsController(
+        FailingClient(),
+        clock=lambda: NOW,
+        idempotency_key_factory=lambda: "idem-1",
+        callback_provider=provider,
+    )
+
+    with pytest.raises(GoogleAccountsError):
+        subject.oauth_begin("google-one", browser="firefox")
+
+    assert provider.lease.close_count == 1
+
+
+def test_second_oauth_begin_fails_without_overwriting_active_lease() -> None:
+    client = FakeControlClient()
+    provider = FakeCallbackProvider()
+    subject = GoogleAccountsController(
+        client,
+        clock=lambda: NOW,
+        idempotency_key_factory=lambda: "idem-1",
+        callback_provider=provider,
+    )
+    first = subject.oauth_begin("google-one", browser="firefox")
+    calls_after_first = list(client.calls)
+
+    with pytest.raises(GoogleAccountsError, match=r"oauth\.callback_active"):
+        subject.oauth_begin("google-one", browser="firefox")
+
+    assert provider.acquire_count == 1
+    assert provider.lease.close_count == 0
+    assert client.calls == calls_after_first
+
+    subject.oauth_cancel(first)
+    assert provider.lease.close_count == 1
+
+
+def test_parallel_oauth_begin_allows_one_active_transaction() -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingClient(FakeControlClient):
+        def call(self, name, arguments, expected_generation=None, idempotency_key=None):
+            if name == "google.oauth.begin":
+                started.set()
+                assert release.wait(timeout=2)
+            return super().call(name, arguments, expected_generation, idempotency_key)
+
+    client = BlockingClient()
+    provider = FakeCallbackProvider()
+    subject = GoogleAccountsController(
+        client,
+        clock=lambda: NOW,
+        idempotency_key_factory=lambda: "idem-1",
+        callback_provider=provider,
+    )
+    results: list[object] = []
+
+    def begin() -> None:
+        try:
+            results.append(subject.oauth_begin("google-one", browser="firefox"))
+        except GoogleAccountsError as exc:
+            results.append(exc)
+
+    first = threading.Thread(target=begin)
+    second = threading.Thread(target=begin)
+    first.start()
+    assert started.wait(timeout=2)
+    second.start()
+    release.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert sum(isinstance(result, GoogleOAuthTransactionV1) for result in results) == 1
+    errors = [result for result in results if isinstance(result, GoogleAccountsError)]
+    assert [error.code for error in errors] == ["oauth.callback_active"]
+    assert provider.acquire_count == 1
+    assert provider.lease.close_count == 0
+
+
+def test_oauth_cancel_rejects_other_transaction_without_closing_active_lease() -> None:
+    client = FakeControlClient()
+    provider = FakeCallbackProvider()
+    subject = GoogleAccountsController(
+        client,
+        clock=lambda: NOW,
+        idempotency_key_factory=lambda: "idem-1",
+        callback_provider=provider,
+    )
+    active = subject.oauth_begin("google-one", browser="firefox")
+    other = GoogleOAuthTransactionV1(
+        id="oauth-other",
+        account_ref=active.account_ref,
+        authorization_url=active.authorization_url,
+        expires_at=active.expires_at,
+        generation=active.generation,
+    )
+
+    with pytest.raises(GoogleAccountsError, match=r"control\.request_invalid"):
+        subject.oauth_cancel(other)
+
+    assert provider.lease.close_count == 0
+
+    subject.oauth_cancel(active)
+    assert provider.lease.close_count == 1
+
+
+@pytest.mark.parametrize("failure", ["transport", "expired"])
+def test_oauth_complete_closes_matching_lease_on_error_or_expiry(failure) -> None:
+    current = [NOW]
+
+    class CompleteFailingClient(FakeControlClient):
+        fail_complete = False
+
+        def call(self, name, arguments, expected_generation=None, idempotency_key=None):
+            if name == "google.oauth.complete" and self.fail_complete:
+                raise MasterjetClientError("control.transport_unavailable")
+            return super().call(name, arguments, expected_generation, idempotency_key)
+
+    client = CompleteFailingClient()
+    provider = FakeCallbackProvider()
+    subject = GoogleAccountsController(
+        client,
+        clock=lambda: current[0],
+        idempotency_key_factory=lambda: "idem-1",
+        callback_provider=provider,
+    )
+    transaction = subject.oauth_begin("google-one", browser="firefox")
+    if failure == "transport":
+        client.fail_complete = True
+    else:
+        current[0] = NOW + timedelta(minutes=10)
+
+    with pytest.raises(GoogleAccountsError):
+        subject.oauth_complete(transaction)
+
+    assert provider.lease.close_count == 1
+
+    current[0] = NOW
+    client.fail_complete = False
+    retried = subject.oauth_begin("google-one", browser="firefox")
+    assert retried.id == "oauth-1"
+    assert provider.acquire_count == 2
 
 
 @pytest.mark.parametrize(
@@ -506,23 +695,25 @@ def test_plan_expiry_is_rechecked_after_idempotency_key_before_apply() -> None:
 def test_oauth_expiry_is_rechecked_after_idempotency_key_before_complete() -> None:
     client = FakeControlClient()
     current = [NOW]
-    transaction = GoogleOAuthTransactionV1(
-        id="oauth-1",
-        account_ref="google-one",
-        authorization_url=AUTHORIZATION_URL,
-        expires_at=NOW + timedelta(minutes=5),
-        generation=4,
-    )
+    key_calls = [0]
+    provider = FakeCallbackProvider()
 
     def key() -> str:
-        current[0] = NOW + timedelta(minutes=10)
+        key_calls[0] += 1
+        if key_calls[0] == 2:
+            current[0] = NOW + timedelta(minutes=10)
         return "idem-1"
 
     subject = GoogleAccountsController(
-        client, clock=lambda: current[0], idempotency_key_factory=key
+        client,
+        clock=lambda: current[0],
+        idempotency_key_factory=key,
+        callback_provider=provider,
     )
+    transaction = subject.oauth_begin("google-one", browser="firefox")
 
     with pytest.raises(GoogleAccountsError, match=r"oauth\.transaction_expired"):
         subject.oauth_complete(transaction)
 
     assert not any(call[0] == "google.oauth.complete" for call in client.calls)
+    assert provider.lease.close_count == 1
