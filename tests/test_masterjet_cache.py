@@ -3,11 +3,15 @@ from __future__ import annotations
 import json
 import os
 import stat
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+from codex_usage import masterjet_cache as cache_module
 from codex_usage import private_io
 from codex_usage.masterjet_cache import (
     MAX_CONTROL_SNAPSHOT_BYTES,
@@ -320,3 +324,334 @@ def test_unknown_persisted_fields_are_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ControlCacheError, match=r"control\.cache_invalid"):
         cache.load(max_age_seconds=60)
+
+
+def test_cache_root_beneath_user_writable_parent_is_rejected(tmp_path: Path) -> None:
+    unsafe_parent = tmp_path / "unsafe-parent"
+    unsafe_parent.mkdir(mode=0o700)
+    unsafe_parent.chmod(0o777)
+
+    try:
+        with pytest.raises(ControlCacheError, match=r"control\.cache_unavailable"):
+            ControlSnapshotCache.for_test(unsafe_parent / "cache")
+    finally:
+        unsafe_parent.chmod(0o700)
+
+
+def test_non_normalized_cache_root_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "child" / ".." / "cache"
+
+    with pytest.raises(ControlCacheError, match=r"control\.cache_request_invalid"):
+        ControlSnapshotCache.for_test(root)
+
+    assert not (tmp_path / "child").exists()
+
+
+def test_publish_remains_bound_to_attested_root_during_namespace_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "cache"
+    displaced = tmp_path / "displaced-cache"
+    cache = ControlSnapshotCache.for_test(root)
+    cache.save(valid_snapshot(), observed_at=1.0)
+    original_replace = cache_module.os.replace
+    swapped = False
+
+    def swap_root_then_replace(
+        source: object,
+        destination: object,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        nonlocal swapped
+        source_path = Path(str(source))
+        destination_path = Path(str(destination))
+        if not swapped and destination_path.name == cache_path(root).name:
+            original_replace(root, displaced)
+            root.mkdir(mode=0o700)
+            cache_path(root).write_bytes(b"attacker-target")
+            cache_path(root).chmod(0o600)
+            if source_path.is_absolute():
+                original_replace(displaced / source_path.name, root / source_path.name)
+            swapped = True
+        original_replace(source, destination, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(cache_module.os, "replace", swap_root_then_replace)
+
+    try:
+        cache.save(valid_snapshot(), observed_at=2.0)
+    except ControlCacheError:
+        pass
+
+    assert swapped is True
+    assert cache_path(root).read_bytes() == b"attacker-target"
+
+
+def test_temp_name_swap_after_fsync_is_rejected_before_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = ControlSnapshotCache.for_test(tmp_path)
+    cache.save(valid_snapshot(), observed_at=1.0)
+    original = cache_path(tmp_path).read_bytes()
+    outside = tmp_path.parent / f"{tmp_path.name}-temp-swap"
+    outside.write_bytes(b"outside")
+    outside.chmod(0o600)
+    original_fsync = cache_module.os.fsync
+    swapped = False
+
+    def swap_temp_after_fsync(fd: int) -> None:
+        nonlocal swapped
+        original_fsync(fd)
+        if swapped:
+            return
+        descriptor_path = Path(os.readlink(f"/proc/self/fd/{fd}"))
+        if descriptor_path.name.startswith(".control-snapshot-v1.json.tmp"):
+            descriptor_path.unlink()
+            descriptor_path.symlink_to(outside)
+            swapped = True
+
+    monkeypatch.setattr(cache_module.os, "fsync", swap_temp_after_fsync)
+
+    with pytest.raises(ControlCacheError, match=r"control\.cache_unavailable"):
+        cache.save(valid_snapshot(), observed_at=2.0)
+
+    assert swapped is True
+    assert cache_path(tmp_path).read_bytes() == original
+    assert outside.read_bytes() == b"outside"
+
+
+def test_target_swap_after_validation_blocks_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "cache"
+    cache = ControlSnapshotCache.for_test(root)
+    original_fsync = cache_module.os.fsync
+    swapped = False
+
+    def swap_target_after_temp_fsync(fd: int) -> None:
+        nonlocal swapped
+        original_fsync(fd)
+        if swapped:
+            return
+        descriptor_path = Path(os.readlink(f"/proc/self/fd/{fd}"))
+        if descriptor_path.name.startswith(".control-snapshot-v1.json.tmp"):
+            cache_path(root).write_bytes(b"attacker-target")
+            cache_path(root).chmod(0o600)
+            swapped = True
+
+    monkeypatch.setattr(cache_module.os, "fsync", swap_target_after_temp_fsync)
+
+    with pytest.raises(ControlCacheError, match=r"control\.cache_unavailable"):
+        cache.save(valid_snapshot(), observed_at=2.0)
+
+    assert swapped is True
+    assert cache_path(root).read_bytes() == b"attacker-target"
+
+
+@pytest.mark.parametrize(
+    "rollback_payload",
+    [
+        b'{"schema_version":1',
+        b'{ "observed_at": 1.0, "schema_version": 1, "snapshot": '
+        b'{"google_accounts": [], "google_projects": [], "openai_accounts": []}}',
+    ],
+)
+def test_invalid_rollback_evidence_blocks_recovery_and_overwrite(
+    tmp_path: Path,
+    rollback_payload: bytes,
+) -> None:
+    cache = ControlSnapshotCache.for_test(tmp_path)
+    rollback = tmp_path / ".control-snapshot-v1.json.rollback-crashed"
+    rollback.write_bytes(rollback_payload)
+    rollback.chmod(0o600)
+
+    with pytest.raises(ControlCacheError, match=r"control\.cache_invalid"):
+        cache.save(valid_snapshot(), observed_at=2.0)
+
+    assert rollback.read_bytes() == rollback_payload
+    assert not cache_path(tmp_path).exists()
+
+
+def test_divergent_rollback_beside_target_blocks_overwrite(tmp_path: Path) -> None:
+    cache = ControlSnapshotCache.for_test(tmp_path)
+    cache.save(valid_snapshot(), observed_at=1.0)
+    original = cache_path(tmp_path).read_bytes()
+    other_root = tmp_path / "other"
+    other_cache = ControlSnapshotCache.for_test(other_root)
+    other_cache.save(valid_snapshot(), observed_at=9.0)
+    rollback = tmp_path / ".control-snapshot-v1.json.rollback-crashed"
+    rollback.write_bytes(cache_path(other_root).read_bytes())
+    rollback.chmod(0o600)
+
+    with pytest.raises(ControlCacheError, match=r"control\.cache_invalid"):
+        cache.save(valid_snapshot(), observed_at=2.0)
+
+    assert cache_path(tmp_path).read_bytes() == original
+    assert rollback.exists()
+
+
+def test_valid_rollback_is_recovered_before_new_publish(tmp_path: Path) -> None:
+    cache = ControlSnapshotCache.for_test(tmp_path)
+    cache.save(valid_snapshot(), observed_at=1.0)
+    rollback = tmp_path / ".control-snapshot-v1.json.rollback-crashed"
+    cache_path(tmp_path).replace(rollback)
+
+    cache.save(valid_snapshot(), observed_at=2.0)
+
+    assert cache.load(max_age_seconds=10**10).observed_at == 2.0
+    assert not rollback.exists()
+
+
+def test_stale_legacy_temps_are_removed_before_publish(tmp_path: Path) -> None:
+    cache = ControlSnapshotCache.for_test(tmp_path)
+    stale = [
+        tmp_path / ".control-snapshot-v1.json.tmp-first",
+        tmp_path / ".control-snapshot-v1.json.tmp-second",
+    ]
+    for path in stale:
+        path.write_bytes(b"partial")
+        path.chmod(0o600)
+
+    cache.save(valid_snapshot(), observed_at=1.0)
+
+    assert not any(path.exists() for path in stale)
+    assert list(tmp_path.glob("*.json")) == [cache_path(tmp_path)]
+
+
+def test_unsafe_stale_temp_blocks_publish(tmp_path: Path) -> None:
+    cache = ControlSnapshotCache.for_test(tmp_path)
+    target = tmp_path.parent / f"{tmp_path.name}-stale-temp-target"
+    target.write_bytes(b"outside")
+    target.chmod(0o600)
+    stale = tmp_path / ".control-snapshot-v1.json.tmp-crashed"
+    stale.symlink_to(target)
+
+    with pytest.raises(ControlCacheError, match=r"control\.cache_unavailable"):
+        cache.save(valid_snapshot(), observed_at=1.0)
+
+    assert target.read_bytes() == b"outside"
+    assert not cache_path(tmp_path).exists()
+
+
+def test_load_cleans_safe_stale_temp_from_crashed_publish(tmp_path: Path) -> None:
+    cache = ControlSnapshotCache.for_test(tmp_path)
+    cache.save(valid_snapshot(), observed_at=1.0)
+    stale = tmp_path / ".control-snapshot-v1.json.tmp-crashed"
+    stale.write_bytes(b"partial")
+    stale.chmod(0o600)
+
+    loaded = cache.load(max_age_seconds=10**10)
+
+    assert loaded.observed_at == 1.0
+    assert not stale.exists()
+
+
+def test_load_rejects_unsafe_stale_temp(tmp_path: Path) -> None:
+    cache = ControlSnapshotCache.for_test(tmp_path)
+    cache.save(valid_snapshot(), observed_at=1.0)
+    outside = tmp_path.parent / f"{tmp_path.name}-unsafe-load-temp"
+    outside.write_bytes(b"outside")
+    outside.chmod(0o600)
+    stale = tmp_path / ".control-snapshot-v1.json.tmp-crashed"
+    stale.symlink_to(outside)
+
+    with pytest.raises(ControlCacheError, match=r"control\.cache_unavailable"):
+        cache.load(max_age_seconds=10**10)
+
+    assert outside.read_bytes() == b"outside"
+
+
+@pytest.mark.parametrize(
+    "unsafe_label",
+    [
+        "Cookie session=topsecret",
+        "Authorization Basic dXNlcjpwYXNz",
+        "api_key=topsecret",
+        "api-key topsecret",
+        "password=huntertwo",
+        "passwd huntertwo",
+        "token=topsecret",
+        "secret topsecret",
+        "header x-private-value",
+        "upstream error private diagnostic",
+    ],
+)
+def test_common_secret_header_cookie_and_error_markers_are_not_cached(
+    tmp_path: Path,
+    unsafe_label: str,
+) -> None:
+    cache = ControlSnapshotCache.for_test(tmp_path)
+    snapshot = valid_snapshot()
+    object.__setattr__(snapshot.openai_accounts[0], "label", unsafe_label)
+
+    with pytest.raises(ControlCacheError, match=r"control\.response_private") as caught:
+        cache.save(snapshot, observed_at=1.0)
+
+    assert unsafe_label not in repr(caught.value)
+    assert not cache_path(tmp_path).exists()
+
+
+def test_semantically_valid_noncanonical_json_is_rejected(tmp_path: Path) -> None:
+    cache = ControlSnapshotCache.for_test(tmp_path)
+    cache.save(valid_snapshot(), observed_at=1.0)
+    document = json.loads(cache_path(tmp_path).read_bytes())
+    cache_path(tmp_path).write_text(json.dumps(document, indent=2))
+    cache_path(tmp_path).chmod(0o600)
+
+    with pytest.raises(ControlCacheError, match=r"control\.cache_invalid"):
+        cache.load(max_age_seconds=60)
+
+
+def test_excessive_json_depth_is_rejected_before_stdlib_decode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = ControlSnapshotCache.for_test(tmp_path)
+    cache.save(valid_snapshot(), observed_at=1.0)
+    cache_path(tmp_path).write_bytes(b"[" * 33 + b"0" + b"]" * 33)
+    cache_path(tmp_path).chmod(0o600)
+
+    def unexpected_decode(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("stdlib decoder crossed application depth budget")
+
+    monkeypatch.setattr(cache_module.json, "loads", unexpected_decode)
+
+    with pytest.raises(ControlCacheError, match=r"control\.cache_invalid"):
+        cache.load(max_age_seconds=60)
+
+
+def test_oversized_integer_lexeme_is_rejected(tmp_path: Path) -> None:
+    cache = ControlSnapshotCache.for_test(tmp_path)
+    cache.save(valid_snapshot(), observed_at=1.0)
+    raw = (
+        b'{"observed_at":' + b"9" * 100 + b',"schema_version":1,"snapshot":{"google_accounts":[],'
+        b'"google_projects":[],"openai_accounts":[]}}'
+    )
+    cache_path(tmp_path).write_bytes(raw)
+    cache_path(tmp_path).chmod(0o600)
+
+    with pytest.raises(ControlCacheError, match=r"control\.cache_invalid"):
+        cache.load(max_age_seconds=60)
+
+
+def test_age_is_measured_after_waiting_for_cache_lock(tmp_path: Path) -> None:
+    cache = ControlSnapshotCache.for_test(tmp_path)
+    observed = time.time()
+    cache.save(valid_snapshot(), observed_at=observed)
+    started = threading.Event()
+
+    def load_while_locked() -> object:
+        started.set()
+        return cache.load(max_age_seconds=0.05)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with private_io.private_path_lock(cache_path(tmp_path)):
+            future = executor.submit(load_while_locked)
+            assert started.wait(timeout=1)
+            time.sleep(0.15)
+
+        loaded = future.result(timeout=1)
+    assert loaded.stale is True  # type: ignore[attr-defined]
