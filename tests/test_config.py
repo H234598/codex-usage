@@ -120,6 +120,21 @@ def test_masterjet_rejects_invalid_connection_boundaries(tmp_path, text, message
         load_text(tmp_path, text)
 
 
+def test_save_config_rejects_masterjet_none_timeout(tmp_path):
+    config_path = tmp_path / "config.toml"
+
+    with pytest.raises(ValueError, match="masterjet timeout_seconds must be an integer"):
+        save_config(
+            AppConfig(
+                accounts=(),
+                masterjet=MasterjetConnection(timeout_seconds=None),
+            ),
+            config_path,
+        )
+
+    assert not config_path.exists()
+
+
 def test_adding_account_preserves_masterjet_connection(tmp_path):
     config_path = tmp_path / "config.toml"
     save_config(
