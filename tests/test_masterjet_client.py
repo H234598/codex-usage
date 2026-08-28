@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import array
+import http.client
 import json
+import multiprocessing
 import os
 import shutil
 import socket
@@ -109,11 +111,24 @@ class FakeHTTPSConnection:
         pass
 
 
+_REAL_OPEN_HTTPS_CONNECTION = client_module._open_https_connection
+
+
+def open_fake_https_connection(host, port, context, deadline):
+    return FakeHTTPSConnection(
+        host,
+        port,
+        timeout=round(deadline.remaining()),
+        context=context,
+    )
+
+
 @pytest.fixture(autouse=True)
-def reset_fake_https() -> None:
+def reset_fake_https(monkeypatch) -> None:
     FakeHTTPSConnection.instances = []
     FakeHTTPSConnection.error = None
     FakeHTTPSConnection.response = FakeHTTPResponse(b"{}")
+    monkeypatch.setattr(client_module, "_open_https_connection", open_fake_https_connection)
 
 
 @contextmanager
@@ -209,6 +224,15 @@ def https_client(**kwargs: object) -> MasterjetControlClient:
     )
 
 
+def blocking_resolver_worker(_host: str, _port: int, _sender: object) -> None:
+    time.sleep(60)
+
+
+def malformed_resolver_worker(_host: str, _port: int, sender: object) -> None:
+    sender.send(None)
+    sender.close()
+
+
 def test_local_and_https_decode_same_projection(tmp_path, monkeypatch):
     encoded_response = json.dumps(google_accounts_payload()).encode()
     socket_path = tmp_path / "masterjet.sock"
@@ -233,20 +257,23 @@ def test_response_larger_than_limit_is_rejected(tmp_path, monkeypatch, transport
         with unix_server(socket_path, oversized):
             client = local_client(socket_path)
             with pytest.raises(MasterjetClientError, match=r"control\.response_too_large"):
-                client.call("fixture.large", {})
+                client.call("google.accounts.list", {})
     else:
         FakeHTTPSConnection.response = FakeHTTPResponse(oversized)
         monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
         with pytest.raises(MasterjetClientError, match=r"control\.response_too_large"):
-            https_client(bearer_provider=lambda: "remote-bearer").call("fixture.large", {})
+            https_client(bearer_provider=lambda: "remote-bearer").call(
+                "google.accounts.list", {}
+            )
 
 
 def test_request_larger_than_limit_is_rejected_before_https_connect(monkeypatch):
     monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
 
-    with pytest.raises(MasterjetClientError, match=r"control\.request_too_large"):
+    with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
         https_client(bearer_provider=lambda: "remote-bearer").call(
-            "fixture.echo", {"padding": "x" * MAX_REQUEST_BYTES}
+            "google.projects.list",
+            {"account_ref": "google-1", "padding": "x" * MAX_REQUEST_BYTES},
         )
 
     assert FakeHTTPSConnection.instances == []
@@ -356,13 +383,28 @@ def test_secret_larger_than_limit_is_rejected_before_connect(monkeypatch):
     assert FakeHTTPSConnection.instances == []
 
 
+def test_secret_byte_subclass_is_rejected_before_connect(monkeypatch):
+    class SecretBytes(bytes):
+        pass
+
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "secret.ingress.put",
+            SecretBytes(b"private"),
+        )
+
+    assert FakeHTTPSConnection.instances == []
+
+
 def test_https_uses_verified_tls_fixed_target_and_transient_auth_headers(monkeypatch):
     FakeHTTPSConnection.response = FakeHTTPResponse(
         json.dumps(
             {
                 "schema_version": 1,
                 "id": "operation-1",
-                "kind": "google.provision.apply",
+                "kind": "google.oauth.begin",
                 "state": "queued",
                 "expected_generation": 4,
                 "resulting_generation": None,
@@ -383,8 +425,8 @@ def test_https_uses_verified_tls_fixed_target_and_transient_auth_headers(monkeyp
         step_up_provider=lambda: "123456",
     )
     client.call(
-        "google.provision.apply",
-        {"plan_id": "plan-1"},
+        "google.oauth.begin",
+        {"account_ref": "google-1", "browser": "firefox"},
         expected_generation=4,
         idempotency_key="idem-1",
     )
@@ -400,7 +442,7 @@ def test_https_uses_verified_tls_fixed_target_and_transient_auth_headers(monkeyp
     assert connection.context.check_hostname is True
     assert connection.context.verify_mode == ssl.CERT_REQUIRED
     assert (method, target) == ("POST", "/control")
-    assert json.loads(body)["operation"] == "google.provision.apply"
+    assert json.loads(body)["operation"] == "google.oauth.begin"
     assert headers["Authorization"] == "Bearer remote-bearer"
     assert headers["X-Masterjet-Step-Up"] == "123456"
     assert headers["Cache-Control"] == "no-store"
@@ -546,8 +588,8 @@ def test_nested_secret_field_is_rejected_before_connect(monkeypatch):
 
     with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
         https_client(bearer_provider=lambda: "remote-bearer").call(
-            "fixture.echo",
-            {"items": ({"access_token": "private"},)},
+            "google.projects.list",
+            {"account_ref": "google-1", "items": ({"access_token": "private"},)},
         )
 
     assert FakeHTTPSConnection.instances == []
@@ -580,7 +622,7 @@ def test_secret_shaped_keys_and_values_never_reach_json(monkeypatch, arguments):
 
     with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
         https_client(bearer_provider=lambda: "remote-bearer").call(
-            "fixture.echo", arguments
+            "google.projects.list", {"account_ref": "google-1", **arguments}
         )
 
     assert FakeHTTPSConnection.instances == []
@@ -590,7 +632,7 @@ def test_secret_shaped_keys_and_values_never_reach_json(monkeypatch, arguments):
     ("operation", "idempotency_key"),
     [
         ("sk-private", None),
-        ("fixture.echo", "ya29.private"),
+        ("google.accounts.list", "ya29.private"),
     ],
 )
 def test_secret_shaped_control_tokens_are_rejected(monkeypatch, operation, idempotency_key):
@@ -614,7 +656,7 @@ def test_json_container_subclasses_are_rejected_before_transport(monkeypatch):
 
     with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
         https_client(bearer_provider=lambda: "remote-bearer").call(
-            "fixture.echo", Arguments(safe="value")
+            "google.projects.list", Arguments(account_ref="google-1")
         )
 
     assert FakeHTTPSConnection.instances == []
@@ -627,7 +669,7 @@ def test_cyclic_request_is_mapped_before_transport(monkeypatch):
 
     with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
         https_client(bearer_provider=lambda: "remote-bearer").call(
-            "fixture.echo", {"cycle": cycle}
+            "google.projects.list", {"account_ref": cycle}
         )
 
     assert FakeHTTPSConnection.instances == []
@@ -641,7 +683,7 @@ def test_excessively_deep_request_is_rejected_before_transport(monkeypatch):
 
     with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
         https_client(bearer_provider=lambda: "remote-bearer").call(
-            "fixture.echo", {"nested": nested}
+            "google.projects.list", {"account_ref": nested}
         )
 
     assert FakeHTTPSConnection.instances == []
@@ -690,6 +732,140 @@ def test_secret_payload_is_rejected_for_unknown_operation_before_connect(monkeyp
 
     assert provider_called is False
     assert FakeHTTPSConnection.instances == []
+
+
+def test_unknown_operation_with_neutral_secret_shape_is_rejected_before_auth(monkeypatch):
+    bearer_called = False
+
+    def bearer():
+        nonlocal bearer_called
+        bearer_called = True
+        return "remote-bearer"
+
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
+        https_client(bearer_provider=bearer).call(
+            "fixture.opaque",
+            {"payload": "pvt_0123456789abcdef"},
+        )
+
+    assert bearer_called is False
+    assert FakeHTTPSConnection.instances == []
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"account_ref": "google-1", "payload": "ordinary-value"},
+        {"account_ref": 7},
+        {"account_ref": "google-1", "metadata": {"payload": "pvt-private"}},
+    ],
+)
+def test_operation_contract_rejects_unknown_fields_and_wrong_types(monkeypatch, arguments):
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "google.projects.list",
+            arguments,
+        )
+
+    assert FakeHTTPSConnection.instances == []
+
+
+def test_local_sensitive_json_operation_requires_step_up(tmp_path):
+    socket_path = tmp_path / "masterjet.sock"
+    response = json.dumps(google_accounts_payload()).encode()
+
+    with unix_server(socket_path, response) as capture:
+        with pytest.raises(MasterjetClientError, match=r"control\.step_up_required"):
+            local_client(
+                socket_path,
+                local_attestation_verifier=lambda _pid, _uid, _gid, _socket: True,
+            ).call(
+                "google.oauth.begin",
+                {"account_ref": "google-1", "browser": "firefox"},
+                expected_generation=4,
+                idempotency_key="idem-1",
+            )
+
+    assert capture.get("secrets", []) == []
+
+
+def test_local_sensitive_json_operation_sends_step_up_only_by_fd(tmp_path):
+    socket_path = tmp_path / "masterjet.sock"
+    response = json.dumps(
+        {
+            "schema_version": 1,
+            "id": "operation-1",
+            "kind": "google.oauth.begin",
+            "state": "queued",
+            "expected_generation": 4,
+            "resulting_generation": None,
+            "plan_digest": "sha256:" + "a" * 64,
+            "created_at": "2026-08-28T12:00:00Z",
+            "expires_at": "2026-08-28T12:01:00Z",
+            "completed_count": 0,
+            "failed_count": 0,
+            "not_attempted_count": 1,
+            "reason_codes": [],
+        }
+    ).encode()
+
+    with unix_server(socket_path, response) as capture:
+        local_client(
+            socket_path,
+            local_attestation_verifier=lambda _pid, _uid, _gid, _socket: True,
+            step_up_provider=lambda: "123456",
+        ).call(
+            "google.oauth.begin",
+            {"account_ref": "google-1", "browser": "firefox"},
+            expected_generation=4,
+            idempotency_key="idem-1",
+        )
+
+    request = json.loads(capture["request"])
+    assert request["arguments"] == {
+        "account_ref": "google-1",
+        "browser": "firefox",
+        "step_up_fd": 0,
+        "step_up_size": 6,
+    }
+    assert capture["secrets"] == [b"123456"]
+
+
+def test_provision_operation_is_not_in_step_up_allowlist(monkeypatch):
+    FakeHTTPSConnection.response = FakeHTTPResponse(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "id": "operation-1",
+                "kind": "google.provision.apply",
+                "state": "queued",
+                "expected_generation": 4,
+                "resulting_generation": None,
+                "plan_digest": "sha256:" + "a" * 64,
+                "created_at": "2026-08-28T12:00:00Z",
+                "expires_at": "2026-08-28T12:01:00Z",
+                "completed_count": 0,
+                "failed_count": 0,
+                "not_attempted_count": 1,
+                "reason_codes": [],
+            }
+        ).encode()
+    )
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    result = https_client(bearer_provider=lambda: "remote-bearer").call(
+        "google.provision.apply",
+        {"account_ref": "google-1", "plan_id": "plan-1"},
+        expected_generation=4,
+        idempotency_key="idem-1",
+    )
+
+    assert result.kind == "google.provision.apply"
+    assert "X-Masterjet-Step-Up" not in FakeHTTPSConnection.instances[0].requests[0][3]
 
 
 def test_local_secret_requires_confirmed_transport_attestation(tmp_path):
@@ -753,8 +929,8 @@ def test_step_up_rejects_non_ascii_header_values_before_request(monkeypatch, val
             bearer_provider=lambda: "remote-bearer",
             step_up_provider=lambda: value,
         ).call(
-            "google.provision.apply",
-            {"plan_id": "plan-1"},
+            "google.oauth.begin",
+            {"account_ref": "google-1", "browser": "firefox"},
             expected_generation=4,
             idempotency_key="idem-1",
         )
@@ -804,7 +980,7 @@ def test_local_slow_drip_cannot_extend_end_to_end_deadline(tmp_path):
         response_delay=0.1,
     ):
         with pytest.raises(MasterjetClientError, match=r"control\.timeout"):
-            MasterjetControlClient(connection).call("fixture.echo", {})
+            MasterjetControlClient(connection).call("google.accounts.list", {})
 
     assert time.monotonic() - started < 1.6
 
@@ -973,6 +1149,11 @@ def test_real_https_verifies_tls_sni_host_and_content_length(tmp_path, monkeypat
     original_default_context = ssl.create_default_context
     with real_tls_server(tmp_path) as (port, certificate, capture):
         monkeypatch.setattr(
+            client_module,
+            "_open_https_connection",
+            _REAL_OPEN_HTTPS_CONNECTION,
+        )
+        monkeypatch.setattr(
             client_module.ssl,
             "create_default_context",
             lambda: original_default_context(cafile=certificate),
@@ -999,6 +1180,11 @@ def test_real_https_verifies_tls_sni_host_and_content_length(tmp_path, monkeypat
 def test_real_https_rejects_certificate_hostname_mismatch(tmp_path, monkeypatch):
     original_default_context = ssl.create_default_context
     with real_tls_server(tmp_path) as (port, certificate, _capture):
+        monkeypatch.setattr(
+            client_module,
+            "_open_https_connection",
+            _REAL_OPEN_HTTPS_CONNECTION,
+        )
         monkeypatch.setattr(
             client_module.ssl,
             "create_default_context",
@@ -1089,6 +1275,114 @@ def test_https_endpoint_rejects_embedded_nul_before_authentication():
     assert bearer_called is False
 
 
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://masterjet bad.example/control",
+        "https://masterjet\tbad.example/control",
+        "https://masterjet.example/control\r\nignored",
+        "https://mästerjet.example/control",
+    ],
+)
+def test_https_endpoint_rejects_non_ascii_or_whitespace_before_authentication(endpoint):
+    bearer_called = False
+
+    def bearer():
+        nonlocal bearer_called
+        bearer_called = True
+        return "remote-bearer"
+
+    client = MasterjetControlClient(
+        MasterjetConnection(
+            transport="https",
+            endpoint=endpoint,
+            timeout_seconds=2,
+        ),
+        bearer_provider=bearer,
+    )
+
+    with pytest.raises(MasterjetClientError, match=r"control\.endpoint_invalid") as caught:
+        client.call("google.accounts.list", {})
+
+    assert bearer_called is False
+    assert caught.value.__context__ is None
+
+
+def test_https_connection_constructor_failure_is_sanitized(monkeypatch):
+    private_host = "private-host"
+
+    class FailingConnection:
+        def __init__(self, *_args, **_kwargs):
+            raise http.client.InvalidURL(private_host)
+
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FailingConnection)
+    monkeypatch.setattr(
+        client_module,
+        "_open_https_connection",
+        _REAL_OPEN_HTTPS_CONNECTION,
+    )
+
+    with pytest.raises(MasterjetClientError, match=r"control\.endpoint_invalid") as caught:
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "google.accounts.list", {}
+        )
+
+    assert caught.value.__context__ is None
+    assert private_host not in repr(caught.value)
+
+
+def test_https_name_resolution_obeys_total_deadline(monkeypatch):
+    monkeypatch.setattr(client_module, "_RESOLVER_WORKER", blocking_resolver_worker, raising=False)
+    monkeypatch.setattr(
+        client_module,
+        "_open_https_connection",
+        _REAL_OPEN_HTTPS_CONNECTION,
+    )
+    connection = MasterjetConnection(
+        transport="https",
+        endpoint="https://localhost:9/control",
+        timeout_seconds=1,
+    )
+    client = MasterjetControlClient(
+        connection,
+        bearer_provider=lambda: "remote-bearer",
+    )
+    children_before = {child.pid for child in multiprocessing.active_children()}
+
+    started = time.monotonic()
+    with pytest.raises(MasterjetClientError, match=r"control\.timeout"):
+        client.call("google.accounts.list", {})
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 1.6
+    assert {child.pid for child in multiprocessing.active_children()} == children_before
+
+
+def test_malformed_resolver_result_is_sanitized(monkeypatch):
+    monkeypatch.setattr(client_module, "_RESOLVER_WORKER", malformed_resolver_worker)
+    monkeypatch.setattr(
+        client_module,
+        "_open_https_connection",
+        _REAL_OPEN_HTTPS_CONNECTION,
+    )
+    connection = MasterjetConnection(
+        transport="https",
+        endpoint="https://localhost:9/control",
+        timeout_seconds=2,
+    )
+
+    with pytest.raises(
+        MasterjetClientError,
+        match=r"control\.transport_unavailable",
+    ) as caught:
+        MasterjetControlClient(
+            connection,
+            bearer_provider=lambda: "remote-bearer",
+        ).call("google.accounts.list", {})
+
+    assert caught.value.__context__ is None
+
+
 def test_local_endpoint_rejects_group_traversable_parent(tmp_path):
     socket_path = tmp_path / "masterjet.sock"
     try:
@@ -1103,8 +1397,12 @@ def test_local_endpoint_rejects_group_traversable_parent(tmp_path):
 
 def test_real_https_slow_headers_cannot_extend_end_to_end_deadline(tmp_path, monkeypatch):
     original_default_context = ssl.create_default_context
-    started = time.monotonic()
     with real_tls_server(tmp_path, wire_delay=0.05) as (port, certificate, _capture):
+        monkeypatch.setattr(
+            client_module,
+            "_open_https_connection",
+            _REAL_OPEN_HTTPS_CONNECTION,
+        )
         monkeypatch.setattr(
             client_module.ssl,
             "create_default_context",
@@ -1116,13 +1414,15 @@ def test_real_https_slow_headers_cannot_extend_end_to_end_deadline(tmp_path, mon
             timeout_seconds=1,
         )
 
+        started = time.monotonic()
         with pytest.raises(MasterjetClientError, match=r"control\.timeout"):
             MasterjetControlClient(
                 connection,
                 bearer_provider=lambda: "remote-bearer",
             ).call("google.accounts.list", {})
+        elapsed = time.monotonic() - started
 
-    assert time.monotonic() - started < 1.6
+    assert elapsed < 1.6
 
 
 def test_https_problem_uses_canonical_local_template(monkeypatch):

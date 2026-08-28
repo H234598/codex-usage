@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import array
 import http.client
+import ipaddress
 import json
-import math
+import multiprocessing
 import os
 import re
 import socket
@@ -34,29 +35,63 @@ MAX_RESPONSE_BYTES = 1_000_000
 MAX_SECRET_BYTES = 10_000_000
 
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
-_PRIVATE_KEY_RE = re.compile(
-    r"(?:access|refresh)?token|clientsecret|apikey|password|credential|secret",
-    re.IGNORECASE,
+_IDEMPOTENCY_RE = re.compile(
+    r"^(?:idem-[A-Za-z0-9][A-Za-z0-9._:-]{0,122}|"
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
 )
-_SECRET_VALUE_RE = re.compile(
-    r"(?:\bAIza[A-Za-z0-9_-]*|\bya29(?:\.[A-Za-z0-9._-]*)?\b|"
-    r"\b1//|\bGOCSPX-|\beyJ[A-Za-z0-9_-]{20,}|\bsk-|"
-    r"(?:^|\s)Bearer\s+[A-Za-z0-9._-]{8,}|"
-    r"\b(?:access_token|refresh_token|client_secret)\s*[=:]\s*\S+)",
-    re.IGNORECASE,
-)
-_ABSOLUTE_PATH_RE = re.compile(
-    r"(?:^|[^A-Za-z0-9_])(?:file://|/(?:[^\s]*)|\\\\[^\s]+|[A-Za-z]:[\\/])"
-)
-_MAX_JSON_DEPTH = 32
+_HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
 _INVALID_JSON = object()
-_SENSITIVE_PREFIXES = (
-    "google.oauth.",
-    "google.provision.",
-    "google.billing.",
-    "openai.auth-sync.",
-    "openai.auth_sync.",
-    "secret.ingress.",
+_OPERATION_ARGUMENT_FIELDS = {
+    "google.accounts.list": ({}, frozenset()),
+    "google.projects.list": ({"account_ref": "token"}, frozenset()),
+    "google.oauth.begin": (
+        {"account_ref": "token", "browser": "token"},
+        frozenset(),
+    ),
+    "google.oauth.complete": (
+        {"account_ref": "token", "transaction_id": "token"},
+        frozenset(),
+    ),
+    "google.inventory.refresh": ({"account_ref": "token"}, frozenset()),
+    "google.provision.plan": ({"account_ref": "token"}, frozenset()),
+    "google.provision.apply": (
+        {"account_ref": "token", "plan_id": "token"},
+        frozenset(),
+    ),
+    "google.billing.plan": (
+        {
+            "account_ref": "token",
+            "billing_ref": "token",
+            "project_refs": "token_list",
+        },
+        frozenset(),
+    ),
+    "google.billing.apply": (
+        {"account_ref": "token", "plan_id": "token"},
+        frozenset(),
+    ),
+    "openai.accounts.list": ({}, frozenset()),
+    "openai.auth-sync.plan": ({"account_ref": "token"}, frozenset()),
+    "openai.auth-sync.apply": (
+        {"account_ref": "token", "plan_id": "token"},
+        frozenset(),
+    ),
+    "secret.ingress.create": (
+        {"account_ref": "token", "credential_type": "token", "plan_id": "token"},
+        frozenset(),
+    ),
+}
+_SENSITIVE_OPERATIONS = frozenset(
+    {
+        "google.oauth.begin",
+        "google.oauth.complete",
+        "google.billing.plan",
+        "google.billing.apply",
+        "openai.auth-sync.plan",
+        "openai.auth-sync.apply",
+        "secret.ingress.create",
+        "secret.ingress.put",
+    }
 )
 _SECRET_INGRESS_OPERATIONS = frozenset({"secret.ingress.put"})
 
@@ -142,7 +177,7 @@ class MasterjetControlClient:
                 self._connection,
                 step_up_provider=self._step_up_provider,
                 attestation_verifier=self._local_attestation_verifier,
-            ).request(request, secret)
+            ).request(operation, request, secret)
         elif self._connection.transport == "https":
             response = _HttpsTransport(
                 self._connection,
@@ -166,7 +201,12 @@ class _UnixTransport:
         self._step_up_provider = step_up_provider
         self._attestation_verifier = attestation_verifier
 
-    def request(self, request: bytes, secret: memoryview | None) -> tuple[int, bytes]:
+    def request(
+        self,
+        operation: str,
+        request: bytes,
+        secret: memoryview | None,
+    ) -> tuple[int, bytes]:
         endpoint = _local_endpoint(self._connection)
         before = _socket_identity(endpoint)
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -181,7 +221,7 @@ class _UnixTransport:
                 if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
                     raise MasterjetClientError("control.endpoint_invalid")
                 peer = _verify_peer(sock, expected_uid=before.st_uid)
-                if secret is None:
+                if not _is_sensitive(operation):
                     _set_socket_deadline(sock, deadline)
                     sock.sendall(request + b"\n")
                 else:
@@ -193,8 +233,10 @@ class _UnixTransport:
                         "control.step_up_required",
                         maximum=128,
                     ).encode("ascii")
-                    request = _add_step_up_fd(request, len(step_up))
-                    secret_files.append(_anonymous_secret(secret))
+                    step_up_index = 1 if secret is not None else 0
+                    request = _add_step_up_fd(request, len(step_up), step_up_index)
+                    if secret is not None:
+                        secret_files.append(_anonymous_secret(secret))
                     secret_files.append(_anonymous_secret(memoryview(step_up)))
                     descriptor = array.array("i", [item.fileno() for item in secret_files])
                     framed = request + b"\n"
@@ -243,42 +285,48 @@ class _HttpsTransport:
         expected_generation: int | None,
         idempotency_key: str | None,
     ) -> tuple[int, bytes]:
-        host, port, target = _https_endpoint(self._connection)
-        bearer = _provider_value(
-            self._bearer_provider,
-            "control.authentication_required",
-            maximum=4096,
-        )
-        headers = {
-            "Authorization": f"Bearer {bearer}",
-            "Cache-Control": "no-store",
-            "Content-Type": "application/json",
-        }
-        body = request
-        if secret is not None:
-            body = secret.tobytes()
-            headers.update(_secret_request_headers(operation, expected_generation, idempotency_key))
-            headers["Content-Type"] = "application/octet-stream"
-        if _is_sensitive(operation):
-            headers["X-Masterjet-Step-Up"] = _provider_value(
-                self._step_up_provider,
-                "control.step_up_required",
-                maximum=128,
-            )
-        context = ssl.create_default_context()
-        if not context.check_hostname or context.verify_mode != ssl.CERT_REQUIRED:
-            raise MasterjetClientError("control.tls_required")
-        connection = http.client.HTTPSConnection(
-            host,
-            port,
-            timeout=_timeout(self._connection),
-            context=context,
-        )
         deadline = _Deadline(_timeout(self._connection))
+        connection: http.client.HTTPSConnection | None = None
         result: tuple[int, bytes] | None = None
         client_error: MasterjetClientError | None = None
         failure_code: str | None = None
         try:
+            host, port, target = _https_endpoint(self._connection)
+            deadline.remaining()
+            bearer = _provider_value(
+                self._bearer_provider,
+                "control.authentication_required",
+                maximum=4096,
+            )
+            deadline.remaining()
+            headers = {
+                "Authorization": f"Bearer {bearer}",
+                "Cache-Control": "no-store",
+                "Content-Type": "application/json",
+            }
+            body = request
+            if secret is not None:
+                body = secret.tobytes()
+                headers.update(
+                    _secret_request_headers(
+                        operation,
+                        expected_generation,
+                        idempotency_key,
+                    )
+                )
+                headers["Content-Type"] = "application/octet-stream"
+            if _is_sensitive(operation):
+                headers["X-Masterjet-Step-Up"] = _provider_value(
+                    self._step_up_provider,
+                    "control.step_up_required",
+                    maximum=128,
+                )
+                deadline.remaining()
+            context = ssl.create_default_context()
+            deadline.remaining()
+            if not context.check_hostname or context.verify_mode != ssl.CERT_REQUIRED:
+                raise MasterjetClientError("control.tls_required")
+            connection = _open_https_connection(host, port, context, deadline)
             with _DeadlineGuard(deadline, lambda: _abort_http(connection)):
                 connection.request("POST", target, body=body, headers=headers)
                 deadline.remaining()
@@ -311,7 +359,8 @@ class _HttpsTransport:
             else:
                 failure_code = "control.transport_unavailable"
         finally:
-            connection.close()
+            if connection is not None:
+                _close_http(connection)
         if failure_code is not None:
             raise MasterjetClientError(failure_code)
         if client_error is not None:
@@ -328,18 +377,21 @@ def _encode_request(
     expected_generation: object,
     idempotency_key: object,
 ) -> tuple[bytes, memoryview | None]:
-    operation = _request_token(operation)
+    operation = _operation(operation)
     if expected_generation is not None and (
         type(expected_generation) is not int or not 0 <= expected_generation <= 2**63 - 1
     ):
         raise MasterjetClientError("control.request_invalid")
     if idempotency_key is not None:
-        idempotency_key = _request_token(idempotency_key)
+        idempotency_key = _idempotency_key(idempotency_key)
 
     secret = _secret_view(arguments)
     encoded_arguments: object
     if secret is None:
-        if not _request_arguments_valid(arguments):
+        if operation in _SECRET_INGRESS_OPERATIONS or not _operation_arguments_valid(
+            operation,
+            arguments,
+        ):
             raise MasterjetClientError("control.request_invalid")
         encoded_arguments = arguments
     else:
@@ -469,10 +521,10 @@ def _invoke_attestation(
         return False
 
 
-def _add_step_up_fd(request: bytes, size: int) -> bytes:
+def _add_step_up_fd(request: bytes, size: int, index: int) -> bytes:
     document = json.loads(request)
     arguments = document["arguments"]
-    arguments["step_up_fd"] = 1
+    arguments["step_up_fd"] = index
     arguments["step_up_size"] = size
     encoded = json.dumps(document, ensure_ascii=True, separators=(",", ":")).encode("ascii")
     if len(encoded) > MAX_REQUEST_BYTES:
@@ -556,6 +608,156 @@ def _abort_http(connection: http.client.HTTPSConnection) -> None:
         _abort_socket(sock)
 
 
+def _close_http(connection: http.client.HTTPSConnection) -> None:
+    try:
+        connection.close()
+    except (OSError, http.client.HTTPException, ValueError):
+        pass
+
+
+def _resolve_worker(host: str, port: int, sender: object) -> None:
+    try:
+        addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        normalized = [
+            (int(family), int(kind), int(protocol), str(canonical_name), tuple(address))
+            for family, kind, protocol, canonical_name, address in addresses[:32]
+        ]
+        sender.send((True, normalized))
+    except (OSError, UnicodeError, ValueError):
+        try:
+            sender.send((False, ()))
+        except OSError:
+            pass
+    finally:
+        sender.close()
+
+
+_RESOLVER_WORKER = _resolve_worker
+
+
+def _resolve_host(host: str, port: int, deadline: _Deadline) -> list[tuple[object, ...]]:
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_RESOLVER_WORKER,
+        args=(host, port, sender),
+        daemon=True,
+    )
+    try:
+        process.start()
+        sender.close()
+        if not receiver.poll(deadline.remaining()):
+            raise MasterjetClientError("control.timeout")
+        malformed = False
+        try:
+            succeeded, addresses = receiver.recv()
+        except (EOFError, OSError, TypeError, ValueError):
+            malformed = True
+        if malformed:
+            raise MasterjetClientError("control.transport_unavailable")
+        deadline.remaining()
+        if succeeded is not True or not _resolved_addresses_valid(addresses):
+            raise MasterjetClientError("control.transport_unavailable")
+        return addresses
+    except MasterjetClientError:
+        raise
+    except (AssertionError, OSError, RuntimeError, ValueError):
+        if deadline.expired():
+            raise MasterjetClientError("control.timeout") from None
+        raise MasterjetClientError("control.transport_unavailable") from None
+    finally:
+        receiver.close()
+        sender.close()
+        _stop_process(process)
+
+
+def _stop_process(process: multiprocessing.Process) -> None:
+    if process.pid is None:
+        return
+    process.join(timeout=0)
+    if process.is_alive():
+        process.terminate()
+        process.join(timeout=0.1)
+    if process.is_alive():
+        process.kill()
+        process.join(timeout=0.1)
+    if not process.is_alive():
+        process.close()
+
+
+def _resolved_addresses_valid(value: object) -> bool:
+    if type(value) is not list or not 1 <= len(value) <= 32:
+        return False
+    for item in value:
+        if type(item) is not tuple or len(item) != 5:
+            return False
+        family, kind, protocol, canonical_name, address = item
+        if (
+            type(family) is not int
+            or type(kind) is not int
+            or type(protocol) is not int
+            or type(canonical_name) is not str
+            or type(address) is not tuple
+            or family not in {socket.AF_INET, socket.AF_INET6}
+            or kind != socket.SOCK_STREAM
+            or not 2 <= len(address) <= 4
+            or type(address[0]) is not str
+            or type(address[1]) is not int
+        ):
+            return False
+    return True
+
+
+def _open_https_connection(
+    host: str,
+    port: int | None,
+    context: ssl.SSLContext,
+    deadline: _Deadline,
+) -> http.client.HTTPSConnection:
+    constructor_failure: str | None = None
+    try:
+        connection = http.client.HTTPSConnection(
+            host,
+            port,
+            timeout=deadline.remaining(),
+            context=context,
+        )
+    except (http.client.InvalidURL, UnicodeError, ValueError):
+        constructor_failure = "control.endpoint_invalid"
+    except (OSError, http.client.HTTPException):
+        constructor_failure = "control.transport_unavailable"
+    if constructor_failure is not None:
+        raise MasterjetClientError(constructor_failure)
+
+    try:
+        addresses = _resolve_host(host, port or 443, deadline)
+        for family, kind, protocol, _canonical_name, address in addresses:
+            raw_socket: socket.socket | None = None
+            try:
+                raw_socket = socket.socket(family, kind, protocol)
+                raw_socket.settimeout(deadline.remaining())
+                raw_socket.connect(address)
+                deadline.remaining()
+                tls_socket = context.wrap_socket(raw_socket, server_hostname=host)
+                raw_socket = None
+                tls_socket.settimeout(deadline.remaining())
+                connection.sock = tls_socket
+                return connection
+            except TimeoutError:
+                if deadline.expired():
+                    raise MasterjetClientError("control.timeout") from None
+            except (OSError, UnicodeError, ValueError):
+                if deadline.expired():
+                    raise MasterjetClientError("control.timeout") from None
+            finally:
+                if raw_socket is not None:
+                    _abort_socket(raw_socket)
+        raise MasterjetClientError("control.transport_unavailable")
+    except MasterjetClientError:
+        _close_http(connection)
+        raise
+
+
 def _anonymous_secret(secret: memoryview):
     if hasattr(os, "memfd_create"):
         fd = os.memfd_create("codex-usage-masterjet-secret", os.MFD_CLOEXEC)
@@ -569,7 +771,9 @@ def _anonymous_secret(secret: memoryview):
 
 
 def _https_endpoint(connection: MasterjetConnection) -> tuple[str, int | None, str]:
-    if type(connection.endpoint) is not str or "\0" in connection.endpoint:
+    if type(connection.endpoint) is not str or any(
+        not 0x21 <= ord(character) <= 0x7E for character in connection.endpoint
+    ):
         raise MasterjetClientError("control.endpoint_invalid")
     parsed_endpoint = _parse_https_endpoint(connection.endpoint)
     if parsed_endpoint is None:
@@ -584,7 +788,11 @@ def _https_endpoint(connection: MasterjetConnection) -> tuple[str, int | None, s
         or parsed.fragment
     ):
         raise MasterjetClientError("control.endpoint_invalid")
-    return parsed.hostname, port, parsed.path or "/"
+    host = parsed.hostname
+    target = parsed.path or "/"
+    if not _host_valid(host) or any(ord(character) <= 0x20 for character in target):
+        raise MasterjetClientError("control.endpoint_invalid")
+    return host, port, target
 
 
 def _parse_https_endpoint(value: str):
@@ -593,6 +801,21 @@ def _parse_https_endpoint(value: str):
         return parsed, parsed.port
     except ValueError:
         return None
+
+
+def _host_valid(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    return (
+        _HOST_RE.fullmatch(host) is not None
+        and all(
+            label and len(label) <= 63 and not label.startswith("-") and not label.endswith("-")
+            for label in host.split(".")
+        )
+    )
 
 
 def _provider_value(
@@ -637,7 +860,7 @@ def _secret_request_headers(
 
 
 def _secret_view(value: object) -> memoryview | None:
-    if not isinstance(value, (bytes, bytearray, memoryview)):
+    if type(value) not in {bytes, bytearray, memoryview}:
         return None
     view = memoryview(value)
     if view.ndim != 1 or not view.c_contiguous:
@@ -645,67 +868,33 @@ def _secret_view(value: object) -> memoryview | None:
     return view.cast("B")
 
 
-def _validate_json_value(
-    value: object,
-    *,
-    depth: int,
-    ancestors: set[int],
-    require_mapping: bool = False,
-) -> None:
-    if depth > _MAX_JSON_DEPTH or (require_mapping and type(value) is not dict):
-        raise ValueError
-    if value is None or type(value) is bool:
-        return
-    if type(value) is int:
-        if not -(2**63) <= value <= 2**63 - 1:
-            raise ValueError
-        return
-    if type(value) is float:
-        if not math.isfinite(value):
-            raise ValueError
-        return
-    if type(value) is str:
-        _safe_request_string(value)
-        return
-    if type(value) not in {dict, list}:
-        raise TypeError
-    identity = id(value)
-    if identity in ancestors:
-        raise ValueError
-    ancestors.add(identity)
+def _operation_arguments_valid(operation: str, arguments: object) -> bool:
+    contract = _OPERATION_ARGUMENT_FIELDS.get(operation)
+    if contract is None or type(arguments) is not dict:
+        return False
+    fields, optional = contract
+    if set(arguments) - fields.keys() or fields.keys() - set(arguments) - optional:
+        return False
     try:
-        if type(value) is dict:
-            for key, item in value.items():
-                if type(key) is not str:
-                    raise TypeError
-                normalized_key = re.sub(r"[^A-Za-z0-9]", "", key)
-                if _PRIVATE_KEY_RE.search(normalized_key):
-                    raise ValueError
-                _safe_request_string(key)
-                _validate_json_value(item, depth=depth + 1, ancestors=ancestors)
-        else:
-            for item in value:
-                _validate_json_value(item, depth=depth + 1, ancestors=ancestors)
-    finally:
-        ancestors.remove(identity)
-
-
-def _request_arguments_valid(arguments: object) -> bool:
-    try:
-        _validate_json_value(arguments, depth=0, ancestors=set(), require_mapping=True)
+        return all(_argument_value_valid(arguments[name], kind) for name, kind in fields.items())
     except (TypeError, ValueError, RecursionError):
         return False
-    return True
 
 
-def _safe_request_string(value: str) -> str:
-    try:
-        value.encode("utf-8")
-    except UnicodeError:
-        raise ValueError from None
-    if _SECRET_VALUE_RE.search(value) or _ABSOLUTE_PATH_RE.search(value):
-        raise ValueError
-    return value
+def _argument_value_valid(value: object, kind: str) -> bool:
+    if kind == "token":
+        return type(value) is str and _TOKEN_RE.fullmatch(value) is not None
+    if kind == "token_list":
+        return (
+            type(value) is list
+            and 1 <= len(value) <= 256
+            and all(
+                type(item) is str and _TOKEN_RE.fullmatch(item) is not None
+                for item in value
+            )
+            and len(set(value)) == len(value)
+        )
+    return False
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -738,13 +927,17 @@ def _token(value: object, error: str) -> str:
     return value
 
 
-def _request_token(value: object) -> str:
-    token = _token(value, "control.request_invalid")
-    try:
-        _safe_request_string(token)
-    except ValueError:
-        raise MasterjetClientError("control.request_invalid") from None
-    return token
+def _operation(value: object) -> str:
+    operation = _token(value, "control.request_invalid")
+    if operation not in _OPERATION_ARGUMENT_FIELDS and operation not in _SECRET_INGRESS_OPERATIONS:
+        raise MasterjetClientError("control.request_invalid")
+    return operation
+
+
+def _idempotency_key(value: object) -> str:
+    if type(value) is not str or _IDEMPOTENCY_RE.fullmatch(value) is None:
+        raise MasterjetClientError("control.request_invalid")
+    return value
 
 
 def _timeout(connection: MasterjetConnection) -> int:
@@ -754,4 +947,4 @@ def _timeout(connection: MasterjetConnection) -> int:
 
 
 def _is_sensitive(operation: str) -> bool:
-    return operation.startswith(_SENSITIVE_PREFIXES)
+    return operation in _SENSITIVE_OPERATIONS
