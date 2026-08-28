@@ -491,6 +491,7 @@ class OpenAIActions:
     def with_step_up(self, argv: list[str], provider: Callable[[], object], *, callback=None):
         if not argv or argv[0] != self._executable:
             raise ValueError("step-up command must use the configured Codex Usage CLI")
+        self._require_projection()
         value = provider()
         if not isinstance(value, str) or not value.isascii() or not value.isdigit():
             raise ValueError("invalid step-up code")
@@ -766,11 +767,42 @@ class OpenAIAccountsPage(SettingsWidget):
     def _sync_auth(self, _button, account_ref: str) -> None:
         self._status.set_text("Auth-Sync läuft …")
         try:
-            self._actions.sync_auth(account_ref, callback=self._operation_finished)
+            argv = [
+                self._actions._executable,
+                "account",
+                "auth-sync",
+                account_ref,
+                "--format",
+                "json",
+            ]
+            self._actions.sync_auth(
+                account_ref,
+                callback=lambda result: self._operation_finished(result, argv=argv),
+            )
         except RuntimeError:
             self._status.set_text("STALE · Mutationen gesperrt")
 
-    def _operation_finished(self, result: CommandResult) -> bool:
+    def _operation_finished(self, result: CommandResult, *, argv=None, retried=False) -> bool:
+        if (
+            not retried
+            and argv is not None
+            and not result.ok
+            and result.code == "control.step_up_required"
+            and self._actions.projection_ready
+        ):
+            code = self.prompt_step_up()
+            if code is not None:
+                try:
+                    self._actions.with_step_up(
+                        argv,
+                        lambda: code,
+                        callback=lambda retry: self._operation_finished(
+                            retry, argv=argv, retried=True
+                        ),
+                    )
+                    return False
+                except (RuntimeError, ValueError):
+                    pass
         self._status.set_text("Operation abgeschlossen" if result.ok else f"Fehler: {result.code}")
         return False
 

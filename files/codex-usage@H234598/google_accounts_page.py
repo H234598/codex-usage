@@ -524,7 +524,10 @@ class GoogleAccountsPage(SettingsWidget):
                             button.set_sensitive(sensitive)
 
     def _inventory(self, _button, account_ref: str) -> None:
-        self._actions.inventory_refresh(account_ref, callback=self._operation_finished)
+        argv = [self._actions._executable, "google", "inventory-refresh", account_ref, "--json"]
+        self._actions.inventory_refresh(
+            account_ref, callback=lambda result: self._operation_finished(result, argv=argv)
+        )
 
     def _oauth_begin(self, _button, account_ref: str) -> None:
         self._actions.oauth_begin(account_ref, browser="firefox", callback=self._operation_finished)
@@ -557,7 +560,27 @@ class GoogleAccountsPage(SettingsWidget):
             self._status.set_text("STALE · Apply gesperrt")
         return False
 
-    def _operation_finished(self, result: CommandResult) -> bool:
+    def _operation_finished(self, result: CommandResult, *, argv=None, retried=False) -> bool:
+        if (
+            not retried
+            and argv is not None
+            and not result.ok
+            and result.code == "control.step_up_required"
+            and self._actions.projection_ready
+        ):
+            code = self.prompt_step_up()
+            if code is not None:
+                try:
+                    self._actions.with_step_up(
+                        argv,
+                        lambda: code,
+                        callback=lambda retry: self._operation_finished(
+                            retry, argv=argv, retried=True
+                        ),
+                    )
+                    return False
+                except (RuntimeError, ValueError):
+                    pass
         self._status.set_text("Operation abgeschlossen" if result.ok else f"Fehler: {result.code}")
         return False
 
