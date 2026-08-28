@@ -1022,6 +1022,16 @@ def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
     }
 
 
+def test_global_step_up_stdin_flag_survives_root_command_normalization() -> None:
+    argv = ["--step-up-stdin", "account", "auth-sync", "openai-one", "--format", "json"]
+
+    assert cli_module._default_root_command(argv) == argv
+    parsed = cli_module._build_parser().parse_args(argv)
+    assert parsed.step_up_stdin is True
+    assert parsed.command == "account"
+    assert parsed.account_command == "auth-sync"
+
+
 def test_select_accounts_rejects_duplicate_refs():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/privat")
     config = AppConfig(accounts=(account,))

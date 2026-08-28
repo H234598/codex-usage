@@ -576,6 +576,27 @@ def test_totp_is_transient_stdin_not_argv_env_model() -> None:
     assert marker not in repr(actions)
 
 
+def test_google_page_retries_only_first_step_up_challenge_with_current_projection() -> None:
+    module = _module()
+    calls = []
+
+    class Actions:
+        projection_ready = True
+
+        def with_step_up(self, argv, provider, *, callback=None):
+            calls.append((argv, provider(), callback))
+
+    page = module.GoogleAccountsPage(None, None, None)
+    page._actions = Actions()
+    page.prompt_step_up = lambda: "739104"
+    argv = ["/opt/codex-usage", "google", "inventory-refresh", "google-one", "--json"]
+
+    page._operation_finished(module.CommandResult(False, None, "control.step_up_required"), argv=argv)
+    calls[0][2](module.CommandResult(False, None, "control.step_up_required"))
+
+    assert calls == [(argv, "739104", calls[0][2])]
+
+
 def test_google_actions_use_own_cli_and_never_masterjet_binary() -> None:
     calls = []
 

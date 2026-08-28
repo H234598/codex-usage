@@ -453,6 +453,64 @@ def test_real_https_step_up_challenge_retries_exactly_once(tmp_path, monkeypatch
     assert requests[1]["headers"]["X-Masterjet-Step-Up"] == "123456"
 
 
+def test_real_https_second_step_up_challenge_stops_after_one_retry(tmp_path, monkeypatch):
+    calls = 0
+
+    def step_up() -> str:
+        nonlocal calls
+        calls += 1
+        return "123456"
+
+    original_default_context = ssl.create_default_context
+    with real_tls_server(
+        tmp_path, responses=[step_up_problem_payload(), step_up_problem_payload()]
+    ) as (port, certificate, capture):
+        monkeypatch.setattr(client_module, "_open_https_connection", _REAL_OPEN_HTTPS_CONNECTION)
+        monkeypatch.setattr(
+            client_module.ssl,
+            "create_default_context",
+            lambda: original_default_context(cafile=certificate),
+        )
+        client = MasterjetControlClient(
+            MasterjetConnection(
+                transport="https", endpoint=f"https://localhost:{port}/control", timeout_seconds=2
+            ),
+            bearer_provider=lambda: "remote-bearer",
+            step_up_provider=step_up,
+        )
+        with pytest.raises(MasterjetClientError, match=r"control\.step_up_required"):
+            client.call("google.accounts.list", {})
+
+    assert calls == 1
+    assert len(capture["requests"]) == 2
+
+
+def test_https_client_caches_one_shot_bearer_across_multiple_requests(monkeypatch):
+    responses = iter(
+        [
+            FakeHTTPResponse(json.dumps(google_accounts_payload()).encode()),
+            FakeHTTPResponse(json.dumps(google_accounts_payload()).encode()),
+        ]
+    )
+    calls = 0
+
+    class SequencedConnection(FakeHTTPSConnection):
+        def getresponse(self):
+            return next(responses)
+
+    def bearer() -> str:
+        nonlocal calls
+        calls += 1
+        return "remote-bearer"
+
+    monkeypatch.setattr(client_module, "_open_https_connection", lambda *args: SequencedConnection(args[0]))
+    client = https_client(bearer_provider=bearer)
+    client.call("google.accounts.list", {})
+    client.call("google.accounts.list", {})
+
+    assert calls == 1
+
+
 def blocking_resolver_worker(_host: str, _port: int, _sender: object) -> None:
     time.sleep(60)
 

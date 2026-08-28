@@ -565,6 +565,27 @@ def test_openai_step_up_uses_explicit_transient_stdin_channel() -> None:
     assert stdin_data == b"739104\n"
 
 
+def test_openai_page_retries_only_first_step_up_challenge_with_current_projection() -> None:
+    module = _module()
+    calls = []
+
+    class Actions:
+        projection_ready = True
+
+        def with_step_up(self, argv, provider, *, callback=None):
+            calls.append((argv, provider(), callback))
+
+    page = module.OpenAIAccountsPage(None, None, None)
+    page._actions = Actions()
+    page.prompt_step_up = lambda: "739104"
+    argv = ["/opt/codex-usage", "account", "auth-sync", "openai-one", "--format", "json"]
+
+    page._operation_finished(module.CommandResult(False, None, "control.step_up_required"), argv=argv)
+    calls[0][2](module.CommandResult(False, None, "control.step_up_required"))
+
+    assert calls == [(argv, "739104", calls[0][2])]
+
+
 def test_openai_action_guard_checks_current_projection_before_mutation_argv() -> None:
     calls = []
 
