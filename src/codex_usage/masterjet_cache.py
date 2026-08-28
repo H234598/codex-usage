@@ -58,6 +58,9 @@ _CREDENTIAL_PAIRS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("set", "cookie"),
     }
 )
+_PRIVATE_COMPOUND_IDENTIFIERS: Final[frozenset[str]] = frozenset(
+    {"".join(parts) for parts in _CREDENTIAL_PAIRS} | {"apikey"}
+)
 _ERROR_CODES: Final[frozenset[str]] = frozenset(
     {
         "control.cache_invalid",
@@ -137,14 +140,15 @@ class ControlSnapshotCache:
         ):
             raise ControlCacheError("control.cache_request_invalid")
         root_fd = -1
-        failed = False
+        primary: BaseException | None = None
         try:
             root_fd = self._open_cache_root(state_root, create=True)
-        except (OSError, ValueError, ControlCacheError):
-            failed = True
-        close_ok = root_fd < 0 or self._close_fd(root_fd)
-        if failed or not close_ok:
-            raise ControlCacheError("control.cache_unavailable") from None
+        except BaseException as error:
+            primary = error
+        if root_fd >= 0:
+            primary = self._close_owned_fd(root_fd, primary)
+        if primary is not None:
+            self._raise_public_failure(primary)
         self._root = state_root
         self._path = state_root / _CACHE_NAME
         self._clock = clock
@@ -170,35 +174,43 @@ class ControlSnapshotCache:
         if validated is None:
             raise ControlCacheError("control.response_private")
 
+        primary: BaseException | None = None
         try:
             with private_path_lock(self._path, label="Masterjet snapshot cache lock"):
-                root_fd = self._open_cache_root(self._root, create=False)
+                root_fd = -1
                 try:
+                    root_fd = self._open_cache_root(self._root, create=False)
                     self._prepare_publish_state(root_fd)
                     existing = self._read_existing(root_fd)
                     if existing is not None:
                         self._decode(existing[0])
                     self._publish(root_fd, encoded, existing)
-                finally:
-                    os.close(root_fd)
-        except ControlCacheError:
-            raise
-        except Exception:
-            raise ControlCacheError("control.cache_unavailable") from None
+                except BaseException as error:
+                    primary = error
+                if root_fd >= 0:
+                    primary = self._close_owned_fd(root_fd, primary)
+        except BaseException as error:
+            if primary is None:
+                primary = error
+        if primary is not None:
+            self._raise_public_failure(primary)
 
     def load(self, *, max_age_seconds: int | float) -> CachedControlSnapshot:
         maximum_age = self._time_value(
             max_age_seconds,
             "control.cache_request_invalid",
         )
+        primary: BaseException | None = None
+        raw: bytes | None = None
         try:
             with private_path_lock(
                 self._path,
                 label="Masterjet snapshot cache lock",
                 create=False,
             ):
-                root_fd = self._open_cache_root(self._root, create=False)
+                root_fd = -1
                 try:
+                    root_fd = self._open_cache_root(self._root, create=False)
                     self._prepare_publish_state(root_fd)
                     raw, _identity = read_private_bytes_at(
                         root_fd,
@@ -206,12 +218,17 @@ class ControlSnapshotCache:
                         maximum=MAX_CONTROL_SNAPSHOT_BYTES,
                         mode=0o600,
                     )
-                finally:
-                    os.close(root_fd)
-        except ControlCacheError:
-            raise
-        except (FileNotFoundError, OSError, TimeoutError, ValueError):
-            raise ControlCacheError("control.cache_unavailable") from None
+                except BaseException as error:
+                    primary = error
+                if root_fd >= 0:
+                    primary = self._close_owned_fd(root_fd, primary)
+        except BaseException as error:
+            if primary is None:
+                primary = error
+        if primary is not None:
+            self._raise_public_failure(primary)
+        if raw is None:
+            raise ControlCacheError("control.cache_unavailable")
         snapshot, observed = self._decode(raw)
         try:
             now = self._time_value(self._clock(), "control.cache_invalid")
@@ -223,17 +240,20 @@ class ControlSnapshotCache:
         stale = age < 0 or not math.isfinite(age) or age > maximum_age
         return CachedControlSnapshot(snapshot=snapshot, observed_at=observed, stale=stale)
 
-    @staticmethod
-    def _open_cache_root(state_root: Path, *, create: bool) -> int:
+    @classmethod
+    def _open_cache_root(cls, state_root: Path, *, create: bool) -> int:
         flags = (
             os.O_RDONLY
             | getattr(os, "O_DIRECTORY", 0)
             | getattr(os, "O_NOFOLLOW", 0)
             | getattr(os, "O_CLOEXEC", 0)
         )
-        current_fd = os.open(state_root.anchor, flags)
+        current_fd = -1
+        primary: BaseException | None = None
+        result = -1
         try:
-            ControlSnapshotCache._require_trusted_parent(os.fstat(current_fd))
+            current_fd = os.open(state_root.anchor, flags)
+            cls._require_trusted_parent(os.fstat(current_fd))
             components = state_root.parts[1:]
             if not components:
                 raise ValueError("cache root cannot be filesystem root")
@@ -251,21 +271,29 @@ class ControlSnapshotCache:
                     except FileExistsError:
                         pass
                     next_fd = os.open(component, flags, dir_fd=current_fd)
-                os.close(current_fd)
+                close_error = cls._close_owned_fd(current_fd, None)
+                current_fd = -1
+                if close_error is not None:
+                    cls._close_owned_fd(next_fd, close_error)
+                    next_fd = -1
+                    raise close_error
                 current_fd = next_fd
                 if created:
                     os.fchmod(current_fd, 0o700)
                 item = os.fstat(current_fd)
                 if final:
-                    ControlSnapshotCache._require_private_root(item)
+                    cls._require_private_root(item)
                 else:
-                    ControlSnapshotCache._require_trusted_parent(item)
+                    cls._require_trusted_parent(item)
             result = current_fd
             current_fd = -1
-            return result
-        finally:
-            if current_fd >= 0:
-                os.close(current_fd)
+        except BaseException as error:
+            primary = error
+        if current_fd >= 0:
+            primary = cls._close_owned_fd(current_fd, primary)
+        if primary is not None:
+            raise primary
+        return result
 
     @staticmethod
     def _require_trusted_parent(item: os.stat_result) -> None:
@@ -384,7 +412,7 @@ class ControlSnapshotCache:
         created_identity: tuple[int, int] | None = None
         temp_identity: tuple[int, ...] | None = None
         published = False
-        operation_ok = False
+        primary: BaseException | None = None
         try:
             temp_fd = os.open(_TEMP_NAME, flags, 0o600, dir_fd=root_fd)
             opened_temp = os.fstat(temp_fd)
@@ -442,15 +470,16 @@ class ControlSnapshotCache:
                 raise ValueError("published cache identity changed")
             cls._fsync_directory(root_fd)
             published = True
-            operation_ok = True
-        except BaseException:
-            operation_ok = False
-        close_ok = temp_fd < 0 or cls._close_fd(temp_fd)
-        cleanup_ok = True
+        except BaseException as error:
+            primary = error
+        if temp_fd >= 0:
+            primary = cls._close_owned_fd(temp_fd, primary)
         if not published and created_identity is not None:
             cleanup_ok = cls._remove_created_temp(root_fd, created_identity)
-        if not operation_ok or not close_ok or not cleanup_ok:
-            raise ValueError("cache publish failed")
+            if not cleanup_ok and primary is None:
+                primary = ControlCacheError("control.cache_unavailable")
+        if primary is not None:
+            raise primary
 
     @classmethod
     def _recheck_target(
@@ -552,12 +581,14 @@ class ControlSnapshotCache:
             | getattr(os, "O_NONBLOCK", 0)
         )
         fd = os.open(name, flags, dir_fd=root_fd)
+        primary: BaseException | None = None
+        initial: tuple[int, ...] | None = None
+        payload = bytearray()
         try:
             initial = cls._private_file_identity(
                 os.fstat(fd),
                 expected_links=expected_links,
             )
-            payload = bytearray()
             while len(payload) <= MAX_CONTROL_SNAPSHOT_BYTES:
                 chunk = os.read(
                     fd,
@@ -574,8 +605,13 @@ class ControlSnapshotCache:
             )
             if final != initial:
                 raise ValueError("cache file changed during read")
-        finally:
-            os.close(fd)
+        except BaseException as error:
+            primary = error
+        primary = cls._close_owned_fd(fd, primary)
+        if primary is not None:
+            raise primary
+        if initial is None:
+            raise ControlCacheError("control.cache_unavailable")
         named = cls._attest_named_file(root_fd, name, expected_links=expected_links)
         if named != initial:
             raise ValueError("cache file identity changed after read")
@@ -649,12 +685,24 @@ class ControlSnapshotCache:
         cls._fsync_directory(root_fd)
 
     @staticmethod
-    def _close_fd(fd: int) -> bool:
+    def _close_owned_fd(
+        fd: int,
+        primary: BaseException | None,
+    ) -> BaseException | None:
+        close_failed = False
         try:
             os.close(fd)
         except BaseException:
-            return False
-        return True
+            close_failed = True
+        if close_failed and primary is None:
+            return ControlCacheError("control.cache_unavailable")
+        return primary
+
+    @staticmethod
+    def _raise_public_failure(error: BaseException) -> None:
+        if isinstance(error, ControlCacheError) or not isinstance(error, Exception):
+            raise error
+        raise ControlCacheError("control.cache_unavailable")
 
     @staticmethod
     def _fsync_directory(root_fd: int) -> None:
@@ -841,8 +889,21 @@ class ControlSnapshotCache:
                 token.clear()
         if token:
             tokens.append("".join(token).casefold())
+        normalized_identifiers: set[str] = set()
+        identifier: list[str] = []
+        for character in normalized.casefold():
+            if character.isalnum():
+                identifier.append(character)
+            elif identifier:
+                normalized_identifiers.add("".join(identifier))
+                identifier.clear()
+        if identifier:
+            normalized_identifiers.add("".join(identifier))
         pairs = set(pairwise(tokens))
         has_assignment = "=" in normalized or ":" in normalized
+        compound_assignment = has_assignment and bool(
+            _PRIVATE_COMPOUND_IDENTIFIERS & normalized_identifiers
+        )
         structured_header = "header" in tokens and bool(
             {"authorization", "cookie", "private", "secret", "token", "value"} & set(tokens)
         )
@@ -861,6 +922,7 @@ class ControlSnapshotCache:
         if (
             any(item in _CREDENTIAL_WORDS for item in tokens)
             or bool(_CREDENTIAL_PAIRS & pairs)
+            or compound_assignment
             or assignment_marker
             or structured_header
             or structured_error

@@ -708,25 +708,34 @@ def test_early_fchmod_failure_cleans_owned_temp(
     assert not temp_path(tmp_path).exists()
 
 
-def test_baseexception_during_write_is_code_only_and_cleans_owned_temp(
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit])
+def test_baseexception_during_write_is_preserved_and_cleans_owned_temp(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    interruption: type[BaseException],
 ) -> None:
     cache = ControlSnapshotCache.for_test(tmp_path)
     original_write = cache_module.os.write
+    original_close = cache_module.os.close
 
     def interrupt_temp_write(fd: int, payload: bytes) -> int:
         descriptor = Path(os.readlink(f"/proc/self/fd/{fd}"))
         if descriptor.name == temp_path(tmp_path).name:
-            raise KeyboardInterrupt("private interrupt diagnostic")
+            raise interruption("primary interrupt")
         return original_write(fd, payload)
 
-    monkeypatch.setattr(cache_module.os, "write", interrupt_temp_write)
+    def fail_temp_close(fd: int) -> None:
+        descriptor = Path(os.readlink(f"/proc/self/fd/{fd}"))
+        original_close(fd)
+        if descriptor.name == temp_path(tmp_path).name:
+            raise OSError("secondary close diagnostic")
 
-    with pytest.raises(ControlCacheError, match=r"control\.cache_unavailable") as caught:
+    monkeypatch.setattr(cache_module.os, "write", interrupt_temp_write)
+    monkeypatch.setattr(cache_module.os, "close", fail_temp_close)
+
+    with pytest.raises(interruption, match="primary interrupt"):
         cache.save(valid_snapshot(), observed_at=1.0)
 
-    assert "diagnostic" not in repr(caught.value)
     assert not temp_path(tmp_path).exists()
 
 
@@ -787,6 +796,98 @@ def test_constructor_root_close_failure_is_code_only(
 
     assert failed is True
     assert "diagnostic" not in repr(caught.value)
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize("operation", ["save", "load"])
+def test_public_root_close_failure_is_code_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    cache = ControlSnapshotCache.for_test(tmp_path)
+    cache.save(valid_snapshot(), observed_at=1.0)
+    original_close = cache_module.os.close
+    failed = False
+
+    def fail_root_close(fd: int) -> None:
+        nonlocal failed
+        descriptor = Path(os.readlink(f"/proc/self/fd/{fd}"))
+        original_close(fd)
+        if descriptor == tmp_path and not failed:
+            failed = True
+            raise OSError("private public-root close diagnostic")
+
+    monkeypatch.setattr(cache_module.os, "close", fail_root_close)
+
+    with pytest.raises(ControlCacheError, match=r"control\.cache_unavailable") as caught:
+        if operation == "save":
+            cache.save(valid_snapshot(), observed_at=2.0)
+        else:
+            cache.load(max_age_seconds=10**10)
+
+    assert failed is True
+    assert caught.value.__context__ is None
+
+
+def test_root_traversal_close_failure_still_closes_next_fd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "nested" / "cache"
+    original_close = cache_module.os.close
+    failed = False
+    closed_after_failure: list[Path] = []
+
+    def fail_first_traversal_close(fd: int) -> None:
+        nonlocal failed
+        descriptor = Path(os.readlink(f"/proc/self/fd/{fd}"))
+        original_close(fd)
+        if failed:
+            closed_after_failure.append(descriptor)
+        elif descriptor == Path("/"):
+            failed = True
+            raise OSError("private traversal close diagnostic")
+
+    monkeypatch.setattr(cache_module.os, "close", fail_first_traversal_close)
+
+    with pytest.raises(ControlCacheError, match=r"control\.cache_unavailable") as caught:
+        ControlSnapshotCache.for_test(root)
+
+    assert caught.value.__context__ is None
+    assert Path("/tmp") in closed_after_failure
+
+
+def test_recovery_read_close_failure_is_code_only_and_root_is_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = ControlSnapshotCache.for_test(tmp_path)
+    cache.save(valid_snapshot(), observed_at=1.0)
+    cache_path(tmp_path).replace(rollback_path(tmp_path))
+    original_close = cache_module.os.close
+    failed = False
+    root_closed = False
+
+    def fail_rollback_close(fd: int) -> None:
+        nonlocal failed, root_closed
+        descriptor = Path(os.readlink(f"/proc/self/fd/{fd}"))
+        original_close(fd)
+        if descriptor == rollback_path(tmp_path) and not failed:
+            failed = True
+            raise OSError("private rollback close diagnostic")
+        if descriptor == tmp_path:
+            root_closed = True
+
+    monkeypatch.setattr(cache_module.os, "close", fail_rollback_close)
+
+    with pytest.raises(ControlCacheError, match=r"control\.cache_unavailable") as caught:
+        cache.load(max_age_seconds=10**10)
+
+    assert failed is True
+    assert root_closed is True
+    assert caught.value.__context__ is None
+    assert rollback_path(tmp_path).exists()
 
 
 @pytest.mark.parametrize(
@@ -807,6 +908,15 @@ def test_constructor_root_close_failure_is_code_only(
         "cookieHeader=session-value",
         "clientPassword=huntertwo",
         "pwd=huntertwo",
+        "apikey=topsecret",
+        "sessionid=topsecret",
+        "setcookie=value",
+        "cookieheader=value",
+        "clientpassword=huntertwo",
+        "clientsecret=topsecret",
+        "accesstoken=topsecret",
+        "refreshtoken=topsecret",
+        "SeSsIoNiD=topsecret",
     ],
 )
 def test_common_secret_header_cookie_and_error_markers_are_not_cached(
