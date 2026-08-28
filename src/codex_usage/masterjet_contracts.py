@@ -1,45 +1,136 @@
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 _SCHEMA_VERSION = 1
 _MAX_ACCOUNTS = 256
 _MAX_PROJECTS = 256
 _MAX_REASON_CODES = 64
-_MAX_LABEL_BYTES = 256
-_MAX_PURPOSE_BYTES = 256
 _MAX_NAME_BYTES = 256
-_MAX_TITLE_BYTES = 256
-_MAX_DETAIL_BYTES = 2_048
-_MAX_EFFECT_BYTES = 512
-_MAX_ACTION_BYTES = 512
-_MAX_GENERATION = 2**31 - 1
-_MAX_OPERATION_COUNT = 10_000
+_MAX_GENERATION = 2**63 - 1
+_MAX_COUNT = 100_000
 _MAX_RETRY_SECONDS = 86_400
-_MIN_TIMESTAMP_YEAR = 2000
-_MAX_TIMESTAMP_YEAR = 2100
-_MAX_OPERATION_LIFETIME = timedelta(days=1)
-_REF_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
-_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63}){0,7}$")
+_REF_RE = re.compile(r"^[a-z][a-z0-9-]{0,127}$")
+_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,127}(?:\.[a-z][a-z0-9_]{0,127}){0,7}$")
 _VISIBLE_NAME_RE = re.compile(r"^[A-Za-z]+(?:[ -][A-Za-z]+)*$")
-_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$")
 _PLAN_DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
-_PRIVATE_TEXT_RE = re.compile(
-    r"(?:\b(?:bearer|access[_ -]?token|refresh[_ -]?token|id[_ -]?token|"
-    r"api[_ -]?key|client[_ -]?(?:secret|id)|authorization|cookie|password|secret|"
-    r"token|credential|prompt|"
-    r"raw[ _-]?output|provider[ _-]?(?:response|output)|response[ _-]?body)\b|"
-    r"\b(?:AIza[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,})\b|"
-    r"file:|(?:^|[\s\"'(])/(?:[^\s]*)|\\\\|[A-Za-z]:[\\/]|```|^\s*[\[{])",
+_SECRET_VALUE_RE = re.compile(
+    r"(?:\b(?:AIza[A-Za-z0-9_-]{20,}|ya29\.[A-Za-z0-9._-]{8,}|"
+    r"1//[A-Za-z0-9._-]{8,}|GOCSPX-[A-Za-z0-9_-]{8,}|"
+    r"eyJ[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,})\b|"
+    r"(?:^|\s)Bearer\s+[A-Za-z0-9._-]{8,}|"
+    r"\b(?:access_token|refresh_token|client_secret)\s*[=:]\s*\S+)",
     re.IGNORECASE,
+)
+_ABSOLUTE_PATH_RE = re.compile(
+    r"(?:^|[^A-Za-z0-9_])(?:file://|/(?:[^\s]*)|\\\\[^\s]+|[A-Za-z]:[\\/])"
 )
 _OPERATION_STATES = frozenset(
     {"planned", "queued", "running", "partial", "succeeded", "failed", "blocked"}
 )
-_PROBLEM_SEVERITIES = frozenset({"info", "warning", "error", "critical"})
+_PROBLEM_TEMPLATES = {
+    "credential.source_unavailable": (
+        "error",
+        "Credential source unavailable",
+        "Token refresh required.",
+        "Authentication is unavailable.",
+        "Restore the credential source.",
+    ),
+    "credential.upload_expired": (
+        "error",
+        "Credential upload expired",
+        "Credential upload has expired.",
+        "Authentication is unavailable.",
+        "Start a new credential upload.",
+    ),
+    "credential.generation_conflict": (
+        "warning",
+        "Credential generation conflict",
+        "Credential generation has changed.",
+        "Synchronization stopped.",
+        "Refresh credential status.",
+    ),
+    "oauth.transaction_expired": (
+        "warning",
+        "OAuth transaction expired",
+        "OAuth transaction has expired.",
+        "Authorization is unavailable.",
+        "Start OAuth again.",
+    ),
+    "oauth.identity_mismatch": (
+        "error",
+        "OAuth identity mismatch",
+        "OAuth identity does not match the selected account.",
+        "Authorization is blocked.",
+        "Use the selected account.",
+    ),
+    "quota.evidence_stale": (
+        "warning",
+        "Quota evidence stale",
+        "Quota evidence is stale.",
+        "Provisioning is blocked.",
+        "Refresh quota evidence.",
+    ),
+    "quota.provider_exhausted": (
+        "warning",
+        "Provider quota exhausted",
+        "Provider quota is exhausted.",
+        "Provisioning stopped.",
+        "Refresh quota evidence.",
+    ),
+    "control.plan_stale": (
+        "warning",
+        "Control plan stale",
+        "Control plan is stale.",
+        "Mutation is blocked.",
+        "Create a new plan.",
+    ),
+    "control.operation_partial": (
+        "warning",
+        "Control operation partial",
+        "Control operation completed partially.",
+        "Some changes were not applied.",
+        "Review operation status.",
+    ),
+    "resource.host_unreachable": (
+        "error",
+        "Resource host unreachable",
+        "Resource host is unreachable.",
+        "Operation is unavailable.",
+        "Check host availability.",
+    ),
+    "resource.target_path_invalid": (
+        "error",
+        "Resource target path invalid",
+        "Resource target path is invalid.",
+        "Operation is blocked.",
+        "Correct the target path.",
+    ),
+    "resource.cgroup_profile_invalid": (
+        "error",
+        "Resource cgroup profile invalid",
+        "Resource cgroup profile is invalid.",
+        "Operation is blocked.",
+        "Correct the cgroup profile.",
+    ),
+    "provider.model_unavailable": (
+        "warning",
+        "Provider model unavailable",
+        "Provider model is unavailable.",
+        "Operation is blocked.",
+        "Select an available model.",
+    ),
+    "authority.scope_denied": (
+        "error",
+        "Authority scope denied",
+        "Authority scope is denied.",
+        "Operation is denied.",
+        "Request required scope.",
+    ),
+}
 
 
 class ControlContractError(ValueError):
@@ -61,7 +152,7 @@ class OpenAIControlAccount:
 
     def __post_init__(self) -> None:
         _ref(self.ref, "ref")
-        _text(self.label, "label", _MAX_LABEL_BYTES)
+        _visible_name(self.label, "label")
         _bool(self.enabled, "enabled")
         _ref(self.local_profile_ref, "local_profile_ref")
         _ref(self.source_host_ref, "source_host_ref")
@@ -87,14 +178,14 @@ class GoogleControlAccount:
 
     def __post_init__(self) -> None:
         _ref(self.ref, "ref")
-        _text(self.label, "label", _MAX_LABEL_BYTES)
+        _visible_name(self.label, "label")
         _bool(self.enabled, "enabled")
         _bool(self.subject_bound, "subject_bound")
         _code(self.oauth_state, "oauth_state")
         _generation(self.inventory_generation, "inventory_generation")
         _code(self.quota_state, "quota_state")
-        _count(self.project_count, "project_count", _MAX_PROJECTS)
-        _count(self.billing_count, "billing_count", _MAX_PROJECTS)
+        _count(self.project_count, "project_count", _MAX_COUNT)
+        _count(self.billing_count, "billing_count", _MAX_COUNT)
         _code(self.reload_state, "reload_state")
 
 
@@ -112,12 +203,31 @@ class GoogleControlProject:
     def __post_init__(self) -> None:
         _ref(self.ref, "ref")
         _visible_name(self.project_name, "project_name")
-        _text(self.purpose, "purpose", _MAX_PURPOSE_BYTES)
+        _visible_name(self.purpose, "purpose")
         _visible_name(self.key_name, "key_name")
         _optional_ref(self.billing_ref, "billing_ref")
         _code(self.status, "status")
         _code(self.probe_state, "probe_state")
         _code(self.quota_state, "quota_state")
+
+
+@dataclass(frozen=True, slots=True)
+class GoogleControlProjectList:
+    schema_version: int
+    account_ref: str
+    inventory_generation: int
+    projects: tuple[GoogleControlProject, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.schema_version) is not int or self.schema_version != _SCHEMA_VERSION:
+            _invalid("schema_version")
+        _ref(self.account_ref, "account_ref")
+        _generation(self.inventory_generation, "inventory_generation")
+        if type(self.projects) is not tuple or len(self.projects) > _MAX_PROJECTS:
+            _invalid("projects")
+        if not all(type(project) is GoogleControlProject for project in self.projects):
+            _invalid("projects")
+        _unique_refs(self.projects)
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,14 +255,11 @@ class ControlOperation:
         _plan_digest(self.plan_digest)
         _timestamp_value(self.created_at, "created_at")
         _timestamp_value(self.expires_at, "expires_at")
-        _count(self.completed_count, "completed_count", _MAX_OPERATION_COUNT)
-        _count(self.failed_count, "failed_count", _MAX_OPERATION_COUNT)
-        _count(self.not_attempted_count, "not_attempted_count", _MAX_OPERATION_COUNT)
+        _count(self.completed_count, "completed_count", _MAX_COUNT)
+        _count(self.failed_count, "failed_count", _MAX_COUNT)
+        _count(self.not_attempted_count, "not_attempted_count", _MAX_COUNT)
         _reason_codes(self.reason_codes)
-        if (
-            self.expires_at <= self.created_at
-            or self.expires_at - self.created_at > _MAX_OPERATION_LIFETIME
-        ):
+        if self.expires_at <= self.created_at:
             _invalid("expires_at")
 
 
@@ -170,13 +277,15 @@ class ControlProblem:
     occurred_at: datetime
 
     def __post_init__(self) -> None:
-        _code(self.code, "code")
-        if _code(self.severity, "severity") not in _PROBLEM_SEVERITIES:
-            _invalid("severity")
-        _text(self.title, "title", _MAX_TITLE_BYTES)
-        _text(self.detail, "detail", _MAX_DETAIL_BYTES)
-        _text(self.effect, "effect", _MAX_EFFECT_BYTES)
-        _text(self.action, "action", _MAX_ACTION_BYTES)
+        template = _problem_template(self.code)
+        if (
+            self.severity,
+            self.title,
+            self.detail,
+            self.effect,
+            self.action,
+        ) != template:
+            _invalid("problem")
         _bool(self.retryable, "retryable")
         _optional_retry_seconds(self.retry_after_seconds, "retry_after_seconds")
         _ref(self.correlation_id, "correlation_id")
@@ -216,7 +325,7 @@ def parse_google_project(payload: object) -> GoogleControlProject:
     return GoogleControlProject(
         ref=_ref(data["ref"], "ref"),
         project_name=_visible_name(data["project_name"], "project_name"),
-        purpose=_text(data["purpose"], "purpose", _MAX_PURPOSE_BYTES),
+        purpose=_visible_name(data["purpose"], "purpose"),
         key_name=_visible_name(data["key_name"], "key_name"),
         billing_ref=_optional_ref(data["billing_ref"], "billing_ref"),
         status=_code(data["status"], "status"),
@@ -225,17 +334,28 @@ def parse_google_project(payload: object) -> GoogleControlProject:
     )
 
 
-def parse_google_projects(payload: object) -> tuple[GoogleControlProject, ...]:
+def parse_google_projects(
+    payload: object,
+    *,
+    expected_account_ref: str | None = None,
+) -> GoogleControlProjectList:
     data = _document(
         payload,
         {"schema_version", "account_ref", "inventory_generation", "projects"},
     )
-    _ref(data["account_ref"], "account_ref")
-    _generation(data["inventory_generation"], "inventory_generation")
+    account_ref = _ref(data["account_ref"], "account_ref")
+    if expected_account_ref is not None and account_ref != _ref(
+        expected_account_ref, "expected_account_ref"
+    ):
+        _invalid("account_ref")
+    inventory_generation = _generation(data["inventory_generation"], "inventory_generation")
     projects = _list(data["projects"], "projects", _MAX_PROJECTS)
-    result = tuple(parse_google_project(project) for project in projects)
-    _unique_refs(result)
-    return result
+    return GoogleControlProjectList(
+        schema_version=_SCHEMA_VERSION,
+        account_ref=account_ref,
+        inventory_generation=inventory_generation,
+        projects=tuple(parse_google_project(project) for project in projects),
+    )
 
 
 def parse_control_operation(payload: object) -> ControlOperation:
@@ -271,10 +391,10 @@ def parse_control_operation(payload: object) -> ControlOperation:
         plan_digest=_plan_digest(data["plan_digest"]),
         created_at=_timestamp(data["created_at"], "created_at"),
         expires_at=_timestamp(data["expires_at"], "expires_at"),
-        completed_count=_count(data["completed_count"], "completed_count", _MAX_OPERATION_COUNT),
-        failed_count=_count(data["failed_count"], "failed_count", _MAX_OPERATION_COUNT),
+        completed_count=_count(data["completed_count"], "completed_count", _MAX_COUNT),
+        failed_count=_count(data["failed_count"], "failed_count", _MAX_COUNT),
         not_attempted_count=_count(
-            data["not_attempted_count"], "not_attempted_count", _MAX_OPERATION_COUNT
+            data["not_attempted_count"], "not_attempted_count", _MAX_COUNT
         ),
         reason_codes=_parse_reason_codes(data["reason_codes"]),
     )
@@ -298,16 +418,24 @@ def parse_control_problem(payload: object) -> ControlProblem:
             "occurred_at",
         },
     )
-    severity = _code(data["severity"], "severity")
-    if severity not in _PROBLEM_SEVERITIES:
-        _invalid("severity")
+    code = _code(data["code"], "code")
+    template = _problem_template(code)
+    remote_text = (
+        data["severity"],
+        data["title"],
+        data["detail"],
+        data["effect"],
+        data["action"],
+    )
+    if any(type(value) is not str for value in remote_text) or remote_text != template:
+        _invalid("problem")
     return ControlProblem(
-        code=_code(data["code"], "code"),
-        severity=severity,
-        title=_text(data["title"], "title", _MAX_TITLE_BYTES),
-        detail=_text(data["detail"], "detail", _MAX_DETAIL_BYTES),
-        effect=_text(data["effect"], "effect", _MAX_EFFECT_BYTES),
-        action=_text(data["action"], "action", _MAX_ACTION_BYTES),
+        code=code,
+        severity=template[0],
+        title=template[1],
+        detail=template[2],
+        effect=template[3],
+        action=template[4],
         retryable=_bool(data["retryable"], "retryable"),
         retry_after_seconds=_optional_retry_seconds(
             data["retry_after_seconds"], "retry_after_seconds"
@@ -335,7 +463,7 @@ def _parse_google_account(payload: object) -> GoogleControlAccount:
     )
     return GoogleControlAccount(
         ref=_ref(data["ref"], "ref"),
-        label=_text(data["label"], "label", _MAX_LABEL_BYTES),
+        label=_visible_name(data["label"], "label"),
         enabled=_bool(data["enabled"], "enabled"),
         subject_bound=_bool(data["subject_bound"], "subject_bound"),
         oauth_state=_code(data["oauth_state"], "oauth_state"),
@@ -343,8 +471,8 @@ def _parse_google_account(payload: object) -> GoogleControlAccount:
             data["inventory_generation"], "inventory_generation"
         ),
         quota_state=_code(data["quota_state"], "quota_state"),
-        project_count=_count(data["project_count"], "project_count", _MAX_PROJECTS),
-        billing_count=_count(data["billing_count"], "billing_count", _MAX_PROJECTS),
+        project_count=_count(data["project_count"], "project_count", _MAX_COUNT),
+        billing_count=_count(data["billing_count"], "billing_count", _MAX_COUNT),
         reload_state=_code(data["reload_state"], "reload_state"),
     )
 
@@ -367,7 +495,7 @@ def _parse_openai_account(payload: object) -> OpenAIControlAccount:
     )
     return OpenAIControlAccount(
         ref=_ref(data["ref"], "ref"),
-        label=_text(data["label"], "label", _MAX_LABEL_BYTES),
+        label=_visible_name(data["label"], "label"),
         enabled=_bool(data["enabled"], "enabled"),
         local_profile_ref=_ref(data["local_profile_ref"], "local_profile_ref"),
         source_host_ref=_ref(data["source_host_ref"], "source_host_ref"),
@@ -439,25 +567,11 @@ def _visible_name(value: object, field: str) -> str:
         raise ControlContractError("control.response_invalid") from exc
     if (
         len(encoded) > _MAX_NAME_BYTES
-        or _unsafe_text(value)
+        or _SECRET_VALUE_RE.search(value)
+        or _ABSOLUTE_PATH_RE.search(value)
         or not _VISIBLE_NAME_RE.fullmatch(value)
     ):
         _invalid(field)
-    return value
-
-
-def _text(value: object, field: str, maximum: int) -> str:
-    if (
-        type(value) is not str
-        or not value
-        or _unsafe_text(value)
-    ):
-        _invalid(field)
-    try:
-        if len(value.encode("utf-8")) > maximum:
-            _invalid(field)
-    except UnicodeEncodeError as exc:
-        raise ControlContractError("control.response_invalid") from exc
     return value
 
 
@@ -521,7 +635,7 @@ def _timestamp(value: object, field: str) -> datetime:
     if type(value) is not str or not _TIMESTAMP_RE.fullmatch(value):
         _invalid(field)
     try:
-        timestamp = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        timestamp = datetime.fromisoformat(f"{value[:-1]}+00:00")
     except ValueError as exc:
         raise ControlContractError("control.response_invalid") from exc
     _timestamp_value(timestamp, field)
@@ -535,19 +649,15 @@ def _optional_timestamp_value(value: object, field: str) -> datetime | None:
 
 
 def _timestamp_value(value: object, field: str) -> datetime:
-    if (
-        type(value) is not datetime
-        or value.tzinfo is not UTC
-        or not _MIN_TIMESTAMP_YEAR <= value.year <= _MAX_TIMESTAMP_YEAR
-    ):
+    if type(value) is not datetime or value.tzinfo is not UTC:
         _invalid(field)
     return value
 
 
-def _unsafe_text(value: str) -> bool:
-    if _PRIVATE_TEXT_RE.search(value):
-        return True
-    return any(unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in value)
+def _problem_template(code: object) -> tuple[str, str, str, str, str]:
+    if type(code) is not str or code not in _PROBLEM_TEMPLATES:
+        _invalid("code")
+    return _PROBLEM_TEMPLATES[code]
 
 
 def _invalid(_field: str) -> None:

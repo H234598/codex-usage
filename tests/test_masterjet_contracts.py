@@ -87,7 +87,7 @@ def valid_problem() -> dict[str, object]:
         "code": "quota.provider_exhausted",
         "severity": "warning",
         "title": "Provider quota exhausted",
-        "detail": "Try again after quota refresh.",
+        "detail": "Provider quota is exhausted.",
         "effect": "Provisioning stopped.",
         "action": "Refresh quota evidence.",
         "retryable": True,
@@ -136,9 +136,10 @@ def test_google_project_rejects_non_utf8_name_as_contract_error():
         parse_google_project(valid_google_project() | {"project_name": "\ud800"})
 
 
-def test_google_project_rejects_secret_marker_in_visible_name():
-    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
-        parse_google_project(valid_google_project() | {"project_name": "Prompt Secret"})
+def test_google_project_accepts_visible_name_without_secret_value():
+    project = parse_google_project(valid_google_project() | {"project_name": "Prompt Secret"})
+
+    assert project.project_name == "Prompt Secret"
 
 
 def test_google_accounts_reject_unknown_nested_fields():
@@ -160,7 +161,7 @@ def test_google_accounts_reject_project_count_above_local_safety_limit():
         parse_google_accounts(
             {
                 "schema_version": 1,
-                "accounts": [valid_google_account() | {"project_count": 257}],
+                "accounts": [valid_google_account() | {"project_count": 100_001}],
             }
         )
 
@@ -206,7 +207,9 @@ def test_google_project_list_accepts_versioned_complete_projection():
         }
     )
 
-    assert projects == (parse_google_project(valid_google_project()),)
+    assert projects.account_ref == "google-1"
+    assert projects.inventory_generation == 4
+    assert projects.projects == (parse_google_project(valid_google_project()),)
 
 
 def test_google_project_list_rejects_duplicate_refs():
@@ -252,13 +255,32 @@ def test_google_project_list_rejects_count_above_local_safety_limit():
         )
 
 
+def test_google_project_list_rejects_unexpected_account_ref():
+    from codex_usage import masterjet_contracts
+
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        masterjet_contracts.parse_google_projects(
+            {
+                "schema_version": 1,
+                "account_ref": "google-2",
+                "inventory_generation": 4,
+                "projects": [],
+            },
+            expected_account_ref="google-1",
+        )
+
+
 @pytest.mark.parametrize(
     "text",
     [
         "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature",
         "access_token=private",
+        "ya29.A0ARrdaMabcdefghijk123456",
+        "1//0abcdefghijklmnop",
+        "GOCSPX-abcdefghijklmnop",
         "file:///home/teladi/.config/auth.json",
         r"\\server\share\oauth.json",
+        "path=/home/teladi/.config/auth.json",
         "Provider raw output: {\"credential\": \"private\"}",
         "Prompt: summarize this secret",
         "AIza" + "A" * 35,
@@ -306,6 +328,28 @@ def test_control_operation_accepts_complete_spec_v1_fixture():
     assert operation.not_attempted_count == 3
 
 
+def test_control_operation_accepts_server_boundary_fixture():
+    boundary_ref = "o" + "a" * 127
+    operation = parse_control_operation(
+        valid_operation()
+        | {
+            "id": boundary_ref,
+            "expected_generation": 2**63 - 1,
+            "resulting_generation": 2**63 - 1,
+            "created_at": "9999-12-31T23:59:59.000000Z",
+            "expires_at": "9999-12-31T23:59:59.999999Z",
+            "completed_count": 100_000,
+            "failed_count": 100_000,
+            "not_attempted_count": 100_000,
+        }
+    )
+
+    assert operation.id == boundary_ref
+    assert operation.expected_generation == 2**63 - 1
+    assert operation.completed_count == 100_000
+    assert operation.expires_at.microsecond == 999_999
+
+
 def test_control_operation_rejects_unknown_state():
     with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
         parse_control_operation(valid_operation() | {"state": "waiting"})
@@ -314,10 +358,10 @@ def test_control_operation_rejects_unknown_state():
 @pytest.mark.parametrize(
     "field, value",
     [
-        ("completed_count", 10_001),
+        ("completed_count", 100_001),
         ("failed_count", True),
-        ("not_attempted_count", 10_001),
-        ("expires_at", "2026-08-30T12:00:01Z"),
+        ("not_attempted_count", 100_001),
+        ("expires_at", "2026-08-28T11:59:59Z"),
     ],
 )
 def test_control_operation_rejects_unsafe_count_and_time_values(field, value):
@@ -325,13 +369,13 @@ def test_control_operation_rejects_unsafe_count_and_time_values(field, value):
         parse_control_operation(valid_operation() | {field: value})
 
 
-def test_control_operation_rejects_timestamp_outside_ui_range():
+def test_control_operation_rejects_invalid_calendar_timestamp():
     with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
         parse_control_operation(
             valid_operation()
             | {
-                "created_at": "9999-12-31T00:00:00Z",
-                "expires_at": "9999-12-31T00:30:00Z",
+                "created_at": "2026-02-30T00:00:00Z",
+                "expires_at": "2026-02-30T00:30:00Z",
             }
         )
 
@@ -395,7 +439,7 @@ def test_control_operation_constructor_rejects_mutable_reason_codes():
             code="quota.provider_exhausted",
             severity="warning",
             title="Provider quota exhausted",
-            detail="Try again after quota refresh.",
+            detail="Provider quota is exhausted.",
             effect="Provisioning stopped.",
             action="Refresh quota evidence.",
             retryable=True,
@@ -426,6 +470,41 @@ def test_control_problem_accepts_complete_spec_v1_fixture():
     assert problem.occurred_at == datetime(2026, 8, 28, 12, tzinfo=UTC)
 
 
+def test_control_problem_uses_local_credential_template():
+    problem = parse_control_problem(
+        valid_problem()
+        | {
+            "code": "credential.source_unavailable",
+            "severity": "error",
+            "title": "Credential source unavailable",
+            "detail": "Token refresh required.",
+            "effect": "Authentication is unavailable.",
+            "action": "Restore the credential source.",
+        }
+    )
+
+    assert problem.title == "Credential source unavailable"
+    assert problem.detail == "Token refresh required."
+
+
+def test_control_problem_rejects_remote_text_outside_local_template():
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_control_problem(valid_problem() | {"detail": "Provider said limit 1"})
+
+
+def test_control_problem_rejects_unknown_code():
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_control_problem(valid_problem() | {"code": "provider.unknown"})
+
+
 def test_control_problem_rejects_retry_delay_above_ui_limit():
     with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
         parse_control_problem(valid_problem() | {"retry_after_seconds": 86_401})
+
+
+@pytest.mark.parametrize("value", [True, float("nan"), float("inf"), float("-inf")])
+def test_schema_and_numeric_fields_reject_boolean_and_non_finite_values(value):
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_google_accounts({"schema_version": value, "accounts": []})
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_control_operation(valid_operation() | {"completed_count": value})
