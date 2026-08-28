@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import uuid
 from collections.abc import Callable
@@ -31,6 +32,7 @@ _CALLBACK_CLOSE_RETRY_DELAYS = (1.0, 2.0)
 _CALLBACK_CLOSE_MAX_ATTEMPTS = len(_CALLBACK_CLOSE_RETRY_DELAYS) + 1
 _T = TypeVar("_T")
 _PATH_TYPE = type(Path())
+_PLAN_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 class AuthenticatedGoogleClient(Protocol):
@@ -177,8 +179,10 @@ class GoogleAccountsController:
     def provision_plan(self, account_ref: str) -> GoogleProvisionPlan:
         return self._guard(lambda: self._provision_plan(account_ref))
 
-    def provision_apply(self, plan_id: str, *, account_ref: str) -> ControlOperation:
-        return self._guard(lambda: self._provision_apply(plan_id, account_ref))
+    def provision_apply(
+        self, plan_id: str, *, account_ref: str, plan_digest: str
+    ) -> ControlOperation:
+        return self._guard(lambda: self._provision_apply(plan_id, account_ref, plan_digest))
 
     def import_oauth_client(self, account_ref: str, source: Path) -> GoogleOAuthClientImportResult:
         try:
@@ -501,7 +505,10 @@ class GoogleAccountsController:
             projects=plan.projects,
         )
 
-    def _provision_apply(self, plan_id: str, account_ref: str) -> ControlOperation:
+    def _provision_apply(
+        self, plan_id: str, account_ref: str, expected_plan_digest: str
+    ) -> ControlOperation:
+        expected_plan_digest = validate_google_plan_digest(expected_plan_digest)
         self._require_mutation_allowed()
         account = self._account(account_ref)
         fetched = self._client.call(
@@ -516,6 +523,8 @@ class GoogleAccountsController:
         )
         if plan.id != plan_id:
             raise MasterjetClientError("control.response_invalid")
+        if plan.plan_digest != expected_plan_digest:
+            raise MasterjetClientError("control.plan_stale")
         idempotency_key = self._idempotency_key()
         _require_unexpired(plan.expires_at, self._clock, "control.plan_stale")
         result = self._client.call(
@@ -658,6 +667,12 @@ def _read_oauth_client_json(source: Path) -> bytearray:
     secret = bytearray(payload)
     del payload
     return secret
+
+
+def validate_google_plan_digest(value: object) -> str:
+    if type(value) is not str or _PLAN_DIGEST_RE.fullmatch(value) is None:
+        raise GoogleAccountsError("control.response_invalid")
+    return value
 
 
 def _require_plan(

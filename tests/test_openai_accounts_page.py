@@ -124,6 +124,97 @@ def test_stale_openai_page_disables_all_mutations() -> None:
     assert row.disable_enabled is False
 
 
+@pytest.mark.parametrize(
+    ("target", "field", "invalid"),
+    [
+        ("stale", "stale", 0),
+        ("remote", "enabled", 1),
+        ("local", "auth_sync_required", "false"),
+        ("local", "series-active", 1),
+    ],
+)
+def test_openai_projection_rejects_non_boolean_state(target, field, invalid) -> None:
+    model = _module().OpenAIAccountsModel()
+    local = _local_accounts()
+    remote = _masterjet_accounts()
+    stale = False
+    if target == "stale":
+        stale = invalid
+    elif target == "remote":
+        remote[0][field] = invalid
+    else:
+        local[0][field] = invalid
+
+    with pytest.raises(ValueError, match=field):
+        model.render(local, remote, stale=stale)
+
+
+def _page_buttons(module, widget):
+    result = []
+    if isinstance(widget, module.Gtk.Button):
+        result.append(widget)
+    if isinstance(widget, module.Gtk.Container):
+        for child in widget.get_children():
+            result.extend(_page_buttons(module, child))
+    return result
+
+
+def test_fresh_page_revokes_real_buttons_before_refresh_and_on_transport_failure() -> None:
+    module = _module()
+    calls = []
+
+    class Runner:
+        def submit(self, argv, *, stdin_data=None, callback=None):
+            calls.append(tuple(argv))
+
+    page = module.OpenAIAccountsPage(None, None, None)
+    page._actions = module.OpenAIActions(Runner(), executable="/opt/codex-usage")
+    page.render(_local_accounts(), _masterjet_accounts(), stale=False)
+    old_buttons = _page_buttons(module, page._body)
+    assert old_buttons and any(button.get_sensitive() for button in old_buttons)
+
+    page._refresh()
+
+    assert page.model.stale is True
+    assert page.model.rows == ()
+    assert page._body.get_children() == []
+    assert page._actions.projection_ready is False
+    page._reauth(old_buttons[0], "BW_Work")
+    page._sync_auth(old_buttons[-1], "BW_Work")
+    assert calls == [
+        ("/opt/codex-usage", "masterjet", "openai-accounts", "--json")
+    ]
+
+    page._loaded(module.CommandResult(False, {}, "control.transport_unavailable"))
+    assert page.model.stale is True
+    assert page._body.get_children() == []
+    assert page._actions.projection_ready is False
+
+
+def test_invalid_live_envelope_revokes_fresh_page_and_action_guard() -> None:
+    module = _module()
+    calls = []
+
+    class Runner:
+        def submit(self, argv, *, stdin_data=None, callback=None):
+            calls.append(tuple(argv))
+
+    page = module.OpenAIAccountsPage(None, None, None)
+    page._actions = module.OpenAIActions(Runner(), executable="/opt/codex-usage")
+    page.render(_local_accounts(), _masterjet_accounts(), stale=False)
+    assert page._actions.projection_ready is True
+
+    page._loaded(module.CommandResult(True, {"accounts": []}, "ok"))
+    page._reauth(None, "BW_Work")
+    page._sync_auth(None, "BW_Work")
+
+    assert page.model.stale is True
+    assert page.model.rows == ()
+    assert page._body.get_children() == []
+    assert page._actions.projection_ready is False
+    assert calls == []
+
+
 def test_openai_actions_use_only_bounded_own_cli_commands() -> None:
     calls = []
 
@@ -132,6 +223,7 @@ def test_openai_actions_use_only_bounded_own_cli_commands() -> None:
             calls.append((tuple(argv), stdin_data, callback))
 
     controller = _module().OpenAIActions(Runner(), executable="/opt/codex-usage")
+    controller.set_projection_ready(True)
     completed = object()
     controller.reauthenticate("BW_Work", callback=completed)
     controller.sync_auth("BW_Work", callback=completed)
@@ -179,6 +271,7 @@ def test_openai_actions_keep_interactive_and_control_runners_separate() -> None:
         reauth_runner=Runner(interactive_calls),
         executable="/opt/codex-usage",
     )
+    actions.set_projection_ready(True)
 
     actions.reauthenticate("BW_Work")
     actions.sync_auth("BW_Work")
@@ -212,7 +305,9 @@ def test_reauthentication_command_uses_real_json_cli_contract(
         def submit(self, argv, *, stdin_data=None, callback=None):
             commands.append(tuple(argv))
 
-    _module().OpenAIActions(Runner(), executable="/opt/codex-usage").reauthenticate("work")
+    actions = _module().OpenAIActions(Runner(), executable="/opt/codex-usage")
+    actions.set_projection_ready(True)
+    actions.reauthenticate("work")
     config_path = tmp_path / "config.toml"
     save_config(
         AppConfig(
@@ -446,6 +541,31 @@ def test_openai_live_projection_refresh_uses_complete_bounded_command() -> None:
 
     assert calls == [
         (("/opt/codex-usage", "masterjet", "openai-accounts", "--json"), None, callback)
+    ]
+    assert actions.projection_ready is False
+
+
+def test_openai_action_guard_checks_current_projection_before_mutation_argv() -> None:
+    calls = []
+
+    class Runner:
+        def submit(self, argv, *, stdin_data=None, callback=None):
+            calls.append(tuple(argv))
+
+    module = _module()
+    actions = module.OpenAIActions(Runner(), executable="/opt/codex-usage")
+    with pytest.raises(RuntimeError, match="STALE"):
+        actions.reauthenticate("BW_Work")
+    with pytest.raises(RuntimeError, match="STALE"):
+        actions.sync_auth("BW_Work")
+
+    actions.set_projection_ready(True)
+    actions.refresh()
+    with pytest.raises(RuntimeError, match="STALE"):
+        actions.reauthenticate("BW_Work")
+
+    assert calls == [
+        ("/opt/codex-usage", "masterjet", "openai-accounts", "--json")
     ]
 
 

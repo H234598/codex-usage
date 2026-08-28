@@ -25,11 +25,7 @@ class DynamicSeriesList(List, JSONSettingsBackend):
     _MAX_MASTERJET_OUTPUT = 128 * 1024
     _MAX_SERIES = 256
     _MASTERJET_TIMEOUT_SECONDS = 2.0
-    _MASTERJET_CACHE_SECONDS = 30.0
     _SERIES_PREFIX_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,15}")
-    _masterjet_cache = None
-    _masterjet_cache_at = 0.0
-    _masterjet_cache_key = None
 
     def __init__(self, info, key, settings):
         self.backend = "json"
@@ -85,12 +81,14 @@ class DynamicSeriesList(List, JSONSettingsBackend):
 
     def list_changed(self, *args):
         """Persist edited rows without wedging callbacks after a write error."""
+        self._masterjet_series()
+        if not self._masterjet_projection_ready:
+            self.on_setting_changed()
+            self.update_button_sensitivity()
+            return
         data = []
         for row in self.model:
-            row_info = {
-                column["id"]: row[index]
-                for index, column in enumerate(self.columns)
-            }
+            row_info = {column["id"]: row[index] for index, column in enumerate(self.columns)}
             data.append(row_info)
         try:
             self.set_value(data)
@@ -123,21 +121,13 @@ class DynamicSeriesList(List, JSONSettingsBackend):
             return
 
     def _masterjet_series(self):
-        now = time.monotonic()
+        self._masterjet_projection_ready = False
         argv = [
             str(Path.home() / ".local/bin/codex-usage"),
             "masterjet",
             "openai-routing-options",
             "--json",
         ]
-        cache_key = tuple(argv)
-        if (
-            self._masterjet_cache is not None
-            and now - self._masterjet_cache_at < self._MASTERJET_CACHE_SECONDS
-            and self.__class__._masterjet_cache_key == cache_key
-        ):
-            return self._masterjet_cache
-
         result = []
         process = None
         output = bytearray()
@@ -170,7 +160,14 @@ class DynamicSeriesList(List, JSONSettingsBackend):
             if process.wait(timeout=max(0.1, deadline - time.monotonic())) != 0:
                 raise RuntimeError("Masterjet-Serienabfrage fehlgeschlagen")
             payload = json.loads(output.decode("utf-8"))
-            raw_series = payload.get("series") if isinstance(payload, dict) else None
+            if (
+                not isinstance(payload, dict)
+                or set(payload) != {"series", "stale"}
+                or type(payload["stale"]) is not bool
+                or payload["stale"]
+            ):
+                raise ValueError("ungültige oder stale Masterjet-Serienantwort")
+            raw_series = payload["series"]
             if not isinstance(raw_series, list) or len(raw_series) > self._MAX_SERIES:
                 raise ValueError("ungültige Masterjet-Serienantwort")
             for item in raw_series:
@@ -182,6 +179,7 @@ class DynamicSeriesList(List, JSONSettingsBackend):
                 if isinstance(prefix, str) and self._SERIES_PREFIX_RE.fullmatch(prefix):
                     result.append(prefix.upper())
             result = tuple(sorted(set(result)))
+            self._masterjet_projection_ready = True
         except (
             OSError,
             UnicodeError,
@@ -215,9 +213,6 @@ class DynamicSeriesList(List, JSONSettingsBackend):
                         process.wait(timeout=0.5)
                     except (OSError, subprocess.TimeoutExpired):
                         pass
-        self.__class__._masterjet_cache = result
-        self.__class__._masterjet_cache_at = now
-        self.__class__._masterjet_cache_key = cache_key
         return result
 
     def _active_owners(self):
@@ -288,8 +283,10 @@ class DynamicSeriesList(List, JSONSettingsBackend):
                 options[series] = series
         # Preserve an existing legacy/current assignment (notably A) for its owner,
         # but do not expose it to any other account.
-        if current and current not in options and (
-            owners.get(current) in (None, account) or current_owned_by_account
+        if (
+            current
+            and current not in options
+            and (owners.get(current) in (None, account) or current_owned_by_account)
         ):
             options.setdefault(current + " (aktuell)", current)
         return options
@@ -301,6 +298,8 @@ class DynamicSeriesList(List, JSONSettingsBackend):
             if column.get("id") == self._SERIES_COLUMN:
                 column["options"] = self._series_options_for(info)
                 break
+        if not getattr(self, "_masterjet_projection_ready", False):
+            return None
         self.columns = columns
         try:
             try:

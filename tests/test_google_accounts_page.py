@@ -236,6 +236,7 @@ def test_incomplete_projection_revokes_all_mutations_without_argv(tmp_path) -> N
             "account_ref": "google-one",
             "plan_id": "plan-one",
             "expected_generation": 4,
+            "plan_digest": "sha256:" + "a" * 64,
             "expires_at": "2026-08-28T18:00:00Z",
             "step_count": 1,
             "projects": [{"project_name": "Amber Meadow", "key_name": "Quiet River"}],
@@ -297,6 +298,7 @@ def test_plan_preview_shows_every_name_and_step_count() -> None:
             "account_ref": "google-one",
             "plan_id": "plan-one",
             "expected_generation": 4,
+            "plan_digest": "sha256:" + "a" * 64,
             "expires_at": "2026-08-28T18:00:00Z",
             "step_count": 5,
             "projects": [
@@ -307,6 +309,7 @@ def test_plan_preview_shows_every_name_and_step_count() -> None:
     )
 
     assert preview.step_count == 5
+    assert preview.plan_digest == "sha256:" + "a" * 64
     assert preview.names == (
         ("Amber Meadow", "Quiet River"),
         ("Velvet Orchard", "Silver Fern"),
@@ -320,6 +323,7 @@ def test_apply_runs_only_after_visible_confirmation() -> None:
             "account_ref": "google-one",
             "plan_id": "plan-one",
             "expected_generation": 4,
+            "plan_digest": "sha256:" + "a" * 64,
             "expires_at": "2026-08-28T18:00:00Z",
             "step_count": 1,
             "projects": [{"project_name": "Amber Meadow", "key_name": "Quiet River"}],
@@ -351,6 +355,8 @@ def test_apply_runs_only_after_visible_confirmation() -> None:
                 "provision-apply",
                 "google-one",
                 "plan-one",
+                "--plan-digest",
+                "sha256:" + "a" * 64,
                 "--confirm",
                 "--json",
             ),
@@ -367,6 +373,7 @@ def test_apply_stale_race_is_rejected_after_confirmation() -> None:
             "account_ref": "google-one",
             "plan_id": "plan-one",
             "expected_generation": 4,
+            "plan_digest": "sha256:" + "a" * 64,
             "expires_at": "2026-08-28T18:00:00Z",
             "step_count": 1,
             "projects": [{"project_name": "Amber Meadow", "key_name": "Quiet River"}],
@@ -389,6 +396,30 @@ def test_apply_stale_race_is_rejected_after_confirmation() -> None:
 
     assert actions.apply(preview) is False
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    "payload_change",
+    [
+        lambda payload: payload.pop("plan_digest"),
+        lambda payload: payload.__setitem__("plan_digest", "sha256:not-a-digest"),
+    ],
+    ids=["missing", "invalid"],
+)
+def test_plan_preview_requires_valid_digest(payload_change) -> None:
+    payload = {
+        "account_ref": "google-one",
+        "plan_id": "plan-one",
+        "expected_generation": 4,
+        "plan_digest": "sha256:" + "a" * 64,
+        "expires_at": "2026-08-28T18:00:00Z",
+        "step_count": 1,
+        "projects": [{"project_name": "Amber Meadow", "key_name": "Quiet River"}],
+    }
+    payload_change(payload)
+
+    with pytest.raises(ValueError, match=r"digest|incomplete|Google plan fields"):
+        _module().GoogleAccountsModel().preview_plan(payload)
 
 
 def test_oauth_filechooser_passes_only_path_to_private_cli_opening(tmp_path) -> None:

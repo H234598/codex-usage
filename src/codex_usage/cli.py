@@ -64,6 +64,7 @@ from .google_accounts import (
     GoogleAccountDetails,
     GoogleAccountsController,
     GoogleAccountsError,
+    validate_google_plan_digest,
 )
 from .health import clear_health, load_health, record_health_event
 from .history import HistoryStore
@@ -190,7 +191,7 @@ Masterjet und Google:
   codex-usage google oauth-begin ACCOUNT --browser BROWSER --json
   codex-usage google inventory-refresh ACCOUNT --json
   codex-usage google provision-plan ACCOUNT --json
-  codex-usage google provision-apply ACCOUNT PLAN_ID --confirm --json
+  codex-usage google provision-apply ACCOUNT PLAN_ID --plan-digest DIGEST --confirm --json
 
 Abruf und Ueberwachung:
   codex-usage once [--account ACCOUNT] [--format table|json] [--headed]
@@ -539,6 +540,7 @@ def _build_parser() -> argparse.ArgumentParser:
     google_apply = google_sub.add_parser("provision-apply", help="Provisionierungsplan anwenden")
     google_apply.add_argument("account")
     google_apply.add_argument("plan_id")
+    google_apply.add_argument("--plan-digest")
     google_apply.add_argument("--confirm", action="store_true")
     google_apply.add_argument("--json", action="store_true")
     google_apply.set_defaults(func=_cmd_google_provision_apply)
@@ -1691,6 +1693,7 @@ def _cmd_masterjet_openai_accounts(args: argparse.Namespace) -> int:
 def _cmd_masterjet_openai_routing_options(args: argparse.Namespace) -> int:
     try:
         config = load_config(args.config)
+        stale = False
         try:
             accounts = MasterjetControlClient(config.masterjet).call("openai.accounts.list", {})
         except MasterjetClientError as live_error:
@@ -1701,6 +1704,7 @@ def _cmd_masterjet_openai_routing_options(args: argparse.Namespace) -> int:
             if cached.stale:
                 raise MasterjetClientError("control.cache_unavailable") from None
             accounts = cached.snapshot.openai_accounts
+            stale = True
         if type(accounts) is not tuple or any(
             type(account) is not OpenAIControlAccount for account in accounts
         ):
@@ -1731,7 +1735,7 @@ def _cmd_masterjet_openai_routing_options(args: argparse.Namespace) -> int:
             )
         )
         return 2
-    print(json.dumps({"series": series}, ensure_ascii=False, allow_nan=False))
+    print(json.dumps({"stale": stale, "series": series}, ensure_ascii=False, allow_nan=False))
     return 0
 
 
@@ -1830,8 +1834,9 @@ def _cmd_google_provision_apply(args: argparse.Namespace) -> int:
             json_output=args.json,
         )
     try:
+        plan_digest = validate_google_plan_digest(args.plan_digest)
         operation = _new_google_controller(args.config).provision_apply(
-            args.plan_id, account_ref=args.account
+            args.plan_id, account_ref=args.account, plan_digest=plan_digest
         )
     except Exception as exc:
         return _print_google_error(exc, json_output=args.json)

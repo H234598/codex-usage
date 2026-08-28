@@ -198,6 +198,7 @@ def test_masterjet_series_uses_only_codex_usage_control_cli(
     process = _Process()
     chunks = iter([
         json.dumps({
+            "stale": False,
             "series": [
                 {"prefix": "a", "enabled": True, "provider": "openai_chatgpt"}
             ]
@@ -224,6 +225,7 @@ def test_masterjet_series_uses_only_codex_usage_control_cli(
 
     series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
     assert DynamicSeriesList._masterjet_series(series_widget) == ("A",)
+    assert series_widget._masterjet_projection_ready is True
     assert captured["argv"] == [
         str(tmp_path / ".local/bin/codex-usage"),
         "masterjet",
@@ -233,13 +235,15 @@ def test_masterjet_series_uses_only_codex_usage_control_cli(
     assert all("codex-master-mcp" not in argument for argument in captured["argv"])
 
 
-def test_masterjet_series_filters_provider_state_and_caches_result(tmp_path, monkeypatch) -> None:
+def test_masterjet_series_rechecks_projection_instead_of_offering_cached_routing(
+    tmp_path, monkeypatch
+) -> None:
     command = tmp_path / ".local/bin/codex-usage"
     command.parent.mkdir(parents=True)
     command.write_text(
         "#!/usr/bin/env python3\n"
         "import json\n"
-        "print(json.dumps({'series': ["
+        "print(json.dumps({'stale': False, 'series': ["
         "{'prefix': 'a', 'enabled': True, 'provider': 'openai_chatgpt'},"
         "{'prefix': 'b', 'enabled': False, 'provider': 'openai_chatgpt'},"
         "{'prefix': 'g', 'enabled': True, 'provider': 'gemini'},"
@@ -256,9 +260,10 @@ def test_masterjet_series_filters_provider_state_and_caches_result(tmp_path, mon
     series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
     assert DynamicSeriesList._masterjet_series(series_widget) == ("A",)
 
-    # A second call must use the bounded cache rather than executing again.
+    # Routing mutation must recheck current projection instead of trusting cache.
     command.write_text("raise SystemExit(7)\n", encoding="utf-8")
-    assert DynamicSeriesList._masterjet_series(series_widget) == ("A",)
+    assert DynamicSeriesList._masterjet_series(series_widget) == ()
+    assert series_widget._masterjet_projection_ready is False
 
     DynamicSeriesList._masterjet_cache = None
     DynamicSeriesList._masterjet_cache_at = 0.0
@@ -270,7 +275,7 @@ def test_masterjet_series_keeps_ascii_hyphen_and_underscore_prefixes(tmp_path, m
     command.write_text(
         "#!/usr/bin/env python3\n"
         "import json\n"
-        "print(json.dumps({'series': ["
+        "print(json.dumps({'stale': False, 'series': ["
         "{'prefix': 'q-inplace', 'enabled': True, 'provider': 'openai_chatgpt'},"
         "{'prefix': 'a_b', 'enabled': True, 'provider': 'openai_chatgpt'},"
         "{'prefix': '9bad', 'enabled': True, 'provider': 'openai_chatgpt'},"
@@ -288,6 +293,64 @@ def test_masterjet_series_keeps_ascii_hyphen_and_underscore_prefixes(tmp_path, m
 
     DynamicSeriesList._masterjet_cache = None
     DynamicSeriesList._masterjet_cache_at = 0.0
+
+
+def test_stale_routing_projection_is_not_offered_or_editable(tmp_path, monkeypatch) -> None:
+    command = tmp_path / ".local/bin/codex-usage"
+    command.parent.mkdir(parents=True)
+    command.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "print(json.dumps({'stale': True, 'series': ["
+        "{'prefix': 'a', 'enabled': True, 'provider': 'openai_chatgpt'}]}))\n",
+        encoding="utf-8",
+    )
+    command.chmod(0o700)
+    monkeypatch.setattr("dynamic_series_list.Path.home", lambda: tmp_path)
+    series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
+
+    assert DynamicSeriesList._masterjet_series(series_widget) == ()
+    assert series_widget._masterjet_projection_ready is False
+
+    series_widget.columns = [
+        {"id": "account"},
+        {"id": "series"},
+        {"id": "series-active"},
+    ]
+    series_widget.model = [["alpha", "A", True]]
+    series_widget._series_column_index = 1
+    series_widget._active_column_index = 2
+    monkeypatch.setattr(
+        "dynamic_series_list.List.open_add_edit_dialog",
+        lambda *_args: "mutation-dialog-opened",
+    )
+
+    assert DynamicSeriesList.open_add_edit_dialog(series_widget, series_widget.model[0]) is None
+
+
+def test_stale_routing_projection_cannot_persist_series_active_change() -> None:
+    writes = []
+    reloads = []
+    widget = DynamicSeriesList.__new__(DynamicSeriesList)
+    widget.model = [["alpha", "A", True]]
+    widget.columns = [
+        {"id": "account"},
+        {"id": "series"},
+        {"id": "series-active"},
+    ]
+    widget.set_value = lambda value: writes.append(value)
+    widget.update_button_sensitivity = lambda: None
+    widget.on_setting_changed = lambda: reloads.append("reloaded")
+
+    def stale_projection():
+        widget._masterjet_projection_ready = False
+        return ()
+
+    widget._masterjet_series = stale_projection
+    DynamicSeriesList.list_changed(widget)
+
+    assert writes == []
+    assert reloads == ["reloaded"]
 
 
 def test_masterjet_series_fails_closed_when_child_closes_stdout_but_hangs(
@@ -529,7 +592,7 @@ def test_settings_read_error_keeps_series_table_open() -> None:
             widget.destroy()
 
 
-def test_settings_write_error_resets_saving_and_keeps_listener_active() -> None:
+def test_settings_write_error_resets_saving_and_keeps_listener_active(monkeypatch) -> None:
     settings = _WriteErrorSettings()
     settings.values["account-series-settings"] = [{
         "account": "alpha",
@@ -547,6 +610,11 @@ def test_settings_write_error_resets_saving_and_keeps_listener_active() -> None:
         },
         "account-series-settings",
         settings,
+    )
+    monkeypatch.setattr(
+        DynamicSeriesList,
+        "_masterjet_series",
+        lambda self: setattr(self, "_masterjet_projection_ready", True) or ("A",),
     )
 
     try:
@@ -639,6 +707,7 @@ def test_open_dialog_filters_series_column_and_restores_schema(monkeypatch) -> N
     ]
     widget.columns = original_columns
     widget._series_options_for = lambda _info: {"Keine Serie": "", "A": "A"}
+    widget._masterjet_projection_ready = True
     captured = []
 
     def fake_open_add_edit_dialog(self, info=None):

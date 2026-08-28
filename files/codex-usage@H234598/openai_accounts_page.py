@@ -83,6 +83,12 @@ def _code(value: object, field: str) -> str:
     return result
 
 
+def _boolean(value: object, field: str) -> bool:
+    if type(value) is not bool:
+        raise ValueError(f"invalid {field}")
+    return value
+
+
 def _mapping(value: object, fields: frozenset[str], label: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping) or not set(value).issubset(fields):
         raise ValueError(f"private or invalid {label} fields")
@@ -115,7 +121,7 @@ class OpenAIAccountsModel:
 
     def __init__(self) -> None:
         self._rows: tuple[OpenAIAccountRow, ...] = ()
-        self.stale = False
+        self.stale = True
 
     @property
     def rows(self) -> tuple[OpenAIAccountRow, ...]:
@@ -134,6 +140,7 @@ class OpenAIAccountsModel:
         *,
         stale: bool = False,
     ) -> None:
+        stale = _boolean(stale, "stale")
         remote_by_profile: dict[str, Mapping[str, object]] = {}
         for value in masterjet_accounts:
             remote_row = _mapping(value, _OPENAI_REMOTE_FIELDS, "OpenAI projection")
@@ -155,7 +162,8 @@ class OpenAIAccountsModel:
             seen.add(account_ref)
             remote = remote_by_profile.get(account_ref)
             local_state = _code(local.get("local_auth_state", "unknown"), "local_auth_state")
-            sync_required = local.get("auth_sync_required", False) is True
+            sync_required = _boolean(local.get("auth_sync_required", False), "auth_sync_required")
+            series_active = _boolean(local.get("series-active", False), "series-active")
             if remote is None:
                 vault_state = "unavailable"
                 expires_at = None
@@ -175,7 +183,7 @@ class OpenAIAccountsModel:
                     raise ValueError("invalid credential_generation")
                 generation = raw_generation
                 usage_state = _code(remote["usage_state"], "usage_state")
-                remote_enabled = remote["enabled"] is True
+                remote_enabled = _boolean(remote["enabled"], "enabled")
             rows.append(
                 OpenAIAccountRow(
                     account_ref=account_ref,
@@ -185,7 +193,7 @@ class OpenAIAccountsModel:
                     access_expires_at=expires_at,
                     credential_generation=generation,
                     usage_state=usage_state,
-                    hive_active=local.get("series-active") is True and remote_enabled,
+                    hive_active=series_active and remote_enabled,
                     reauth_enabled=mutations_enabled,
                     auth_sync_enabled=mutations_enabled
                     and (sync_required or vault_state not in {"current", "synced"}),
@@ -193,7 +201,11 @@ class OpenAIAccountsModel:
                 )
             )
         self._rows = tuple(rows)
-        self.stale = bool(stale)
+        self.stale = stale
+
+    def fail_closed(self) -> None:
+        self._rows = ()
+        self.stale = True
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(rows={self._rows!r}, stale={self.stale!r})"
@@ -401,7 +413,7 @@ def default_masterjet_socket(
 
 
 class OpenAIActions:
-    __slots__ = ("_executable", "_reauth_runner", "_runner")
+    __slots__ = ("_executable", "_projection_ready", "_reauth_runner", "_runner")
 
     def __init__(
         self,
@@ -413,19 +425,34 @@ class OpenAIActions:
         self._runner = runner
         self._reauth_runner = reauth_runner or runner
         self._executable = executable or str(Path.home() / ".local/bin/codex-usage")
+        self._projection_ready = False
+
+    @property
+    def projection_ready(self) -> bool:
+        return self._projection_ready
+
+    def set_projection_ready(self, ready: bool) -> None:
+        self._projection_ready = _boolean(ready, "projection_ready")
+
+    def _require_projection(self) -> None:
+        if not self._projection_ready:
+            raise RuntimeError("STALE")
 
     def refresh(self, *, callback=None) -> None:
+        self._projection_ready = False
         self._runner.submit(
             [self._executable, "masterjet", "openai-accounts", "--json"],
             callback=callback,
         )
 
     def reauthenticate(self, account_ref: str, *, callback=None) -> None:
+        account = _text(account_ref, "account")
+        self._require_projection()
         self._reauth_runner.submit(
             [
                 self._executable,
                 "reactivate",
-                _text(account_ref, "account"),
+                account,
                 "--format",
                 "json",
             ],
@@ -433,12 +460,14 @@ class OpenAIActions:
         )
 
     def sync_auth(self, account_ref: str, *, callback=None) -> None:
+        account = _text(account_ref, "account")
+        self._require_projection()
         self._runner.submit(
             [
                 self._executable,
                 "account",
                 "auth-sync",
-                _text(account_ref, "account"),
+                account,
                 "--format",
                 "json",
             ],
@@ -626,19 +655,25 @@ class OpenAIAccountsPage(SettingsWidget):
         self.show_all()
 
     def _refresh(self, *_args) -> None:
+        self._revoke_projection()
         self._status.set_text("OpenAI-Control wird geladen …")
         self._actions.refresh(callback=self._loaded)
 
+    def _revoke_projection(self) -> None:
+        self.model.fail_closed()
+        self._actions.set_projection_ready(False)
+        for child in self._body.get_children():
+            self._body.remove(child)
+            child.destroy()
+
     def _loaded(self, result: CommandResult) -> bool:
         if not result.ok or not isinstance(result.payload, Mapping):
-            self.model._rows = ()
-            self.model.stale = True
+            self._revoke_projection()
             self._status.set_text(f"STALE · {result.code} · Mutationen gesperrt")
             return False
         payload = result.payload
         if set(payload) != {"local_accounts", "accounts", "stale"}:
-            self.model._rows = ()
-            self.model.stale = True
+            self._revoke_projection()
             self._status.set_text("Ungültige Control-Antwort · Mutationen gesperrt")
             return False
         try:
@@ -648,8 +683,7 @@ class OpenAIAccountsPage(SettingsWidget):
                 stale=payload["stale"],
             )
         except (TypeError, ValueError):
-            self.model._rows = ()
-            self.model.stale = True
+            self._revoke_projection()
             self._status.set_text("Ungültige Control-Antwort · Mutationen gesperrt")
             return False
         self._status.set_text("STALE · Mutationen gesperrt" if self.model.stale else "Aktuell")
@@ -657,6 +691,7 @@ class OpenAIAccountsPage(SettingsWidget):
 
     def render(self, local_accounts, masterjet_accounts, *, stale=False) -> None:
         self.model.render(local_accounts, masterjet_accounts, stale=stale)
+        self._actions.set_projection_ready(not self.model.stale)
         for child in self._body.get_children():
             self._body.remove(child)
             child.destroy()
@@ -690,11 +725,17 @@ class OpenAIAccountsPage(SettingsWidget):
 
     def _reauth(self, _button, account_ref: str) -> None:
         self._status.set_text("Re-Auth läuft …")
-        self._actions.reauthenticate(account_ref, callback=self._operation_finished)
+        try:
+            self._actions.reauthenticate(account_ref, callback=self._operation_finished)
+        except RuntimeError:
+            self._status.set_text("STALE · Mutationen gesperrt")
 
     def _sync_auth(self, _button, account_ref: str) -> None:
         self._status.set_text("Auth-Sync läuft …")
-        self._actions.sync_auth(account_ref, callback=self._operation_finished)
+        try:
+            self._actions.sync_auth(account_ref, callback=self._operation_finished)
+        except RuntimeError:
+            self._status.set_text("STALE · Mutationen gesperrt")
 
     def _operation_finished(self, result: CommandResult) -> bool:
         self._status.set_text("Operation abgeschlossen" if result.ok else f"Fehler: {result.code}")

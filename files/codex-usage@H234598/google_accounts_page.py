@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,6 +65,7 @@ _SECRET_FIELD_PARTS = (
     "project_id",
     "provider_id",
 )
+_PLAN_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def _text(value: object, field: str, *, maximum: int = 256) -> str:
@@ -134,6 +136,7 @@ class GooglePlanPreview:
     account_ref: str
     plan_id: str
     expected_generation: int
+    plan_digest: str
     expires_at: str
     step_count: int
     names: tuple[tuple[str, str], ...]
@@ -251,12 +254,11 @@ class GoogleAccountsModel:
         return tuple(result)
 
     def preview_plan(self, payload: object) -> GooglePlanPreview:
-        if not isinstance(payload, Mapping) or not set(payload).issubset(_PLAN_FIELDS):
-            raise ValueError("private or invalid Google plan fields")
-        required = _PLAN_FIELDS - {"plan_digest"}
-        if not required.issubset(payload):
-            raise ValueError("incomplete Google plan preview")
-        values = payload["projects"]
+        plan = _mapping(payload, _PLAN_FIELDS, "Google plan")
+        digest = plan["plan_digest"]
+        if type(digest) is not str or _PLAN_DIGEST_RE.fullmatch(digest) is None:
+            raise ValueError("invalid plan_digest")
+        values = plan["projects"]
         if not isinstance(values, list) or len(values) > 256:
             raise ValueError("private or invalid Google plan projects")
         names = []
@@ -268,14 +270,15 @@ class GoogleAccountsModel:
                     _text(project["key_name"], "key_name"),
                 )
             )
-        step_count = _count(payload["step_count"], "step_count")
+        step_count = _count(plan["step_count"], "step_count")
         if step_count < len(names):
             raise ValueError("invalid Google plan step_count")
         return GooglePlanPreview(
-            account_ref=_text(payload["account_ref"], "account_ref"),
-            plan_id=_text(payload["plan_id"], "plan_id"),
-            expected_generation=_count(payload["expected_generation"], "expected_generation"),
-            expires_at=_text(payload["expires_at"], "expires_at", maximum=64),
+            account_ref=_text(plan["account_ref"], "account_ref"),
+            plan_id=_text(plan["plan_id"], "plan_id"),
+            expected_generation=_count(plan["expected_generation"], "expected_generation"),
+            plan_digest=digest,
+            expires_at=_text(plan["expires_at"], "expires_at", maximum=64),
             step_count=step_count,
             names=tuple(names),
         )
@@ -374,6 +377,8 @@ class GoogleActions:
                 "provision-apply",
                 preview.account_ref,
                 preview.plan_id,
+                "--plan-digest",
+                preview.plan_digest,
                 "--confirm",
                 "--json",
             ],
@@ -569,7 +574,7 @@ class GoogleAccountsPage(SettingsWidget):
             buttons=Gtk.ButtonsType.OK_CANCEL,
             text=f"{preview.step_count} Schritte anwenden?",
         )
-        dialog.format_secondary_text(names)
+        dialog.format_secondary_text(f"Digest: {preview.plan_digest}\n{names}")
         try:
             return dialog.run() == Gtk.ResponseType.OK
         finally:

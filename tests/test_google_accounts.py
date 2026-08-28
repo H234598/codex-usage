@@ -750,7 +750,9 @@ def test_provision_apply_reloads_plan_and_rejects_wrong_account_before_apply() -
     restarted = controller(client)
 
     with pytest.raises(GoogleAccountsError, match=r"control\.plan_stale"):
-        restarted.provision_apply(plan.plan_id, account_ref="google-two")
+        restarted.provision_apply(
+            plan.plan_id, account_ref="google-two", plan_digest=plan.plan_digest
+        )
 
     assert [call[0] for call in client.calls].count("operations.get") == 1
     assert not any(call[0] == "google.provision.apply" for call in client.calls)
@@ -760,7 +762,9 @@ def test_provision_apply_reloads_and_binds_digest_after_restart() -> None:
     client = FakeControlClient()
     plan = controller(client).provision_plan("google-one")
 
-    applied = controller(client).provision_apply(plan.plan_id, account_ref="google-one")
+    applied = controller(client).provision_apply(
+        plan.plan_id, account_ref="google-one", plan_digest=plan.plan_digest
+    )
 
     assert applied.plan_digest == plan.plan_digest
     assert [call[0] for call in client.calls][-3:] == [
@@ -781,7 +785,9 @@ def test_expired_reloaded_plan_never_reaches_apply() -> None:
     client.stored_plan = provision_plan(expires_at=NOW - timedelta(seconds=1))
 
     with pytest.raises(GoogleAccountsError, match=r"control\.plan_stale"):
-        controller(client).provision_apply("plan-1", account_ref="google-one")
+        controller(client).provision_apply(
+            "plan-1", account_ref="google-one", plan_digest=DIGEST
+        )
 
     assert not any(call[0] == "google.provision.apply" for call in client.calls)
 
@@ -957,7 +963,20 @@ def test_plan_expiry_is_rechecked_after_idempotency_key_before_apply() -> None:
     )
 
     with pytest.raises(GoogleAccountsError, match=r"control\.plan_stale"):
-        subject.provision_apply("plan-1", account_ref="google-one")
+        subject.provision_apply("plan-1", account_ref="google-one", plan_digest=DIGEST)
+
+    assert not any(call[0] == "google.provision.apply" for call in client.calls)
+
+
+def test_provision_apply_rejects_preview_digest_mismatch_before_apply() -> None:
+    client = FakeControlClient()
+
+    with pytest.raises(GoogleAccountsError, match=r"control\.plan_stale"):
+        controller(client).provision_apply(
+            "plan-1",
+            account_ref="google-one",
+            plan_digest="sha256:" + "b" * 64,
+        )
 
     assert not any(call[0] == "google.provision.apply" for call in client.calls)
 

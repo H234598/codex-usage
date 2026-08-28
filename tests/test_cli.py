@@ -1431,8 +1431,8 @@ def test_google_cli_fixed_commands_forward_only_redacted_values(monkeypatch, cap
                 ),
             )
 
-        def provision_apply(self, plan_id, *, account_ref):
-            calls.append(("apply", account_ref, plan_id))
+        def provision_apply(self, plan_id, *, account_ref, plan_digest):
+            calls.append(("apply", account_ref, plan_id, plan_digest))
             return SimpleNamespace(
                 id="apply-1",
                 kind="google.provision.apply",
@@ -1472,6 +1472,8 @@ def test_google_cli_fixed_commands_forward_only_redacted_values(monkeypatch, cap
                 "provision-apply",
                 "google-one",
                 "plan-1",
+                "--plan-digest",
+                "sha256:" + "a" * 64,
                 "--confirm",
                 "--json",
             ]
@@ -1484,11 +1486,37 @@ def test_google_cli_fixed_commands_forward_only_redacted_values(monkeypatch, cap
         ("oauth_begin", "google-one", "firefox"),
         ("inventory", "google-one"),
         ("plan", "google-one"),
-        ("apply", "google-one", "plan-1"),
+        ("apply", "google-one", "plan-1", "sha256:" + "a" * 64),
     ]
     output = capsys.readouterr().out
     assert "access_token" not in output
     assert "client_secret" not in output
+
+
+def test_google_provision_apply_missing_digest_fails_before_controller(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "_new_google_controller",
+        lambda _path: (_ for _ in ()).throw(AssertionError("controller started")),
+    )
+
+    assert main(
+        [
+            "google",
+            "provision-apply",
+            "google-one",
+            "plan-1",
+            "--confirm",
+            "--json",
+        ]
+    ) == 2
+
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "code": "control.response_invalid",
+    }
 
 
 def test_google_add_keeps_oauth_client_path_local(monkeypatch, tmp_path, capsys):
@@ -1779,6 +1807,7 @@ def test_masterjet_openai_routing_options_uses_control_client(monkeypatch, capsy
     assert main(["masterjet", "openai-routing-options", "--json"]) == 0
     assert calls == [("openai.accounts.list", {})]
     assert json.loads(capsys.readouterr().out) == {
+        "stale": False,
         "series": [
             {"prefix": "A", "enabled": True, "provider": "openai_chatgpt"}
         ]
@@ -1836,6 +1865,7 @@ def test_masterjet_openai_routing_options_uses_fresh_control_cache_on_outage(
 
     assert main(["masterjet", "openai-routing-options", "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == {
+        "stale": True,
         "series": [
             {"prefix": "A", "enabled": True, "provider": "openai_chatgpt"}
         ]
