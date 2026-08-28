@@ -58,6 +58,8 @@ from .direct import (
 from .health import clear_health, load_health, record_health_event
 from .history import HistoryStore
 from .json_utils import loads_strict
+from .masterjet_auth_sync import AuthSyncError, sync_account_auth
+from .masterjet_client import MasterjetControlClient
 from .models import AccountStatus, AccountUsage
 from .private_io import (
     assert_no_symlink_ancestors,
@@ -139,6 +141,7 @@ Accounts:
                                    [--series-active|--no-series-active]
                                    [--backend direct|app-server] [--format table|json]
   codex-usage account backend ACCOUNT direct|app-server [--format table|json]
+  codex-usage account auth-sync ACCOUNT [--format table|json]
   codex-usage account overview [--format table|json] [--config-only]
   codex-usage account delete ACCOUNT [--delete-profile] [--force-delete-profile]
                                       [--format table|json]
@@ -370,6 +373,13 @@ def _build_parser() -> argparse.ArgumentParser:
     backend.add_argument("backend", choices=SUPPORTED_BACKENDS)
     backend.add_argument("--format", choices=("table", "json"), default="table")
     backend.set_defaults(func=_cmd_account_backend)
+    auth_sync = account_sub.add_parser(
+        "auth-sync",
+        help="Kanonische OpenAI-auth.json explizit mit Masterjet synchronisieren",
+    )
+    auth_sync.add_argument("account", help="Account-ID oder eindeutiges Label")
+    auth_sync.add_argument("--format", choices=("table", "json"), default="table")
+    auth_sync.set_defaults(func=_cmd_account_auth_sync)
     delete = account_sub.add_parser("delete", help="Account aus der Config entfernen")
     delete.add_argument("account", help="Account-ID oder eindeutiges Label")
     delete.add_argument(
@@ -1389,6 +1399,30 @@ def _parse_history_datetime(value: str, label: str) -> datetime:
 def _cmd_login(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     login_account(resolve_account(config, args.account), config)
+    print("Vaultprojektion: sync_required")
+    return 0
+
+
+def _cmd_account_auth_sync(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    account = resolve_account(config, args.account)
+    client = MasterjetControlClient(config.masterjet)
+    try:
+        result = sync_account_auth(account, client)
+    except AuthSyncError as exc:
+        print(f"Fehler: {exc.code}", file=sys.stderr)
+        return 2
+    projection = {
+        "account_ref": result.account_ref,
+        "generation": result.generation,
+        "status": result.status,
+    }
+    if args.format == "json":
+        print(json.dumps(projection, ensure_ascii=False, indent=2, allow_nan=False))
+    else:
+        print(f"Account: {result.account_ref}")
+        print(f"Generation: {result.generation}")
+        print(f"Status: {result.status}")
     return 0
 
 
@@ -1396,7 +1430,9 @@ def _cmd_reactivate(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     account = resolve_account(config, args.account)
     try:
-        result = reactivate_account(account, browser=args.browser)
+        result = dict(reactivate_account(account, browser=args.browser))
+        if result.get("ok") is True:
+            result["vault_projection_state"] = "sync_required"
     except ReactivationError as exc:
         result = {
             "ok": False,
@@ -1410,6 +1446,7 @@ def _cmd_reactivate(args: argparse.Namespace) -> int:
     elif result["ok"]:
         print(f"Account reaktiviert: {account.id} ({account.label})")
         print(f"Browserprofil: isoliert ({result['browser']})")
+        print("Vaultprojektion: sync_required")
     else:
         print(f"Reaktivierung fehlgeschlagen: {result['error']}")
     return 0 if result["ok"] else 2

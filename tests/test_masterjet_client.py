@@ -48,6 +48,27 @@ def google_accounts_payload() -> dict[str, object]:
     }
 
 
+def ingress_receipt_payload() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "session_id": "ingress-1",
+        "account_ref": "openai-1",
+        "state": "consumed",
+        "generation": 5,
+    }
+
+
+def ingress_session_payload() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "id": "ingress-1",
+        "account_ref": "openai-1",
+        "plan_id": "plan-1",
+        "expires_at": "2026-08-28T12:01:00Z",
+        "expected_generation": 4,
+    }
+
+
 class FakeHTTPResponse:
     def __init__(
         self,
@@ -520,23 +541,7 @@ def test_request_larger_than_limit_is_rejected_before_https_connect(monkeypatch)
 def test_local_secret_uses_scm_rights_and_never_enters_json(tmp_path):
     secret = bytearray(b"super-private-auth-json")
     socket_path = tmp_path / "masterjet.sock"
-    response = json.dumps(
-        {
-            "schema_version": 1,
-            "id": "operation-1",
-            "kind": "secret.ingress.put",
-            "state": "succeeded",
-            "expected_generation": 4,
-            "resulting_generation": 5,
-            "plan_digest": "sha256:" + "a" * 64,
-            "created_at": "2026-08-28T12:00:00Z",
-            "expires_at": "2026-08-28T12:01:00Z",
-            "completed_count": 1,
-            "failed_count": 0,
-            "not_attempted_count": 0,
-            "reason_codes": [],
-        }
-    ).encode()
+    response = json.dumps(ingress_receipt_payload()).encode()
 
     peer: list[tuple[int, int, int, socket.socket]] = []
 
@@ -549,20 +554,21 @@ def test_local_secret_uses_scm_rights_and_never_enters_json(tmp_path):
             socket_path,
             local_attestation_verifier=attest,
             step_up_provider=lambda: "123456",
-        ).call(
-            "secret.ingress.put",
+        ).put_secret(
+            "ingress-1",
             secret,
             expected_generation=4,
             idempotency_key="idem-1",
         )
 
-    assert result.state == "succeeded"
+    assert result.state == "consumed"
     assert peer[0][:3] == (os.getpid(), os.geteuid(), os.getegid())
     assert isinstance(peer[0][3], socket.socket)
     assert bytes(secret) not in capture["request"]
     assert capture["secrets"] == [bytes(secret), b"123456"]
     request = json.loads(capture["request"])
     assert request["arguments"] == {
+        "session_id": "ingress-1",
         "secret_fd": 0,
         "secret_size": len(secret),
         "step_up_fd": 1,
@@ -573,38 +579,26 @@ def test_local_secret_uses_scm_rights_and_never_enters_json(tmp_path):
 def test_https_secret_uses_bounded_raw_body_not_json(monkeypatch):
     secret = bytearray(b"oauth-client-json-private")
     FakeHTTPSConnection.response = FakeHTTPResponse(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "id": "operation-1",
-                "kind": "secret.ingress.put",
-                "state": "succeeded",
-                "expected_generation": 4,
-                "resulting_generation": 5,
-                "plan_digest": "sha256:" + "a" * 64,
-                "created_at": "2026-08-28T12:00:00Z",
-                "expires_at": "2026-08-28T12:01:00Z",
-                "completed_count": 1,
-                "failed_count": 0,
-                "not_attempted_count": 0,
-                "reason_codes": [],
-            }
-        ).encode()
+        json.dumps(ingress_receipt_payload()).encode()
     )
     monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
 
     https_client(
         bearer_provider=lambda: "remote-bearer",
         step_up_provider=lambda: "123456",
-    ).call(
-        "secret.ingress.put",
+    ).put_secret(
+        "ingress-1",
         secret,
         expected_generation=4,
         idempotency_key="idem-1",
     )
 
     method, target, body, headers = FakeHTTPSConnection.instances[0].requests[0]
-    assert (method, target, body) == ("POST", "/control", bytes(secret))
+    assert (method, target, body) == (
+        "PUT",
+        "/control/secret-ingress-sessions/ingress-1",
+        bytes(secret),
+    )
     assert headers["Content-Type"] == "application/octet-stream"
     assert bytes(secret) not in target.encode()
     assert all(bytes(secret) not in value.encode() for value in headers.values())
@@ -614,8 +608,8 @@ def test_secret_larger_than_limit_is_rejected_before_connect(monkeypatch):
     monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
 
     with pytest.raises(MasterjetClientError, match=r"control\.request_too_large"):
-        https_client(bearer_provider=lambda: "remote-bearer").call(
-            "secret.ingress.put", b"x" * (MAX_SECRET_BYTES + 1)
+        https_client(bearer_provider=lambda: "remote-bearer").put_secret(
+            "ingress-1", b"x" * (MAX_SECRET_BYTES + 1)
         )
 
     assert FakeHTTPSConnection.instances == []
@@ -628,12 +622,58 @@ def test_secret_byte_subclass_is_rejected_before_connect(monkeypatch):
     monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
 
     with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
-        https_client(bearer_provider=lambda: "remote-bearer").call(
-            "secret.ingress.put",
+        https_client(bearer_provider=lambda: "remote-bearer").put_secret(
+            "ingress-1",
             SecretBytes(b"private"),
         )
 
     assert FakeHTTPSConnection.instances == []
+
+
+def test_unbound_generic_secret_put_is_rejected_before_connect(monkeypatch):
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "secret.ingress.put", b"private"
+        )
+
+    assert FakeHTTPSConnection.instances == []
+
+
+def test_secret_ingress_create_returns_bound_typed_session(monkeypatch):
+    FakeHTTPSConnection.response = FakeHTTPResponse(
+        json.dumps(ingress_session_payload()).encode()
+    )
+
+    session = https_client(
+        bearer_provider=lambda: "remote-bearer",
+        step_up_provider=lambda: "123456",
+    ).call(
+        "secret.ingress.create",
+        {
+            "account_ref": "openai-1",
+            "credential_type": "openai_auth_json",
+            "plan_id": "plan-1",
+        },
+        expected_generation=4,
+        idempotency_key="idem-1",
+    )
+
+    assert session.id == "ingress-1"
+    assert session.plan_id == "plan-1"
+
+
+def test_secret_ingress_receipt_for_another_session_is_rejected(monkeypatch):
+    FakeHTTPSConnection.response = FakeHTTPResponse(
+        json.dumps(ingress_receipt_payload() | {"session_id": "ingress-2"}).encode()
+    )
+
+    with pytest.raises(MasterjetClientError, match=r"control\.response_invalid"):
+        https_client(
+            bearer_provider=lambda: "remote-bearer",
+            step_up_provider=lambda: "123456",
+        ).put_secret("ingress-1", b"private")
 
 
 def test_https_uses_verified_tls_fixed_target_and_transient_auth_headers(monkeypatch):
@@ -1118,8 +1158,8 @@ def test_local_secret_requires_confirmed_transport_attestation(tmp_path):
 
     with unix_server(socket_path, response) as capture:
         with pytest.raises(MasterjetClientError, match=r"control\.attestation_required"):
-            local_client(socket_path, step_up_provider=step_up).call(
-                "secret.ingress.put", b"private"
+            local_client(socket_path, step_up_provider=step_up).put_secret(
+                "ingress-1", b"private"
             )
 
     assert step_up_called is False
@@ -1142,7 +1182,7 @@ def test_rejected_transport_attestation_prevents_fd_send(tmp_path):
                 socket_path,
                 local_attestation_verifier=lambda _pid, _uid, _gid, _socket: False,
                 step_up_provider=step_up,
-            ).call("secret.ingress.put", b"private")
+            ).put_secret("ingress-1", b"private")
 
     assert step_up_called is False
     assert capture.get("secrets", []) == []
@@ -1284,7 +1324,7 @@ def test_swap_and_restore_socket_fails_attestation_before_fd_send(tmp_path, monk
                 endpoint,
                 local_attestation_verifier=attest,
                 step_up_provider=lambda: "123456",
-            ).call("secret.ingress.put", b"private")
+            ).put_secret("ingress-1", b"private")
         assert malicious_finished.wait(2)
         assert capture["handshake"] == b"ATTEST\n"
         assert capture["fd_messages"] == []
@@ -2031,7 +2071,7 @@ def test_second_secret_fd_failure_closes_first_fd(tmp_path, monkeypatch):
                 socket_path,
                 local_attestation_verifier=lambda _pid, _uid, _gid, _socket: True,
                 step_up_provider=lambda: "123456",
-            ).call("secret.ingress.put", b"private")
+            ).put_secret("ingress-1", b"private")
 
     assert len(opened) == 1
     assert opened[0].closed is True
@@ -2052,7 +2092,7 @@ def test_attestation_exception_is_not_retained_as_client_error_context(tmp_path)
                 socket_path,
                 local_attestation_verifier=attest,
                 step_up_provider=lambda: "123456",
-            ).call("secret.ingress.put", b"private")
+            ).put_secret("ingress-1", b"private")
 
     assert caught.value.__context__ is None
     assert "sk-private" not in repr(caught.value)

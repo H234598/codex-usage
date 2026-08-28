@@ -12,11 +12,15 @@ from codex_usage.masterjet_contracts import (
     GoogleControlAccount,
     GoogleControlProject,
     OpenAIControlAccount,
+    SecretIngressReceipt,
+    SecretIngressSession,
     parse_control_operation,
     parse_control_problem,
     parse_google_accounts,
     parse_google_project,
     parse_openai_accounts,
+    parse_secret_ingress_receipt,
+    parse_secret_ingress_session,
 )
 
 
@@ -95,6 +99,62 @@ def valid_problem() -> dict[str, object]:
         "correlation_id": "correlation-1",
         "occurred_at": "2026-08-28T12:00:00Z",
     }
+
+
+def valid_ingress_session() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "id": "ingress-1",
+        "account_ref": "openai-1",
+        "plan_id": "plan-1",
+        "expires_at": "2026-08-28T12:01:00Z",
+        "expected_generation": 4,
+    }
+
+
+def valid_ingress_receipt() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "session_id": "ingress-1",
+        "account_ref": "openai-1",
+        "state": "consumed",
+        "generation": 5,
+    }
+
+
+def test_secret_ingress_contracts_are_typed_immutable_and_redacted():
+    session = parse_secret_ingress_session(valid_ingress_session())
+    receipt = parse_secret_ingress_receipt(valid_ingress_receipt())
+
+    assert session == SecretIngressSession(
+        id="ingress-1",
+        account_ref="openai-1",
+        plan_id="plan-1",
+        expires_at=datetime(2026, 8, 28, 12, 1, tzinfo=UTC),
+        expected_generation=4,
+    )
+    assert receipt == SecretIngressReceipt(
+        session_id="ingress-1",
+        account_ref="openai-1",
+        state="consumed",
+        generation=5,
+    )
+    with pytest.raises(FrozenInstanceError):
+        receipt.state = "pending"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("parser", "payload"),
+    [
+        (parse_secret_ingress_session, valid_ingress_session() | {"secret": "private"}),
+        (parse_secret_ingress_receipt, valid_ingress_receipt() | {"secret": "private"}),
+        (parse_secret_ingress_session, valid_ingress_session() | {"expected_generation": True}),
+        (parse_secret_ingress_receipt, valid_ingress_receipt() | {"generation": -1}),
+    ],
+)
+def test_secret_ingress_contracts_reject_unknown_or_invalid_fields(parser, payload):
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parser(payload)
 
 
 def test_google_projection_rejects_provider_secret_fields():

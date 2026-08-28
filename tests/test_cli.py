@@ -1117,7 +1117,9 @@ def test_account_list_is_removed(capsys):
     assert "invalid choice" in capsys.readouterr().err
 
 
-def test_login_accepts_unique_label(tmp_path, monkeypatch):
+def test_login_accepts_unique_label_and_marks_projection_sync_required(
+    tmp_path, monkeypatch, capsys
+):
     config_path = tmp_path / "config.toml"
     called = {}
 
@@ -1127,6 +1129,11 @@ def test_login_accepts_unique_label(tmp_path, monkeypatch):
         called["url"] = config.analytics_url
 
     monkeypatch.setattr("codex_usage.cli.login_account", fake_login)
+    monkeypatch.setattr(
+        cli_module,
+        "sync_account_auth",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("must remain explicit")),
+    )
 
     assert (
         main(["--config", str(config_path), "account", "add", "privat", "--label", "BW_Privat"])
@@ -1134,11 +1141,82 @@ def test_login_accepts_unique_label(tmp_path, monkeypatch):
     )
     assert main(["--config", str(config_path), "login", "BW_Privat"]) == 0
 
+    assert "sync_required" in capsys.readouterr().out
     assert called == {
         "account_id": "privat",
         "label": "BW_Privat",
         "url": "https://chatgpt.com/codex/cloud/settings/analytics",
     }
+
+
+def test_account_auth_sync_uses_resolved_account_and_authenticated_client(
+    monkeypatch, capsys
+):
+    account = Account(
+        id="openai-1",
+        label="OpenAI",
+        profile_dir="/private/profile",
+        auth_json_path="/private/profile/codex-home/auth.json",
+    )
+    config = SimpleNamespace(masterjet=object())
+    client = object()
+    calls = []
+    monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
+    monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: account)
+    monkeypatch.setattr(cli_module, "MasterjetControlClient", lambda connection: client)
+    monkeypatch.setattr(
+        cli_module,
+        "sync_account_auth",
+        lambda selected, authenticated: calls.append((selected, authenticated))
+        or SimpleNamespace(account_ref="openai-1", generation=5, status="succeeded"),
+    )
+
+    assert main(["account", "auth-sync", "OpenAI", "--format", "json"]) == 0
+
+    assert calls == [(account, client)]
+    assert json.loads(capsys.readouterr().out) == {
+        "account_ref": "openai-1",
+        "generation": 5,
+        "status": "succeeded",
+    }
+
+
+def test_account_auth_sync_has_no_secret_path_or_provider_argv(monkeypatch, capsys):
+    called = []
+    monkeypatch.setattr(cli_module, "sync_account_auth", lambda *_args: called.append(True))
+
+    with pytest.raises(SystemExit) as caught:
+        main(["account", "auth-sync", "openai-1", "--auth-json", "top-secret"])
+
+    assert caught.value.code == 2
+    assert called == []
+    assert "top-secret" not in capsys.readouterr().out
+
+
+def test_account_auth_sync_without_productive_providers_fails_closed(
+    monkeypatch, capsys
+):
+    account = Account(
+        id="openai-1",
+        label="OpenAI",
+        profile_dir="/private/profile",
+        auth_json_path="/private/profile/codex-home/auth.json",
+    )
+    config = SimpleNamespace(masterjet=object())
+    client = object()
+    monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
+    monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: account)
+    monkeypatch.setattr(cli_module, "MasterjetControlClient", lambda connection: client)
+    monkeypatch.setattr(
+        cli_module,
+        "sync_account_auth",
+        lambda *_args: (_ for _ in ()).throw(
+            cli_module.AuthSyncError("control.authentication_required")
+        ),
+    )
+
+    assert main(["account", "auth-sync", "openai-1"]) == 2
+    assert capsys.readouterr().err.strip() == "Fehler: control.authentication_required"
 
 
 def test_diagnose_accepts_unique_label(tmp_path, monkeypatch, capsys):
@@ -4804,10 +4882,27 @@ def test_reactivation_and_account_handlers_cover_success_and_errors(monkeypatch,
         "reactivate_account",
         lambda *_args, **kwargs: {"ok": True, "browser": kwargs["browser"]},
     )
+    monkeypatch.setattr(
+        cli_module,
+        "sync_account_auth",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("must remain explicit")),
+    )
     assert cli_module._cmd_reactivate(
         SimpleNamespace(config=None, account="alpha", browser="firefox", format="table")
     ) == 0
-    assert "Account reaktiviert" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Account reaktiviert" in output
+    assert "sync_required" in output
+
+    monkeypatch.setattr(
+        cli_module,
+        "reactivate_account",
+        lambda *_args, **kwargs: {"ok": True, "browser": kwargs["browser"]},
+    )
+    assert cli_module._cmd_reactivate(
+        SimpleNamespace(config=None, account="alpha", browser="firefox", format="json")
+    ) == 0
+    assert json.loads(capsys.readouterr().out)["vault_projection_state"] == "sync_required"
 
     monkeypatch.setattr(
         cli_module,

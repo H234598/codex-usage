@@ -17,7 +17,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from .config import MasterjetConnection
 from .masterjet_contracts import (
@@ -28,6 +28,8 @@ from .masterjet_contracts import (
     parse_google_accounts,
     parse_google_projects,
     parse_openai_accounts,
+    parse_secret_ingress_receipt,
+    parse_secret_ingress_session,
 )
 from .private_io import assert_no_symlink_ancestors
 
@@ -167,12 +169,60 @@ class MasterjetControlClient:
         expected_generation: int | None = None,
         idempotency_key: str | None = None,
     ) -> object:
+        if operation == "secret.ingress.put":
+            raise MasterjetClientError("control.request_invalid")
         request, secret = _encode_request(
             operation,
             arguments,
             expected_generation=expected_generation,
             idempotency_key=idempotency_key,
         )
+        return self._request(
+            operation,
+            arguments,
+            request,
+            secret,
+            expected_generation,
+            idempotency_key,
+            secret_session_id=None,
+        )
+
+    def put_secret(
+        self,
+        session_id: str,
+        secret: bytes | bytearray | memoryview,
+        expected_generation: int | None = None,
+        idempotency_key: str | None = None,
+    ) -> object:
+        session_id = _token(session_id, "control.request_invalid")
+        request, secret_view = _encode_request(
+            "secret.ingress.put",
+            secret,
+            expected_generation=expected_generation,
+            idempotency_key=idempotency_key,
+            secret_session_id=session_id,
+        )
+        return self._request(
+            "secret.ingress.put",
+            {"session_id": session_id},
+            request,
+            secret_view,
+            expected_generation,
+            idempotency_key,
+            secret_session_id=session_id,
+        )
+
+    def _request(
+        self,
+        operation: str,
+        arguments: object,
+        request: bytes,
+        secret: memoryview | None,
+        expected_generation: int | None,
+        idempotency_key: str | None,
+        *,
+        secret_session_id: str | None,
+    ) -> object:
         if self._connection.transport == "local":
             response = _UnixTransport(
                 self._connection,
@@ -184,7 +234,14 @@ class MasterjetControlClient:
                 self._connection,
                 bearer_provider=self._bearer_provider,
                 step_up_provider=self._step_up_provider,
-            ).request(operation, request, secret, expected_generation, idempotency_key)
+            ).request(
+                operation,
+                request,
+                secret,
+                expected_generation,
+                idempotency_key,
+                secret_session_id,
+            )
         else:
             raise MasterjetClientError("control.endpoint_invalid")
         return _decode_response(operation, arguments, response)
@@ -285,6 +342,7 @@ class _HttpsTransport:
         secret: memoryview | None,
         expected_generation: int | None,
         idempotency_key: str | None,
+        secret_session_id: str | None,
     ) -> tuple[int, bytes]:
         deadline = _Deadline(_timeout(self._connection))
         connection: http.client.HTTPSConnection | None = None
@@ -307,7 +365,14 @@ class _HttpsTransport:
             }
             body = request
             if secret is not None:
+                if secret_session_id is None:
+                    raise MasterjetClientError("control.request_invalid")
                 body = secret.tobytes()
+                target = (
+                    target.rstrip("/")
+                    + "/secret-ingress-sessions/"
+                    + quote(secret_session_id, safe="")
+                )
                 headers.update(
                     _secret_request_headers(
                         operation,
@@ -329,7 +394,12 @@ class _HttpsTransport:
                 raise MasterjetClientError("control.tls_required")
             connection = _open_https_connection(host, port, context, deadline)
             with _DeadlineGuard(deadline, lambda: _abort_http(connection)):
-                connection.request("POST", target, body=body, headers=headers)
+                connection.request(
+                    "PUT" if secret is not None else "POST",
+                    target,
+                    body=body,
+                    headers=headers,
+                )
                 deadline.remaining()
                 _set_http_deadline(connection, deadline)
                 response = connection.getresponse()
@@ -377,6 +447,7 @@ def _encode_request(
     *,
     expected_generation: object,
     idempotency_key: object,
+    secret_session_id: object = None,
 ) -> tuple[bytes, memoryview | None]:
     operation = _operation(operation)
     if expected_generation is not None and (
@@ -396,11 +467,16 @@ def _encode_request(
             raise MasterjetClientError("control.request_invalid")
         encoded_arguments = arguments
     else:
-        if operation not in _SECRET_INGRESS_OPERATIONS:
+        if operation not in _SECRET_INGRESS_OPERATIONS or secret_session_id is None:
             raise MasterjetClientError("control.request_invalid")
+        session_id = _token(secret_session_id, "control.request_invalid")
         if secret.nbytes > MAX_SECRET_BYTES:
             raise MasterjetClientError("control.request_too_large")
-        encoded_arguments = {"secret_fd": 0, "secret_size": secret.nbytes}
+        encoded_arguments = {
+            "session_id": session_id,
+            "secret_fd": 0,
+            "secret_size": secret.nbytes,
+        }
 
     document: dict[str, object] = {
         "schema_version": 1,
@@ -444,6 +520,22 @@ def _decode_response(operation: str, arguments: object, response: tuple[int, byt
         if operation == "google.projects.list":
             account_ref = arguments.get("account_ref") if type(arguments) is dict else None
             return parse_google_projects(payload, expected_account_ref=account_ref)
+        if operation == "secret.ingress.create":
+            session = parse_secret_ingress_session(payload)
+            if (
+                type(arguments) is not dict
+                or session.account_ref != arguments.get("account_ref")
+                or session.plan_id != arguments.get("plan_id")
+            ):
+                raise MasterjetClientError("control.response_invalid")
+            return session
+        if operation == "secret.ingress.put":
+            receipt = parse_secret_ingress_receipt(payload)
+            if type(arguments) is not dict or receipt.session_id != arguments.get(
+                "session_id"
+            ):
+                raise MasterjetClientError("control.response_invalid")
+            return receipt
         return parse_control_operation(payload)
     except ControlContractError:
         raise MasterjetClientError("control.response_invalid") from None

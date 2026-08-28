@@ -268,6 +268,36 @@ class ControlOperation:
 
 
 @dataclass(frozen=True, slots=True)
+class SecretIngressSession:
+    id: str
+    account_ref: str
+    plan_id: str
+    expires_at: datetime
+    expected_generation: int
+
+    def __post_init__(self) -> None:
+        _token(self.id, "id")
+        _ref(self.account_ref, "account_ref")
+        _token(self.plan_id, "plan_id")
+        _timestamp_value(self.expires_at, "expires_at")
+        _generation(self.expected_generation, "expected_generation")
+
+
+@dataclass(frozen=True, slots=True)
+class SecretIngressReceipt:
+    session_id: str
+    account_ref: str
+    state: str
+    generation: int
+
+    def __post_init__(self) -> None:
+        _token(self.session_id, "session_id")
+        _ref(self.account_ref, "account_ref")
+        _code(self.state, "state")
+        _generation(self.generation, "generation")
+
+
+@dataclass(frozen=True, slots=True)
 class ControlProblem:
     code: str
     severity: str
@@ -403,6 +433,42 @@ def parse_control_operation(payload: object) -> ControlOperation:
         reason_codes=_parse_reason_codes(data["reason_codes"]),
     )
     return operation
+
+
+def parse_secret_ingress_session(payload: object) -> SecretIngressSession:
+    data = _document(
+        payload,
+        {
+            "schema_version",
+            "id",
+            "account_ref",
+            "plan_id",
+            "expires_at",
+            "expected_generation",
+        },
+    )
+    return SecretIngressSession(
+        id=_token(data["id"], "id"),
+        account_ref=_ref(data["account_ref"], "account_ref"),
+        plan_id=_token(data["plan_id"], "plan_id"),
+        expires_at=_timestamp(data["expires_at"], "expires_at"),
+        expected_generation=_generation(
+            data["expected_generation"], "expected_generation"
+        ),
+    )
+
+
+def parse_secret_ingress_receipt(payload: object) -> SecretIngressReceipt:
+    data = _document(
+        payload,
+        {"schema_version", "session_id", "account_ref", "state", "generation"},
+    )
+    return SecretIngressReceipt(
+        session_id=_token(data["session_id"], "session_id"),
+        account_ref=_ref(data["account_ref"], "account_ref"),
+        state=_code(data["state"], "state"),
+        generation=_generation(data["generation"], "generation"),
+    )
 
 
 def parse_control_problem(payload: object) -> ControlProblem:
