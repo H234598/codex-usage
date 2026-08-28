@@ -2628,6 +2628,9 @@ def _default_root_command(argv: list[str]) -> list[str]:
         if token == "--config":
             index += 2
             continue
+        if token == "--step-up-stdin":
+            index += 1
+            continue
         if token.startswith("--config="):
             index += 1
             continue

@@ -19,6 +19,7 @@ from typing import ClassVar
 import pytest
 
 import codex_usage.masterjet_client as client_module
+import codex_usage.masterjet_contracts as contracts_module
 from codex_usage.config import MasterjetConnection
 from codex_usage.masterjet_auth_sync import sync_account_auth
 from codex_usage.masterjet_client import (
@@ -54,6 +55,25 @@ def google_accounts_payload() -> dict[str, object]:
                 "reload_state": "current",
             }
         ],
+    }
+
+
+def step_up_problem_payload() -> dict[str, object]:
+    severity, title, detail, effect, action = contracts_module._problem_template(
+        "control.step_up_required"
+    )
+    return {
+        "schema_version": 1,
+        "code": "control.step_up_required",
+        "severity": severity,
+        "title": title,
+        "detail": detail,
+        "effect": effect,
+        "action": action,
+        "retryable": False,
+        "retry_after_seconds": None,
+        "correlation_id": "corr-1",
+        "occurred_at": "2026-08-28T12:00:00Z",
     }
 
 
@@ -397,6 +417,40 @@ def _task9_transport_and_auth_selfcheck(tmp_path, monkeypatch):
         "environment": repr(dict(os.environ)).encode(),
         "https_server_request_lines": [request["request_line"] for request in requests],
     }
+
+
+def test_real_https_step_up_challenge_retries_exactly_once(tmp_path, monkeypatch):
+    calls = 0
+
+    def step_up() -> str:
+        nonlocal calls
+        calls += 1
+        return "123456"
+
+    original_default_context = ssl.create_default_context
+    with real_tls_server(
+        tmp_path, responses=[step_up_problem_payload(), google_accounts_payload()]
+    ) as (port, certificate, capture):
+        monkeypatch.setattr(client_module, "_open_https_connection", _REAL_OPEN_HTTPS_CONNECTION)
+        monkeypatch.setattr(
+            client_module.ssl,
+            "create_default_context",
+            lambda: original_default_context(cafile=certificate),
+        )
+        result = MasterjetControlClient(
+            MasterjetConnection(
+                transport="https", endpoint=f"https://localhost:{port}/control", timeout_seconds=2
+            ),
+            bearer_provider=lambda: "remote-bearer",
+            step_up_provider=step_up,
+        ).call("google.accounts.list", {})
+
+    assert len(result) == 1
+    assert calls == 1
+    requests = capture["requests"]
+    assert len(requests) == 2
+    assert "X-Masterjet-Step-Up" not in requests[0]["headers"]
+    assert requests[1]["headers"]["X-Masterjet-Step-Up"] == "123456"
 
 
 def blocking_resolver_worker(_host: str, _port: int, _sender: object) -> None:
@@ -1032,7 +1086,7 @@ def test_https_uses_verified_tls_fixed_target_and_transient_auth_headers(monkeyp
     assert request["operation"] == "google.oauth.begin"
     assert request["arguments"]["redirect_uri"] == REDIRECT_URI
     assert headers["Authorization"] == "Bearer remote-bearer"
-    assert headers["X-Masterjet-Step-Up"] == "123456"
+    assert "X-Masterjet-Step-Up" not in headers
     assert headers["Cache-Control"] == "no-store"
     assert headers["Content-Type"] == "application/json"
     assert "remote-bearer" not in repr(client)
@@ -1504,6 +1558,9 @@ def test_bearer_rejects_non_ascii_header_values_before_request(monkeypatch, valu
 @pytest.mark.parametrize("value", ["12 3456", "12\t3456", "tötp", "\ud800"])
 def test_step_up_rejects_non_ascii_header_values_before_request(monkeypatch, value):
     monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+    FakeHTTPSConnection.response = FakeHTTPResponse(
+        json.dumps(step_up_problem_payload()).encode()
+    )
 
     with pytest.raises(MasterjetClientError, match=r"control\.step_up_required"):
         https_client(
@@ -1520,7 +1577,8 @@ def test_step_up_rejects_non_ascii_header_values_before_request(monkeypatch, val
             idempotency_key="idem-1",
         )
 
-    assert FakeHTTPSConnection.instances == []
+    assert len(FakeHTTPSConnection.instances) == 1
+    assert "X-Masterjet-Step-Up" not in FakeHTTPSConnection.instances[0].requests[0][3]
 
 
 def test_local_endpoint_rejects_embedded_nul():

@@ -157,6 +157,7 @@ class _DeadlineGuard:
 
 class MasterjetControlClient:
     __slots__ = (
+        "_bearer",
         "_bearer_provider",
         "_connection",
         "_local_attestation_verifier",
@@ -174,6 +175,7 @@ class MasterjetControlClient:
         if type(connection) is not MasterjetConnection:
             raise TypeError("connection must be a MasterjetConnection")
         self._connection = connection
+        self._bearer: str | None = None
         self._bearer_provider = bearer_provider
         self._step_up_provider = step_up_provider
         self._local_attestation_verifier = local_attestation_verifier
@@ -249,9 +251,16 @@ class MasterjetControlClient:
                 attestation_verifier=self._local_attestation_verifier,
             ).request(operation, request, secret)
         elif self._connection.transport == "https":
+            _https_endpoint(self._connection)
+            if self._bearer is None:
+                self._bearer = _provider_value(
+                    self._bearer_provider,
+                    "control.authentication_required",
+                    maximum=4096,
+                )
             response = _HttpsTransport(
                 self._connection,
-                bearer_provider=self._bearer_provider,
+                bearer=self._bearer,
                 step_up_provider=self._step_up_provider,
             ).request(
                 operation,
@@ -347,11 +356,11 @@ class _HttpsTransport:
         self,
         connection: MasterjetConnection,
         *,
-        bearer_provider: Callable[[], str] | None,
+        bearer: str,
         step_up_provider: Callable[[], str] | None,
     ) -> None:
         self._connection = connection
-        self._bearer_provider = bearer_provider
+        self._bearer = bearer
         self._step_up_provider = step_up_provider
 
     def request(
@@ -371,14 +380,9 @@ class _HttpsTransport:
         try:
             host, port, target = _https_endpoint(self._connection)
             deadline.remaining()
-            bearer = _provider_value(
-                self._bearer_provider,
-                "control.authentication_required",
-                maximum=4096,
-            )
             deadline.remaining()
             headers = {
-                "Authorization": f"Bearer {bearer}",
+                "Authorization": f"Bearer {self._bearer}",
                 "Cache-Control": "no-store",
                 "Content-Type": "application/json",
             }
@@ -396,42 +400,49 @@ class _HttpsTransport:
                     )
                 )
                 headers["Content-Type"] = "application/octet-stream"
-            if _is_sensitive(operation):
+            context = ssl.create_default_context()
+            deadline.remaining()
+            if not context.check_hostname or context.verify_mode != ssl.CERT_REQUIRED:
+                raise MasterjetClientError("control.tls_required")
+            for attempt in range(2):
+                connection = _open_https_connection(host, port, context, deadline)
+                with _DeadlineGuard(deadline, lambda current=connection: _abort_http(current)):
+                    connection.request(
+                        "PUT" if secret is not None else "POST",
+                        target,
+                        body=body,
+                        headers=headers,
+                    )
+                    deadline.remaining()
+                    _set_http_deadline(connection, deadline)
+                    response = connection.getresponse()
+                    deadline.remaining()
+                    if 300 <= response.status < 400:
+                        raise MasterjetClientError("control.redirect_rejected")
+                    content_type = response.getheader("Content-Type", "") or ""
+                    if content_type.split(";", 1)[0].strip().lower() != "application/json":
+                        raise MasterjetClientError("control.response_invalid")
+                    result = (
+                        response.status,
+                        _read_bounded_response(
+                            response,
+                            deadline=deadline,
+                            connection=connection,
+                        ),
+                    )
+                _close_http(connection)
+                connection = None
+                if not _step_up_challenge(result):
+                    break
+                if attempt:
+                    break
+                headers = dict(headers)
                 headers["X-Masterjet-Step-Up"] = _provider_value(
                     self._step_up_provider,
                     "control.step_up_required",
                     maximum=128,
                 )
                 deadline.remaining()
-            context = ssl.create_default_context()
-            deadline.remaining()
-            if not context.check_hostname or context.verify_mode != ssl.CERT_REQUIRED:
-                raise MasterjetClientError("control.tls_required")
-            connection = _open_https_connection(host, port, context, deadline)
-            with _DeadlineGuard(deadline, lambda: _abort_http(connection)):
-                connection.request(
-                    "PUT" if secret is not None else "POST",
-                    target,
-                    body=body,
-                    headers=headers,
-                )
-                deadline.remaining()
-                _set_http_deadline(connection, deadline)
-                response = connection.getresponse()
-                deadline.remaining()
-                if 300 <= response.status < 400:
-                    raise MasterjetClientError("control.redirect_rejected")
-                content_type = response.getheader("Content-Type", "") or ""
-                if content_type.split(";", 1)[0].strip().lower() != "application/json":
-                    raise MasterjetClientError("control.response_invalid")
-                result = (
-                    response.status,
-                    _read_bounded_response(
-                        response,
-                        deadline=deadline,
-                        connection=connection,
-                    ),
-                )
         except MasterjetClientError as exc:
             if deadline.expired():
                 failure_code = "control.timeout"
@@ -454,6 +465,17 @@ class _HttpsTransport:
         if result is None:  # pragma: no cover - defensive control-flow assertion
             raise MasterjetClientError("control.transport_unavailable")
         return result
+
+
+def _step_up_challenge(response: tuple[int, bytes]) -> bool:
+    _status, body = response
+    payload = _load_json(body)
+    if payload is _INVALID_JSON:
+        return False
+    try:
+        return parse_control_problem(payload).code == "control.step_up_required"
+    except ControlContractError:
+        return False
 
 
 def _encode_request(

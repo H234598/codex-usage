@@ -54,6 +54,13 @@ _OPERATION_STATES = frozenset(
     {"planned", "queued", "running", "partial", "succeeded", "failed", "blocked"}
 )
 _PROBLEM_TEMPLATES = {
+    "control.step_up_required": (
+        "warning",
+        "Step-up required",
+        "Additional authentication is required.",
+        "Operation is paused.",
+        "Complete step-up authentication.",
+    ),
     "credential.source_unavailable": (
         "error",
         "Credential source unavailable",

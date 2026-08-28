@@ -7,7 +7,7 @@ import stat
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from .private_io import assert_no_symlink_ancestors, read_private_bytes_at
+from .private_io import read_private_bytes_at
 
 MASTERJET_BEARER_CREDENTIAL = "masterjet-control-bearer"
 MAX_BEARER_BYTES = 4096
@@ -22,12 +22,13 @@ def bearer_provider_from_systemd_credentials(
     *, environ: Mapping[str, str] | None = None
 ) -> Callable[[], str]:
     values = os.environ if environ is None else environ
+    directory = values.get("CREDENTIALS_DIRECTORY")
+    if not isinstance(directory, str) or not directory:
+        return _one_shot(_credential_unavailable)
+    snapshot = Path(directory)
 
     def read() -> str:
-        directory = values.get("CREDENTIALS_DIRECTORY")
-        if not isinstance(directory, str) or not directory:
-            raise MasterjetCredentialsError("credential unavailable")
-        return _read_bearer_from_directory(Path(directory))
+        return _read_bearer_from_directory(snapshot)
 
     return _one_shot(read)
 
@@ -35,7 +36,12 @@ def bearer_provider_from_systemd_credentials(
 def bearer_provider_from_fd(fd: int) -> Callable[[], str]:
     if type(fd) is not int or fd < 0:
         raise MasterjetCredentialsError("credential unavailable")
-    return _one_shot(lambda: _read_bearer_from_fd(fd))
+    try:
+        owned_fd = os.dup(fd)
+        os.set_inheritable(owned_fd, False)
+    except OSError as exc:
+        raise MasterjetCredentialsError("credential unavailable") from exc
+    return _one_shot(lambda: _read_bearer_from_fd(owned_fd))
 
 
 def stdin_step_up_provider(stream: object) -> Callable[[], str]:
@@ -79,6 +85,10 @@ def unavailable_step_up_provider() -> Callable[[], str]:
     return _one_shot(unavailable)
 
 
+def _credential_unavailable() -> str:
+    raise MasterjetCredentialsError("credential unavailable")
+
+
 def _one_shot(reader: Callable[[], str]) -> Callable[[], str]:
     used = False
 
@@ -96,9 +106,7 @@ def _read_bearer_from_directory(directory: Path) -> str:
     if not directory.is_absolute():
         raise MasterjetCredentialsError("credential unavailable")
     try:
-        assert_no_symlink_ancestors(directory, label="credential directory")
-        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(directory, flags)
+        fd = _open_private_directory(directory)
     except (OSError, ValueError) as exc:
         raise MasterjetCredentialsError("credential unavailable") from exc
     try:
@@ -120,22 +128,58 @@ def _read_bearer_from_directory(directory: Path) -> str:
 
 
 def _read_bearer_from_fd(fd: int) -> str:
+    payload = bytearray()
     try:
         if fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE != os.O_RDONLY:
             raise MasterjetCredentialsError("credential unavailable")
         initial = os.fstat(fd)
         _private_credential_stat(initial)
-        payload = bytearray(os.pread(fd, MAX_BEARER_BYTES + 1, 0))
+        payload.extend(os.pread(fd, MAX_BEARER_BYTES + 1, 0))
         final = os.fstat(fd)
-        if final != initial:
+        if _stable_stat(final) != _stable_stat(initial):
             raise MasterjetCredentialsError("credential unavailable")
     except OSError as exc:
         raise MasterjetCredentialsError("credential unavailable") from exc
-    try:
+    else:
         return _bearer_from_bytes(payload)
     finally:
         payload[:] = b"\x00" * len(payload)
         payload.clear()
+        os.close(fd)
+
+
+def _open_private_directory(directory: Path) -> int:
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    current = os.open("/", flags)
+    try:
+        for component in directory.parts[1:]:
+            if component in {"", ".", ".."}:
+                raise MasterjetCredentialsError("credential unavailable")
+            next_fd = os.open(component, flags, dir_fd=current)
+            os.close(current)
+            current = next_fd
+        return current
+    except BaseException:
+        os.close(current)
+        raise
+
+
+def _stable_stat(item: os.stat_result) -> tuple[int, int, int, int, int, int, int, int]:
+    return (
+        item.st_dev,
+        item.st_ino,
+        item.st_mode,
+        item.st_uid,
+        item.st_nlink,
+        item.st_size,
+        item.st_mtime_ns,
+        item.st_ctime_ns,
+    )
 
 
 def _private_credential_stat(item: os.stat_result) -> None:
@@ -167,7 +211,7 @@ def _bearer_from_bytes(payload: bytes | bytearray) -> str:
 
 def _step_up_from_bytes(payload: bytearray) -> str:
     if payload.endswith(b"\n"):
-        payload = payload[:-1]
+        del payload[-1:]
     if len(payload) not in {6, 7, 8} or not payload.isdigit():
         raise MasterjetCredentialsError("step-up unavailable")
     try:

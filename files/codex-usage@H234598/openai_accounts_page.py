@@ -258,7 +258,14 @@ class BoundedJsonRunner:
             if callback is not None:
                 self._dispatcher(callback, result)
 
-        threading.Thread(target=worker, name="codex-usage-control", daemon=True).start()
+        thread = threading.Thread(target=worker, name="codex-usage-control", daemon=True)
+        try:
+            thread.start()
+        except BaseException:
+            if secret is not None:
+                secret[:] = b"\x00" * len(secret)
+                secret.clear()
+            raise
 
     def _run(self, argv: tuple[str, ...], stdin_data: bytearray | None) -> CommandResult:
         process = None
@@ -323,8 +330,15 @@ def _safe_environment() -> dict[str, str]:
         "XAUTHORITY",
         "DBUS_SESSION_BUS_ADDRESS",
         "XDG_RUNTIME_DIR",
+        "CREDENTIALS_DIRECTORY",
     )
-    return {name: os.environ[name] for name in allowed if name in os.environ}
+    result = {name: os.environ[name] for name in allowed if name in os.environ}
+    credential_directory = result.get("CREDENTIALS_DIRECTORY")
+    if credential_directory is not None and (
+        not Path(credential_directory).is_absolute() or "\x00" in credential_directory
+    ):
+        result.pop("CREDENTIALS_DIRECTORY")
+    return result
 
 
 def _redacted_code(value: object) -> str:
