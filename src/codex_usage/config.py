@@ -25,6 +25,7 @@ APP_NAME = "codex-usage"
 SUPPORTED_BROWSERS = ("firefox", "chromium")
 SUPPORTED_REACTIVATION_BROWSERS = ("auto", "vivaldi", "chromium", "firefox")
 SUPPORTED_BACKENDS = ("direct", "app-server")
+SUPPORTED_MASTERJET_TRANSPORTS = ("local", "https")
 SERIES_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,15}$")
 MAX_CONFIG_BYTES = 1_000_000
 MAX_CONFIG_ACCOUNTS = 100
@@ -46,12 +47,20 @@ _CODEX_HELP_ENV_NAMES = frozenset(
 )
 
 
+@dataclass(frozen=True, slots=True)
+class MasterjetConnection:
+    transport: str = "local"
+    endpoint: str = ""
+    timeout_seconds: int = 10
+
+
 @dataclass(frozen=True)
 class AppConfig:
     accounts: tuple[Account, ...]
     interval_seconds: int = 300
     analytics_url: str = "https://chatgpt.com/codex/cloud/settings/analytics"
     headless: bool = True
+    masterjet: MasterjetConnection = MasterjetConnection()
 
 
 def default_config_path() -> Path:
@@ -109,11 +118,20 @@ def load_config(path: Path | None = None) -> AppConfig:
         raise ValueError("analytics_url must be an https://chatgpt.com URL")
     _validate_analytics_url(analytics_url)
     headless = _strict_bool(data.get("headless", True), "headless")
+    raw_masterjet = data.get("masterjet", {})
+    if not isinstance(raw_masterjet, dict):
+        raise ValueError("masterjet must be a TOML table")
+    masterjet = MasterjetConnection(
+        transport=raw_masterjet.get("transport", "local"),
+        endpoint=raw_masterjet.get("endpoint", ""),
+        timeout_seconds=raw_masterjet.get("timeout_seconds", 10),
+    )
     config = AppConfig(
         accounts=accounts,
         interval_seconds=interval,
         analytics_url=analytics_url,
         headless=headless,
+        masterjet=masterjet,
     )
     _validate_config(config)
     return config
@@ -308,6 +326,7 @@ def add_or_update_account(
             interval_seconds=config.interval_seconds,
             analytics_url=config.analytics_url,
             headless=config.headless,
+            masterjet=config.masterjet,
         )
         _validate_account(account)
         _validate_config(updated)
@@ -444,6 +463,7 @@ def remove_account(
             interval_seconds=config.interval_seconds,
             analytics_url=config.analytics_url,
             headless=config.headless,
+            masterjet=config.masterjet,
         )
         _validate_config(updated)
         _save_config_unlocked(updated, config_path)
@@ -493,6 +513,7 @@ def restore_account(
             interval_seconds=config.interval_seconds,
             analytics_url=config.analytics_url,
             headless=config.headless,
+            masterjet=config.masterjet,
         )
         _validate_config(restored)
         _save_config_unlocked(restored, config_path)
@@ -1040,6 +1061,7 @@ def _validate_config(config: AppConfig) -> None:
     _validate_text_field(config.analytics_url, "analytics_url", MAX_CONFIG_URL_CHARS)
     _validate_analytics_url(config.analytics_url)
     _strict_bool(config.headless, "headless")
+    _validate_masterjet_connection(config.masterjet)
 
     for account in config.accounts:
         _validate_account(account)
@@ -1112,6 +1134,41 @@ def _validate_analytics_url(url: str) -> None:
         raise ValueError("analytics_url must point to /codex/cloud/settings/analytics")
 
 
+def _validate_masterjet_connection(connection: object) -> None:
+    if not isinstance(connection, MasterjetConnection):
+        raise ValueError("masterjet must be a MasterjetConnection")
+    if connection.transport not in SUPPORTED_MASTERJET_TRANSPORTS:
+        choices = ", ".join(SUPPORTED_MASTERJET_TRANSPORTS)
+        raise ValueError(f"masterjet transport must be one of: {choices}")
+    if not isinstance(connection.endpoint, str):
+        raise ValueError("masterjet endpoint must be a string")
+    _validate_text_field(
+        connection.endpoint,
+        "masterjet endpoint",
+        MAX_CONFIG_URL_CHARS,
+        allow_empty=connection.transport == "local",
+    )
+    timeout = _strict_int(connection.timeout_seconds, "masterjet timeout_seconds")
+    if timeout < 1:
+        raise ValueError("masterjet timeout_seconds must be at least 1")
+    if connection.transport == "local":
+        if connection.endpoint and not Path(connection.endpoint).is_absolute():
+            raise ValueError("local masterjet endpoint must be an absolute socket path")
+        return
+
+    parts = urlsplit(connection.endpoint)
+    if parts.username is not None or parts.password is not None:
+        raise ValueError("masterjet endpoint must not contain credentials")
+    if parts.scheme != "https" or parts.hostname is None:
+        raise ValueError("masterjet endpoint must be an HTTPS URL")
+    if parts.query or parts.fragment:
+        raise ValueError("masterjet endpoint must not contain a query or fragment")
+    try:
+        parts.port
+    except ValueError as exc:
+        raise ValueError("masterjet endpoint must be an HTTPS URL") from exc
+
+
 def _validate_browser(browser: str) -> None:
     if browser not in SUPPORTED_BROWSERS:
         choices = ", ".join(SUPPORTED_BROWSERS)
@@ -1158,6 +1215,16 @@ def _to_toml(config: AppConfig) -> str:
         f"headless = {'true' if config.headless else 'false'}",
         "",
     ]
+    if config.masterjet != MasterjetConnection():
+        lines.extend(
+            [
+                "[masterjet]",
+                f"transport = {_quote(config.masterjet.transport)}",
+                f"endpoint = {_quote(config.masterjet.endpoint)}",
+                f"timeout_seconds = {config.masterjet.timeout_seconds}",
+                "",
+            ]
+        )
     for account in sorted(config.accounts, key=lambda item: item.id):
         lines.extend(
             [

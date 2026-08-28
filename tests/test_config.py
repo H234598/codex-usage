@@ -25,6 +25,29 @@ from codex_usage.models import Account, AccountUsage, LimitWindow
 from codex_usage.state import load_current_usage, save_current_usage, save_usage_snapshot
 
 
+def load_text(tmp_path, text):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(text, encoding="utf-8")
+    config_path.chmod(0o600)
+    return load_config(config_path)
+
+
+def test_loads_local_masterjet_connection(tmp_path):
+    config = load_text(
+        tmp_path,
+        '[masterjet]\ntransport="local"\nendpoint="/run/user/1000/masterjet.sock"\n',
+    )
+    assert config.masterjet.transport == "local"
+
+
+def test_https_endpoint_rejects_credentials_in_url(tmp_path):
+    with pytest.raises(ValueError, match="masterjet endpoint must not contain credentials"):
+        load_text(
+            tmp_path,
+            '[masterjet]\ntransport="https"\nendpoint="https://u:p@example.test"\n',
+        )
+
+
 class _BrokenInt(int):
     def __lt__(self, _other):
         raise RuntimeError("synthetic config integer comparison marker")
