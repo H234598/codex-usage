@@ -30,6 +30,8 @@ from codex_usage.cli import (
     main,
 )
 from codex_usage.config import AppConfig, add_or_update_account, load_config, save_config
+from codex_usage.masterjet_cache import CachedControlSnapshot, ControlSnapshot
+from codex_usage.masterjet_contracts import OpenAIControlAccount
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.spark_health import set_spark_health
 from codex_usage.state import load_current_usage, save_current_usage, save_usage_snapshot
@@ -1715,6 +1717,138 @@ def test_masterjet_status_reports_auth_wiring_fail_closed(capsys):
     assert json.loads(capsys.readouterr().out) == {
         "ok": False,
         "code": "control.authentication_required",
+    }
+
+
+def test_masterjet_openai_routing_options_uses_control_client(monkeypatch, capsys):
+    config = AppConfig(
+        accounts=(
+            Account(
+                id="profile-one",
+                label="OpenAI One",
+                profile_dir="/private/profile-one",
+                series="A",
+            ),
+        )
+    )
+    remote = OpenAIControlAccount(
+        ref="openai-one",
+        label="OpenAI One",
+        enabled=True,
+        local_profile_ref="profile-one",
+        source_host_ref="host-one",
+        auth_state="ready",
+        access_expires_at=None,
+        credential_generation=4,
+        vault_projection_state="current",
+        usage_state="available",
+    )
+    calls = []
+
+    class _Client:
+        def call(self, operation, arguments):
+            calls.append((operation, arguments))
+            return (remote,)
+
+    monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
+    monkeypatch.setattr(cli_module, "MasterjetControlClient", lambda _connection: _Client())
+
+    assert main(["masterjet", "openai-routing-options", "--json"]) == 0
+    assert calls == [("openai.accounts.list", {})]
+    assert json.loads(capsys.readouterr().out) == {
+        "series": [
+            {"prefix": "A", "enabled": True, "provider": "openai_chatgpt"}
+        ]
+    }
+
+
+def test_masterjet_openai_routing_options_uses_fresh_control_cache_on_outage(
+    tmp_path, monkeypatch, capsys
+):
+    config = AppConfig(
+        accounts=(
+            Account(
+                id="profile-one",
+                label="OpenAI One",
+                profile_dir="/private/profile-one",
+                series="A",
+            ),
+        )
+    )
+    remote = OpenAIControlAccount(
+        ref="openai-one",
+        label="OpenAI One",
+        enabled=True,
+        local_profile_ref="profile-one",
+        source_host_ref="host-one",
+        auth_state="ready",
+        access_expires_at=None,
+        credential_generation=4,
+        vault_projection_state="current",
+        usage_state="available",
+    )
+    cached = CachedControlSnapshot(
+        snapshot=ControlSnapshot(openai_accounts=(remote,)),
+        observed_at=1.0,
+        stale=False,
+    )
+
+    class _UnavailableClient:
+        def call(self, _operation, _arguments):
+            raise cli_module.MasterjetClientError("control.transport_unavailable")
+
+    monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
+    monkeypatch.setattr(
+        cli_module,
+        "MasterjetControlClient",
+        lambda _connection: _UnavailableClient(),
+    )
+    monkeypatch.setattr(cli_module, "default_state_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        cli_module,
+        "load_control_snapshot",
+        lambda _root, _max_age: cached,
+        raising=False,
+    )
+
+    assert main(["masterjet", "openai-routing-options", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "series": [
+            {"prefix": "A", "enabled": True, "provider": "openai_chatgpt"}
+        ]
+    }
+
+
+def test_masterjet_openai_routing_options_rejects_stale_control_cache(
+    tmp_path, monkeypatch, capsys
+):
+    cached = CachedControlSnapshot(
+        snapshot=ControlSnapshot(),
+        observed_at=1.0,
+        stale=True,
+    )
+
+    class _UnavailableClient:
+        def call(self, _operation, _arguments):
+            raise cli_module.MasterjetClientError("control.transport_unavailable")
+
+    monkeypatch.setattr(cli_module, "load_config", lambda _path: AppConfig(accounts=()))
+    monkeypatch.setattr(
+        cli_module,
+        "MasterjetControlClient",
+        lambda _connection: _UnavailableClient(),
+    )
+    monkeypatch.setattr(cli_module, "default_state_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        cli_module,
+        "load_control_snapshot",
+        lambda _root, _max_age: cached,
+    )
+
+    assert main(["masterjet", "openai-routing-options", "--json"]) == 2
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "code": "control.cache_unavailable",
     }
 
 

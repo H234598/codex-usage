@@ -62,11 +62,13 @@ from .health import clear_health, load_health, record_health_event
 from .history import HistoryStore
 from .json_utils import loads_strict
 from .masterjet_auth_sync import AuthSyncError, sync_account_auth
-from .masterjet_client import MasterjetControlClient
+from .masterjet_cache import load_control_snapshot
+from .masterjet_client import MasterjetClientError, MasterjetControlClient
 from .masterjet_contracts import (
     ControlOperation,
     GoogleControlAccount,
     GoogleOAuthTransactionV1,
+    OpenAIControlAccount,
 )
 from .models import AccountStatus, AccountUsage
 from .private_io import (
@@ -164,6 +166,7 @@ Login und Reaktivierung:
 
 Masterjet und Google:
   codex-usage masterjet status --json
+  codex-usage masterjet openai-routing-options --json
   codex-usage google accounts --json
   codex-usage google add ACCOUNT --oauth-client-json PATH --json
   codex-usage google oauth-begin ACCOUNT --browser BROWSER --json
@@ -462,6 +465,11 @@ def _build_parser() -> argparse.ArgumentParser:
     masterjet_status = masterjet_sub.add_parser("status", help="Controlstatus anzeigen")
     masterjet_status.add_argument("--json", action="store_true")
     masterjet_status.set_defaults(func=_cmd_masterjet_status)
+    masterjet_routing = masterjet_sub.add_parser(
+        "openai-routing-options", help="OpenAI-Routingoptionen anzeigen"
+    )
+    masterjet_routing.add_argument("--json", action="store_true")
+    masterjet_routing.set_defaults(func=_cmd_masterjet_openai_routing_options)
 
     google = sub.add_parser("google", help="Google-Controlaccounts verwalten")
     google_sub = google.add_subparsers(dest="google_command", required=True)
@@ -1474,6 +1482,57 @@ def _cmd_masterjet_status(args: argparse.Namespace) -> int:
     else:
         print("Fehler: control.authentication_required", file=sys.stderr)
     return 2
+
+
+def _cmd_masterjet_openai_routing_options(args: argparse.Namespace) -> int:
+    try:
+        config = load_config(args.config)
+        try:
+            accounts = MasterjetControlClient(config.masterjet).call(
+                "openai.accounts.list", {}
+            )
+        except MasterjetClientError as live_error:
+            try:
+                cached = load_control_snapshot(default_state_dir(), 30.0)
+            except Exception:
+                raise live_error from None
+            if cached.stale:
+                raise MasterjetClientError("control.cache_unavailable") from None
+            accounts = cached.snapshot.openai_accounts
+        if type(accounts) is not tuple or any(
+            type(account) is not OpenAIControlAccount for account in accounts
+        ):
+            raise MasterjetClientError("control.response_invalid")
+        by_profile: dict[str, OpenAIControlAccount] = {}
+        for account in accounts:
+            if account.local_profile_ref in by_profile:
+                raise MasterjetClientError("control.response_invalid")
+            by_profile[account.local_profile_ref] = account
+        series = [
+            {
+                "prefix": account.series,
+                "enabled": (
+                    account.id in by_profile and by_profile[account.id].enabled
+                ),
+                "provider": "openai_chatgpt",
+            }
+            for account in config.accounts
+            if account.series
+        ]
+    except MasterjetClientError as exc:
+        print(json.dumps({"ok": False, "code": exc.code}, ensure_ascii=False, allow_nan=False))
+        return 2
+    except Exception:
+        print(
+            json.dumps(
+                {"ok": False, "code": "control.transport_unavailable"},
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+        )
+        return 2
+    print(json.dumps({"series": series}, ensure_ascii=False, allow_nan=False))
+    return 0
 
 
 def _cmd_google_accounts(args: argparse.Namespace) -> int:
