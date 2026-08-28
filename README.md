@@ -120,6 +120,15 @@ On control failure, a redacted cache can preserve read-only display for at most
 direct settings write stay disabled. Recovery always starts with a fresh
 projection.
 
+Maintainer self-check uses only local fixtures: real `AF_UNIX` and TLS servers,
+the shipped CLI through the bounded page runner, both account-page callbacks,
+cache fallback after endpoint shutdown, and fail-closed action guards:
+
+```bash
+pytest -q tests/test_masterjet_client.py tests/test_masterjet_cache.py \
+  tests/test_openai_accounts_page.py tests/test_google_accounts_page.py
+```
+
 [Open separate fleet management and Ollama guidance](#fleet-management-and-ollama).
 
 ### Fleet management and Ollama

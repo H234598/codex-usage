@@ -334,64 +334,57 @@ def _task9_transport_and_auth_selfcheck(tmp_path, monkeypatch):
         },
     ]
 
-    class ScriptedHTTPSConnection(FakeHTTPSConnection):
-        scripted: ClassVar[list[FakeHTTPResponse]] = [
-            FakeHTTPResponse(json.dumps(value).encode()) for value in responses
-        ]
-        instances: ClassVar[list[ScriptedHTTPSConnection]] = []
+    original_default_context = ssl.create_default_context
+    with real_tls_server(tmp_path, responses=responses) as (port, certificate, capture):
+        monkeypatch.setattr(client_module, "_open_https_connection", _REAL_OPEN_HTTPS_CONNECTION)
+        monkeypatch.setattr(
+            client_module.ssl,
+            "create_default_context",
+            lambda: original_default_context(cafile=certificate),
+        )
+        remote = MasterjetControlClient(
+            MasterjetConnection(
+                transport="https",
+                endpoint=f"https://localhost:{port}/control",
+                timeout_seconds=2,
+            ),
+            bearer_provider=lambda: "task9-system-credential",
+            step_up_provider=lambda: "123456",
+        )
+        https_google = remote.call("google.accounts.list", {})
 
-        def getresponse(self) -> FakeHTTPResponse:
-            return type(self).scripted.pop(0)
-
-    def open_scripted_https(host, port, context, deadline):
-        return ScriptedHTTPSConnection(
-            host,
-            port,
-            timeout=round(deadline.remaining()),
-            context=context,
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "state"))
+        profile = tmp_path / "profile"
+        codex_home = profile / "codex-home"
+        codex_home.mkdir(parents=True, mode=0o700)
+        codex_home.chmod(0o700)
+        auth_path = codex_home / "auth.json"
+        secret = b'{"tokens":"task9-synthetic-auth"}'
+        auth_path.write_bytes(secret)
+        auth_path.chmod(0o600)
+        account = Account(
+            id="profile-1",
+            label="OpenAI synthetic",
+            profile_dir=str(profile),
+            auth_json_path=str(auth_path),
+        )
+        synced = sync_account_auth(
+            account,
+            remote,
+            clock=lambda: datetime(2026, 8, 28, 12, 5, tzinfo=UTC),
         )
 
-    monkeypatch.setattr(client_module, "_open_https_connection", open_scripted_https)
-    remote = https_client(
-        bearer_provider=lambda: "task9-system-credential",
-        step_up_provider=lambda: "123456",
-    )
-    https_google = remote.call("google.accounts.list", {})
-
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "state"))
-    profile = tmp_path / "profile"
-    codex_home = profile / "codex-home"
-    codex_home.mkdir(parents=True, mode=0o700)
-    codex_home.chmod(0o700)
-    auth_path = codex_home / "auth.json"
-    secret = b'{"tokens":"task9-synthetic-auth"}'
-    auth_path.write_bytes(secret)
-    auth_path.chmod(0o600)
-    account = Account(
-        id="profile-1",
-        label="OpenAI synthetic",
-        profile_dir=str(profile),
-        auth_json_path=str(auth_path),
-    )
-    synced = sync_account_auth(
-        account,
-        remote,
-        clock=lambda: datetime(2026, 8, 28, 12, 5, tzinfo=UTC),
-    )
-
-    requests = [
-        request for instance in ScriptedHTTPSConnection.instances for request in instance.requests
-    ]
+    requests = capture["requests"]
+    assert isinstance(requests, list)
     json_requests = b"".join(
-        body
-        for _method, _target, body, headers in requests
-        if headers.get("Content-Type") == "application/json"
+        request["body"]
+        for request in requests
+        if request["headers"].get("Content-Type") == "application/json"
     )
-    header_bytes = repr([headers for _method, _target, _body, headers in requests]).encode()
+    header_bytes = repr([request["headers"] for request in requests]).encode()
     ingress_headers = next(
-        headers for method, _target, _body, headers in requests if method == "PUT"
+        request["headers"] for request in requests if request["method"] == "PUT"
     )
-    assert ScriptedHTTPSConnection.scripted == []
     return {
         "local_google": local_google,
         "https_google": https_google,
@@ -402,6 +395,7 @@ def _task9_transport_and_auth_selfcheck(tmp_path, monkeypatch):
         "json_requests": json_requests,
         "headers": header_bytes,
         "environment": repr(dict(os.environ)).encode(),
+        "https_server_request_lines": [request["request_line"] for request in requests],
     }
 
 
@@ -1653,7 +1647,7 @@ def test_swap_and_restore_socket_fails_attestation_before_fd_send(tmp_path, monk
 
 
 @contextmanager
-def real_tls_server(tmp_path, *, wire_delay: float = 0):
+def real_tls_server(tmp_path, *, wire_delay: float = 0, responses=None):
     openssl = shutil.which("openssl")
     if openssl is None:
         pytest.skip("openssl unavailable for stdlib TLS fixture")
@@ -1687,44 +1681,52 @@ def real_tls_server(tmp_path, *, wire_delay: float = 0):
     server_context.sni_callback = lambda _socket, name, _context: capture.update(sni=name)
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", 0))
-    listener.listen(1)
+    scripted_responses = responses or [google_accounts_payload()]
+    listener.listen(len(scripted_responses))
     listener.settimeout(3)
     port = listener.getsockname()[1]
     finished = threading.Event()
 
     def serve():
         try:
-            connection, _ = listener.accept()
-            try:
-                with server_context.wrap_socket(connection, server_side=True) as tls_socket:
-                    request = bytearray()
-                    while b"\r\n\r\n" not in request:
-                        request.extend(tls_socket.recv(4096))
-                    head, body = request.split(b"\r\n\r\n", 1)
-                    lines = head.decode("ascii").split("\r\n")
-                    headers = dict(line.split(": ", 1) for line in lines[1:])
-                    length = int(headers["Content-Length"])
-                    while len(body) < length:
-                        body.extend(tls_socket.recv(length - len(body)))
-                    capture["request_line"] = lines[0]
-                    capture["headers"] = headers
-                    capture["body"] = bytes(body)
-                    response = json.dumps(google_accounts_payload()).encode()
-                    wire_response = (
-                        b"HTTP/1.1 200 OK\r\n"
-                        b"Content-Type: application/json\r\n"
-                        + f"Content-Length: {len(response)}\r\n".encode()
-                        + b"Connection: close\r\n\r\n"
-                        + response
-                    )
-                    if wire_delay:
-                        for byte in wire_response:
-                            tls_socket.sendall(bytes([byte]))
-                            time.sleep(wire_delay)
-                    else:
-                        tls_socket.sendall(wire_response)
-            except (OSError, ssl.SSLError) as exc:
-                capture["tls_error"] = type(exc).__name__
+            capture["requests"] = []
+            for scripted_response in scripted_responses:
+                connection, _ = listener.accept()
+                try:
+                    with server_context.wrap_socket(connection, server_side=True) as tls_socket:
+                        request = bytearray()
+                        while b"\r\n\r\n" not in request:
+                            request.extend(tls_socket.recv(4096))
+                        head, body = request.split(b"\r\n\r\n", 1)
+                        lines = head.decode("ascii").split("\r\n")
+                        headers = dict(line.split(": ", 1) for line in lines[1:])
+                        length = int(headers["Content-Length"])
+                        while len(body) < length:
+                            body.extend(tls_socket.recv(length - len(body)))
+                        request_capture = {
+                            "method": lines[0].split(" ", 1)[0],
+                            "request_line": lines[0],
+                            "headers": headers,
+                            "body": bytes(body),
+                        }
+                        capture["requests"].append(request_capture)
+                        capture.update(request_capture)
+                        response = json.dumps(scripted_response).encode()
+                        wire_response = (
+                            b"HTTP/1.1 200 OK\r\n"
+                            b"Content-Type: application/json\r\n"
+                            + f"Content-Length: {len(response)}\r\n".encode()
+                            + b"Connection: close\r\n\r\n"
+                            + response
+                        )
+                        if wire_delay:
+                            for byte in wire_response:
+                                tls_socket.sendall(bytes([byte]))
+                                time.sleep(wire_delay)
+                        else:
+                            tls_socket.sendall(wire_response)
+                except (OSError, ssl.SSLError) as exc:
+                    capture["tls_error"] = type(exc).__name__
         finally:
             listener.close()
             finished.set()
@@ -2471,6 +2473,14 @@ def test_full_plan_preview_dispatches_to_typed_redacted_contract(monkeypatch):
 def test_task9_selfcheck_covers_both_transports_and_synthetic_auth(tmp_path, monkeypatch):
     result = _task9_transport_and_auth_selfcheck(tmp_path, monkeypatch)
 
+    assert result.get("https_server_request_lines") == [
+        "POST /control HTTP/1.1",
+        "POST /control HTTP/1.1",
+        "POST /control HTTP/1.1",
+        "POST /control HTTP/1.1",
+        "PUT /admin/v1/secret-ingress-sessions/ingress-1 HTTP/1.1",
+        "POST /control HTTP/1.1",
+    ]
     assert result["local_google"] == result["https_google"]
     assert result["google_generation"] == 4
     assert result["auth_sync"] == ("openai-remote", 5, "succeeded")

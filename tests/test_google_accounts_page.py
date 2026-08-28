@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import queue
+import site
+import socket
 import sys
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+
+from codex_usage.config import AppConfig, MasterjetConnection, save_config
+from codex_usage.models import Account
 
 ROOT = Path(__file__).resolve().parents[1]
 APPLET_DIR = ROOT / "files" / "codex-usage@H234598"
@@ -65,6 +74,97 @@ def _payload(*, stale: bool = False):
             ]
         },
     }
+
+
+def _openai_payload():
+    return {
+        "schema_version": 1,
+        "accounts": [
+            {
+                "ref": "openai-remote",
+                "label": "OpenAI One",
+                "enabled": True,
+                "local_profile_ref": "openai-one",
+                "source_host_ref": "host-one",
+                "auth_state": "ready",
+                "access_expires_at": None,
+                "credential_generation": 4,
+                "vault_projection_state": "current",
+                "usage_state": "fresh",
+            }
+        ],
+    }
+
+
+@contextmanager
+def _task9_unix_control_server(socket_path: Path):
+    ready = threading.Event()
+    stopped = threading.Event()
+    finished = threading.Event()
+    requests = []
+
+    def response_for(request):
+        operation = request["operation"]
+        if operation == "openai.accounts.list":
+            return _openai_payload()
+        if operation == "google.accounts.list":
+            payload = _payload()
+            return {"schema_version": 1, "accounts": payload["accounts"]}
+        if operation == "google.projects.list":
+            payload = _payload()
+            return {
+                "schema_version": 1,
+                "account_ref": "google-one",
+                "inventory_generation": 4,
+                "projects": payload["projects"]["google-one"],
+            }
+        raise AssertionError(f"unexpected operation: {operation}")
+
+    def serve():
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            server.bind(str(socket_path))
+            socket_path.chmod(0o600)
+            server.listen(4)
+            ready.set()
+            while not stopped.is_set():
+                connection, _ = server.accept()
+                with connection:
+                    if stopped.is_set():
+                        break
+                    raw = bytearray()
+                    while b"\n" not in raw:
+                        chunk = connection.recv(65_536)
+                        if not chunk:
+                            break
+                        raw.extend(chunk)
+                    request = json.loads(raw.split(b"\n", 1)[0])
+                    requests.append(request)
+                    response = json.dumps(response_for(request), separators=(",", ":")).encode()
+                    connection.sendall(response + b"\n")
+        finally:
+            server.close()
+            finished.set()
+
+    thread = threading.Thread(target=serve, name="task9-unix-control", daemon=True)
+    thread.start()
+    assert ready.wait(2)
+
+    def stop():
+        stopped.set()
+        wake = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            wake.connect(str(socket_path))
+        finally:
+            wake.close()
+        assert finished.wait(2)
+
+    try:
+        yield requests, stop
+    finally:
+        if not stopped.is_set():
+            stop()
+        thread.join(timeout=0)
 
 
 def test_google_widget_renders_account_cards_status_and_project_table() -> None:
@@ -537,71 +637,143 @@ def test_live_projection_failure_revokes_previous_google_mutations() -> None:
 
 def test_task9_remote_outage_fail_closes_both_pages_and_all_account_writes(
     tmp_path,
+    monkeypatch,
 ) -> None:
     google_module = _module()
     openai_module = sys.modules["openai_accounts_page"]
-    google_model = google_module.GoogleAccountsModel()
-    openai_model = openai_module.OpenAIAccountsModel()
-    google_model.render(_payload())
-    openai_model.render(
-        [
-            {
-                "account": "openai-one",
-                "label": "OpenAI One",
-                "series-active": True,
-                "local_auth_state": "ready",
-                "auth_sync_required": True,
-            }
-        ],
-        [
-            {
-                "ref": "openai-remote",
-                "label": "OpenAI One",
-                "enabled": True,
-                "local_profile_ref": "openai-one",
-                "source_host_ref": "host-one",
-                "auth_state": "ready",
-                "access_expires_at": None,
-                "credential_generation": 4,
-                "vault_projection_state": "current",
-                "usage_state": "fresh",
-            }
-        ],
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    profile = home / "profile"
+    auth_dir = profile / "codex-home"
+    auth_dir.mkdir(parents=True, mode=0o700)
+    auth_path = auth_dir / "auth.json"
+    auth_secret = b'{"tokens":{"account_id":"task9-private-marker"}}'
+    auth_path.write_bytes(auth_secret)
+    auth_path.chmod(0o600)
+    socket_path = tmp_path / "masterjet.sock"
+    config_path = home / ".config" / "codex-usage" / "config.toml"
+    save_config(
+        AppConfig(
+            accounts=(
+                Account(
+                    id="openai-one",
+                    label="OpenAI One",
+                    profile_dir=str(profile),
+                    auth_json_path=str(auth_path),
+                    series="A",
+                    series_active=True,
+                    auth_sync_required=True,
+                ),
+            ),
+            masterjet=MasterjetConnection(
+                transport="local", endpoint=str(socket_path), timeout_seconds=2
+            ),
+        ),
+        config_path,
     )
-    calls = []
+    executable = tmp_path / "codex-usage-task9"
+    user_site = site.getusersitepackages()
+    lock_root = tmp_path / "private-locks"
+    executable.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        f"sys.path.insert(0, {user_site!r})\n"
+        f"sys.path.insert(0, {str(ROOT / 'src')!r})\n"
+        "import codex_usage.private_io as private_io\n"
+        f"private_io._private_lock_root = lambda: Path({str(lock_root)!r})\n"
+        "from codex_usage.cli import main\n"
+        "raise SystemExit(main())\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o700)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    completed = queue.Queue()
+    argv_seen = []
 
-    class Runner:
+    class Runner(openai_module.BoundedJsonRunner):
+        def __init__(self):
+            super().__init__(
+                timeout_seconds=5,
+                dispatcher=lambda callback, result: completed.put((callback, result)),
+            )
+
         def submit(self, argv, *, stdin_data=None, callback=None):
-            calls.append((tuple(argv), stdin_data, callback))
+            argv_seen.append(tuple(argv))
+            return super().submit(argv, stdin_data=stdin_data, callback=callback)
 
-    google_actions = google_module.GoogleActions(Runner())
-    openai_actions = openai_module.OpenAIActions(Runner())
-    google_actions.set_projection_ready(True)
-    openai_actions.set_projection_ready(True)
+    runner = Runner()
+    openai_page = openai_module.OpenAIAccountsPage(None, None, None)
+    openai_page._actions = openai_module.OpenAIActions(
+        runner, reauth_runner=runner, executable=str(executable)
+    )
+    google_page = google_module.GoogleAccountsPage(None, None, None)
+    google_page._actions = google_module.GoogleActions(
+        runner, executable=str(executable), confirm=lambda _preview: True
+    )
 
-    google_model.fail_closed()
-    openai_model.fail_closed()
-    google_actions.set_projection_ready(False)
-    openai_actions.set_projection_ready(False)
+    def dispatch_one():
+        callback, result = completed.get(timeout=8)
+        callback(result)
+        return result
+
+    with _task9_unix_control_server(socket_path) as (requests, stop_endpoint):
+        openai_page._refresh()
+        assert dispatch_one().ok is True
+        google_page._refresh()
+        assert dispatch_one().ok is True
+        preview = google_page.model.preview_plan(
+            {
+                "account_ref": "google-one",
+                "plan_id": "plan-one",
+                "expected_generation": 4,
+                "plan_digest": "sha256:" + "a" * 64,
+                "expires_at": "2026-08-28T18:00:00Z",
+                "step_count": 1,
+                "projects": [{"project_name": "Amber Meadow", "key_name": "Quiet River"}],
+            }
+        )
+        assert openai_page.model.stale is False
+        assert google_page.model.stale is False
+        assert openai_page._actions.projection_ready is True
+        assert google_page._actions.projection_ready is True
+        assert [request["operation"] for request in requests] == [
+            "openai.accounts.list",
+            "google.accounts.list",
+            "google.projects.list",
+        ]
+        stop_endpoint()
+
+        openai_page._refresh()
+        assert dispatch_one().payload["stale"] is True
+        google_page._refresh()
+        assert dispatch_one().payload["stale"] is True
+
+    calls_before_blocked_writes = len(argv_seen)
 
     blocked = (
-        lambda: google_actions.import_oauth_client("google-one", tmp_path / "oauth-client.json"),
-        lambda: google_actions.oauth_begin("google-one", browser="firefox"),
-        lambda: google_actions.inventory_refresh("google-one"),
-        lambda: google_actions.provision_plan("google-one"),
-        lambda: openai_actions.reauthenticate("openai-one"),
-        lambda: openai_actions.sync_auth("openai-one"),
+        lambda: google_page._actions.import_oauth_client(
+            "google-one", tmp_path / "oauth-client.json"
+        ),
+        lambda: google_page._actions.oauth_begin("google-one", browser="firefox"),
+        lambda: google_page._actions.inventory_refresh("google-one"),
+        lambda: google_page._actions.provision_plan("google-one"),
+        lambda: google_page._actions.apply(preview),
+        lambda: openai_page._actions.reauthenticate("openai-one"),
+        lambda: openai_page._actions.sync_auth("openai-one"),
     )
     for write in blocked:
         with pytest.raises(RuntimeError, match="STALE"):
             write()
-    with pytest.raises(RuntimeError, match="kanonische"):
-        openai_module.save_masterjet_connection(
-            lambda _key, _value: calls.append(("settings-write",)),
-            "https",
-            "https://masterjet.example.test/control",
-        )
 
-    assert google_model.cards == ()
-    assert openai_model.rows == ()
-    assert calls == []
+    cache_path = home / ".local" / "share" / "codex-usage" / "control-snapshot-v1.json"
+    assert cache_path.is_file()
+    assert auth_secret not in cache_path.read_bytes()
+    assert openai_page.model.stale is True
+    assert google_page.model.stale is True
+    assert "STALE" in openai_page._status.get_text()
+    assert "STALE" in google_page._status.get_text()
+    assert len(argv_seen) == calls_before_blocked_writes
+    assert auth_secret.decode() not in repr(argv_seen)
