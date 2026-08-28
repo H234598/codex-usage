@@ -387,6 +387,22 @@ def test_problem_correlation_id_accepts_server_token_grammar_at_128_bytes():
     assert problem.correlation_id == token
 
 
+@pytest.mark.parametrize("leading_character", [".", "_", ":", "-"])
+def test_operation_id_rejects_leading_token_punctuation(leading_character):
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_control_operation(valid_operation() | {"id": f"{leading_character}operation"})
+
+
+@pytest.mark.parametrize("leading_character", [".", "_", ":", "-"])
+def test_hive_problem_correlation_id_rejects_leading_token_punctuation(
+    leading_character,
+):
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_control_problem(
+            valid_problem() | {"correlation_id": f"{leading_character}correlation"}
+        )
+
+
 def test_control_operation_rejects_unknown_state():
     with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
         parse_control_operation(valid_operation() | {"state": "waiting"})
