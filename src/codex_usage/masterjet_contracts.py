@@ -5,7 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import NoReturn
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 _SCHEMA_VERSION = 1
 _MAX_ACCOUNTS = 256
@@ -31,6 +31,22 @@ _SECRET_VALUE_RE = re.compile(
     r"(?:^|\s)Bearer\s+[A-Za-z0-9._-]{8,}|"
     r"\b(?:access_token|refresh_token|client_secret)\s*[=:]\s*\S+)",
     re.IGNORECASE,
+)
+_OAUTH_QUERY_NAMES = frozenset(
+    {
+        "access_type",
+        "client_id",
+        "code_challenge",
+        "code_challenge_method",
+        "hd",
+        "include_granted_scopes",
+        "login_hint",
+        "prompt",
+        "redirect_uri",
+        "response_type",
+        "scope",
+        "state",
+    }
 )
 _ABSOLUTE_PATH_RE = re.compile(
     r"(?:^|[^A-Za-z0-9_])(?:file://|/(?:[^\s]*)|\\\\[^\s]+|[A-Za-z]:[\\/])"
@@ -727,12 +743,58 @@ def _authorization_url(value: object) -> str:
         or port not in {None, 443}
         or parsed.username is not None
         or parsed.password is not None
-        or not parsed.path.startswith("/o/oauth2/")
+        or parsed.path != "/o/oauth2/v2/auth"
         or parsed.fragment
-        or _SECRET_VALUE_RE.search(value)
     ):
         _invalid("authorization_url")
+    try:
+        query = parse_qsl(
+            parsed.query,
+            keep_blank_values=True,
+            strict_parsing=True,
+            max_num_fields=32,
+        )
+    except (UnicodeError, ValueError):
+        _invalid("authorization_url")
+    seen: set[str] = set()
+    for name, query_value in query:
+        normalized_name = name.casefold()
+        if normalized_name not in _OAUTH_QUERY_NAMES or normalized_name in seen:
+            _invalid("authorization_url")
+        seen.add(normalized_name)
+        try:
+            query_bytes = query_value.encode("ascii")
+        except UnicodeError:
+            _invalid("authorization_url")
+        if (
+            len(query_bytes) > 1_024
+            or any(not 0x20 <= byte <= 0x7E for byte in query_bytes)
+            or _SECRET_VALUE_RE.search(query_value)
+        ):
+            _invalid("authorization_url")
+        if normalized_name == "redirect_uri":
+            _loopback_redirect_uri(query_value)
     return value
+
+
+def _loopback_redirect_uri(value: str) -> None:
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        _invalid("authorization_url")
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or (port is not None and not 1 <= port <= 65_535)
+        or not parsed.path.startswith("/")
+        or "%" in parsed.path
+        or parsed.query
+        or parsed.fragment
+    ):
+        _invalid("authorization_url")
 
 
 def _bool(value: object, field: str) -> bool:

@@ -145,6 +145,55 @@ def test_google_oauth_transaction_rejects_untrusted_or_private_values(field, val
         parse_google_oauth_transaction(valid_google_oauth_transaction() | {field: value})
 
 
+@pytest.mark.parametrize(
+    "authorization_url",
+    [
+        "https://accounts.google.com/o/oauth2/v2/auth?client%5Fsecret=private",
+        "https://accounts.google.com/o/oauth2/v2/auth?ClIeNt_SeCrEt=private",
+        "https://accounts.google.com/o/oauth2/v2/auth?scope=openid&ScOpE=email",
+        "https://accounts.google.com/o/oauth2/v2/auth?state=GOCSPX%2Dprivate",
+        (
+            "https://accounts.google.com/o/oauth2/v2/auth?redirect_uri="
+            "http%3A%2F%2Fattacker.invalid%2Fcallback"
+        ),
+        (
+            "https://accounts.google.com/o/oauth2/v2/auth?redirect_uri="
+            "http%3A%2F%2Fuser%40localhost%3A8765%2Fcallback"
+        ),
+        (
+            "https://accounts.google.com/o/oauth2/v2/auth?redirect_uri="
+            "http%3A%2F%2Flocalhost%3A8765%2Fcallback%3Fprivate%3D1"
+        ),
+        "https://accounts.google.com/o/oauth2/v2/auth?unknown=value",
+        "https://accounts.google.com/o/oauth2/auth?scope=openid",
+    ],
+)
+def test_google_oauth_transaction_rejects_encoded_or_ambiguous_auth_parameters(
+    authorization_url,
+):
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_google_oauth_transaction(
+            valid_google_oauth_transaction()
+            | {"authorization_url": authorization_url}
+        )
+
+
+def test_google_oauth_transaction_accepts_strict_loopback_callback():
+    authorization_url = (
+        "https://accounts.google.com/o/oauth2/v2/auth?response_type=code"
+        "&client_id=public-client.apps.googleusercontent.com"
+        "&redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Fcallback"
+        "&scope=openid&code_challenge=public-challenge"
+        "&code_challenge_method=S256&state=public-state"
+    )
+
+    parsed = parse_google_oauth_transaction(
+        valid_google_oauth_transaction() | {"authorization_url": authorization_url}
+    )
+
+    assert parsed.authorization_url == authorization_url
+
+
 def test_google_oauth_transaction_rejects_unknown_fields():
     with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
         parse_google_oauth_transaction(valid_google_oauth_transaction() | {"state": "private"})

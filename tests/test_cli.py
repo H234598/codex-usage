@@ -135,6 +135,9 @@ def test_root_help_lists_all_commands(capsys):
         in output
     )
     assert "codex-usage account terminal ACCOUNT" in output
+    assert (
+        "codex-usage google add ACCOUNT --oauth-client-json PATH --json" in output
+    )
     assert "--format table|json" in output
     assert "codex-usage profile jobs [--account ACCOUNT] [--json]" in output
     assert "codex-usage profile job-status JOB_ID [--json]" in output
@@ -1461,19 +1464,43 @@ def test_google_add_keeps_oauth_client_path_local(monkeypatch, tmp_path, capsys)
             seen.append(("import", account_ref, path))
             return SimpleNamespace(account_ref=account_ref, generation=5, status="succeeded")
 
-        def oauth_begin(self, account_ref, *, browser):
-            seen.append(("begin", account_ref, browser))
-            return SimpleNamespace(
-                id="oauth-1",
-                account_ref=account_ref,
-                authorization_url="https://accounts.google.com/o/oauth2/v2/auth",
-                expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=ZoneInfo("UTC")),
-                generation=5,
-            )
-
     monkeypatch.setattr(cli_module, "_new_google_controller", lambda _path: Controller())
 
     assert (
+        main(
+            [
+                "google",
+                "add",
+                "google-one",
+                "--oauth-client-json",
+                str(source),
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    assert seen == [("import", "google-one", source)]
+    output = json.loads(capsys.readouterr().out)
+    assert output == {
+        "account_ref": "google-one",
+        "generation": 5,
+        "status": "succeeded",
+        "ok": True,
+    }
+    assert str(source) not in repr(output)
+
+
+def test_google_add_rejects_browser_before_controller(monkeypatch, tmp_path, capsys):
+    source = tmp_path / "oauth-client.json"
+    source.write_text("private", encoding="utf-8")
+    monkeypatch.setattr(
+        cli_module,
+        "_new_google_controller",
+        lambda _path: (_ for _ in ()).throw(AssertionError("controller constructed")),
+    )
+
+    with pytest.raises(SystemExit) as caught:
         main(
             [
                 "google",
@@ -1485,14 +1512,94 @@ def test_google_add_keeps_oauth_client_path_local(monkeypatch, tmp_path, capsys)
                 "firefox",
             ]
         )
-        == 0
+
+    assert caught.value.code == 2
+    assert "unrecognized arguments: --browser firefox" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("state", ["partial", "failed", "blocked"])
+def test_google_operation_terminal_failure_is_nonzero_structured_and_redacted(
+    monkeypatch, capsys, state
+):
+    operation = SimpleNamespace(
+        id="refresh-1",
+        kind="google.inventory.refresh",
+        state=state,
+        expected_generation=4,
+        resulting_generation=None,
+        plan_digest="sha256:" + "a" * 64,
+        expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=ZoneInfo("UTC")),
+    )
+    controller = SimpleNamespace(inventory_refresh=lambda _account: operation)
+    monkeypatch.setattr(cli_module, "_new_google_controller", lambda _path: controller)
+
+    assert main(["google", "inventory-refresh", "google-one", "--json"]) == 2
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["ok"] is False
+    assert output["code"] == f"control.operation_{state}"
+    assert output["state"] == state
+    assert "secret" not in json.dumps(output).casefold()
+
+
+@pytest.mark.parametrize("state", ["partial", "failed", "blocked"])
+def test_google_add_terminal_receipt_failure_is_nonzero_structured(
+    monkeypatch, tmp_path, capsys, state
+):
+    source = tmp_path / "oauth-client.json"
+    source.write_text("private", encoding="utf-8")
+    result = SimpleNamespace(account_ref="google-one", generation=4, status=state)
+    controller = SimpleNamespace(import_oauth_client=lambda *_args: result)
+    monkeypatch.setattr(cli_module, "_new_google_controller", lambda _path: controller)
+
+    assert (
+        main(
+            [
+                "google",
+                "add",
+                "google-one",
+                "--oauth-client-json",
+                str(source),
+                "--json",
+            ]
+        )
+        == 2
     )
 
-    assert seen == [
-        ("import", "google-one", source),
-        ("begin", "google-one", "firefox"),
-    ]
-    assert str(source) not in capsys.readouterr().out
+    output = json.loads(capsys.readouterr().out)
+    assert output == {
+        "account_ref": "google-one",
+        "generation": 4,
+        "status": state,
+        "ok": False,
+        "code": f"control.operation_{state}",
+    }
+
+
+def test_google_json_flag_selects_json_instead_of_human_output(monkeypatch, capsys):
+    row = SimpleNamespace(
+        ref="google-one",
+        label="Google One",
+        enabled=True,
+        subject_bound=True,
+        oauth_state="ready",
+        inventory_generation=4,
+        quota_state="fresh",
+        project_count=1,
+        billing_count=0,
+        reload_state="ready",
+    )
+    controller = SimpleNamespace(list=lambda: (row,))
+    monkeypatch.setattr(cli_module, "_new_google_controller", lambda _path: controller)
+
+    assert main(["google", "accounts"]) == 0
+    human = capsys.readouterr().out
+    assert human.startswith("REF")
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(human)
+
+    assert main(["google", "accounts", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["ref"] == "google-one"
 
 
 def test_google_cli_rejects_secret_quota_and_provider_identifier_options(capsys):

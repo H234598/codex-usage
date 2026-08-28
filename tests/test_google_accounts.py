@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from codex_usage.google_accounts import GoogleAccountsController, GoogleAccountsError
+from codex_usage.masterjet_client import MasterjetClientError
 from codex_usage.masterjet_contracts import (
     ControlOperation,
     GoogleControlAccount,
@@ -60,11 +61,12 @@ def operation(
 
 class FakeControlClient:
     def __init__(self) -> None:
-        self.accounts = (account("google-one", 4), account("google-two", 9))
+        self.accounts = (account("google-one", 4), account("google-two", 4))
         self.calls: list[tuple[str, object, int | None, str | None]] = []
         self.puts: list[tuple[str, bytes, int | None, str | None]] = []
         self.secret_views: list[bytearray] = []
         self.stored_plan = operation("google.provision.plan")
+        self.stored_plan_account_ref = "google-one"
 
     def call(
         self,
@@ -100,8 +102,14 @@ class FakeControlClient:
             )
         if name == "google.provision.plan":
             self.stored_plan = operation("google.provision.plan")
+            self.stored_plan_account_ref = str(arguments["account_ref"])
             return self.stored_plan
         if name == "operations.get":
+            if arguments != {
+                "operation_id": self.stored_plan.id,
+                "account_ref": self.stored_plan_account_ref,
+            }:
+                raise MasterjetClientError("control.plan_stale")
             return self.stored_plan
         if name == "google.provision.apply":
             return operation(
@@ -157,7 +165,7 @@ def test_list_keeps_google_accounts_separate() -> None:
 
     assert [row.ref for row in rows] == ["google-one", "google-two"]
     assert rows[0].inventory_generation == 4
-    assert rows[1].inventory_generation == 9
+    assert rows[1].inventory_generation == 4
 
 
 def test_oauth_begin_and_complete_bind_account_generation_and_transaction() -> None:
@@ -209,6 +217,10 @@ def test_provision_apply_reloads_and_binds_digest_after_restart() -> None:
         "operations.get",
         "google.provision.apply",
     ]
+    assert client.calls[-2][1] == {
+        "operation_id": "plan-1",
+        "account_ref": "google-one",
+    }
     assert client.calls[-1][1] == {"account_ref": "google-one", "plan_id": "plan-1"}
     assert client.calls[-1][2:] == (4, "idem-1")
 
@@ -260,6 +272,59 @@ def test_oauth_client_import_is_plan_session_put_apply_and_zeroes_buffer(tmp_pat
     ]
     assert source.as_posix() not in repr(controller(client))
     assert secret.decode() not in repr(controller(client))
+
+
+@pytest.mark.parametrize("state", ["partial", "failed", "blocked"])
+def test_oauth_client_import_returns_terminal_receipt_failure_without_apply(
+    tmp_path, state
+) -> None:
+    root = tmp_path / "private"
+    root.mkdir(mode=0o700)
+    source = root / "oauth-client.json"
+    source.write_text('{"client_secret":"private"}', encoding="utf-8")
+    source.chmod(0o600)
+
+    class TerminalReceiptClient(FakeControlClient):
+        def put_secret(self, *args, **kwargs):
+            receipt = super().put_secret(*args, **kwargs)
+            return SecretIngressReceipt(
+                session_id=receipt.session_id,
+                account_ref=receipt.account_ref,
+                state=state,
+                generation=receipt.generation,
+            )
+
+    client = TerminalReceiptClient()
+
+    result = controller(client).import_oauth_client("google-one", source)
+
+    assert result.status == state
+    assert not any(call[0] == "google.oauth-client-import.apply" for call in client.calls)
+
+
+@pytest.mark.parametrize("state", ["partial", "failed", "blocked"])
+def test_oauth_client_import_returns_terminal_apply_operation(tmp_path, state) -> None:
+    root = tmp_path / "private"
+    root.mkdir(mode=0o700)
+    source = root / "oauth-client.json"
+    source.write_text('{"client_secret":"private"}', encoding="utf-8")
+    source.chmod(0o600)
+
+    class TerminalApplyClient(FakeControlClient):
+        def call(self, name, arguments, expected_generation=None, idempotency_key=None):
+            if name == "google.oauth-client-import.apply":
+                self.calls.append((name, arguments, expected_generation, idempotency_key))
+                return operation(
+                    name,
+                    operation_id="import-apply-1",
+                    state=state,
+                    resulting_generation=None,
+                )
+            return super().call(name, arguments, expected_generation, idempotency_key)
+
+    result = controller(TerminalApplyClient()).import_oauth_client("google-one", source)
+
+    assert result.status == state
 
 
 def test_oauth_client_import_rejects_non_private_source_before_secret_put(tmp_path) -> None:

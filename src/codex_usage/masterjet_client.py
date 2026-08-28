@@ -46,7 +46,10 @@ _IDEMPOTENCY_RE = re.compile(
 _HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
 _INVALID_JSON = object()
 _OPERATION_ARGUMENT_FIELDS = {
-    "operations.get": ({"operation_id": "token"}, frozenset()),
+    "operations.get": (
+        {"operation_id": "token", "account_ref": "token"},
+        frozenset(),
+    ),
     "google.accounts.list": ({}, frozenset()),
     "google.projects.list": ({"account_ref": "token"}, frozenset()),
     "google.oauth.begin": (

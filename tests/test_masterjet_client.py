@@ -769,14 +769,18 @@ def test_operations_get_binds_returned_operation_id(monkeypatch):
 
     with pytest.raises(MasterjetClientError, match=r"control\.response_invalid"):
         https_client(bearer_provider=lambda: "remote-bearer").call(
-            "operations.get", {"operation_id": "plan-1"}
+            "operations.get",
+            {"operation_id": "plan-1", "account_ref": "google-1"},
         )
 
 
 @pytest.mark.parametrize(
     "operation_name,arguments",
     [
-        ("operations.get", {"operation_id": "plan-1"}),
+        (
+            "operations.get",
+            {"operation_id": "plan-1", "account_ref": "google-1"},
+        ),
         ("google.oauth-client-import.plan", {"account_ref": "google-1"}),
         (
             "google.oauth-client-import.apply",
@@ -802,6 +806,15 @@ def test_task6_specified_operations_are_accepted_by_request_contract(
         )
 
     assert len(FakeHTTPSConnection.instances) == 1
+
+
+def test_operations_get_requires_account_ref_before_transport():
+    with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "operations.get", {"operation_id": "plan-1"}
+        )
+
+    assert FakeHTTPSConnection.instances == []
 
 
 def test_https_uses_verified_tls_fixed_target_and_transient_auth_headers(monkeypatch):

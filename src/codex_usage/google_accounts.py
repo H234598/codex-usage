@@ -214,7 +214,10 @@ class GoogleAccountsController:
 
     def _provision_apply(self, plan_id: str, account_ref: str) -> ControlOperation:
         account = self._account(account_ref)
-        fetched = self._client.call("operations.get", {"operation_id": plan_id})
+        fetched = self._client.call(
+            "operations.get",
+            {"operation_id": plan_id, "account_ref": account.ref},
+        )
         plan = _require_plan(
             fetched,
             kind="google.provision.plan",
@@ -293,12 +296,15 @@ class GoogleAccountsController:
             if type(raw_receipt) is not SecretIngressReceipt:
                 raise MasterjetClientError("control.response_invalid")
             receipt = raw_receipt
-            if (
-                receipt.session_id != session.id
-                or receipt.account_ref != account.ref
-                or receipt.state != "consumed"
-                or receipt.generation <= plan.expected_generation
-            ):
+            if receipt.session_id != session.id or receipt.account_ref != account.ref:
+                raise MasterjetClientError("control.response_invalid")
+            if receipt.state in {"partial", "failed", "blocked"}:
+                return GoogleOAuthClientImportResult(
+                    account_ref=account.ref,
+                    generation=receipt.generation,
+                    status=receipt.state,
+                )
+            if receipt.state != "consumed" or receipt.generation <= plan.expected_generation:
                 raise MasterjetClientError("control.response_invalid")
             apply_key = self._idempotency_key()
             _require_unexpired(plan.expires_at, self._clock, "control.plan_stale")
@@ -312,11 +318,15 @@ class GoogleAccountsController:
                 kind="google.oauth-client-import.apply",
                 expected_generation=plan.expected_generation,
             )
-            if (
-                applied.plan_digest != plan.plan_digest
-                or applied.resulting_generation != receipt.generation
-                or applied.state != "succeeded"
-            ):
+            if applied.plan_digest != plan.plan_digest:
+                raise MasterjetClientError("control.response_invalid")
+            if applied.state in {"partial", "failed", "blocked"}:
+                return GoogleOAuthClientImportResult(
+                    account_ref=account.ref,
+                    generation=receipt.generation,
+                    status=applied.state,
+                )
+            if applied.state != "succeeded" or applied.resulting_generation != receipt.generation:
                 raise MasterjetClientError("control.response_invalid")
             return GoogleOAuthClientImportResult(
                 account_ref=account.ref,
