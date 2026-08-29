@@ -85,15 +85,34 @@ codex-usage masterjet connection-test --json
 ```
 
 HTTPS keeps certificate and hostname verification enabled and rejects
-redirects. Bearer credentials belong in an approved system credential provider,
-never in `config.toml`, argv, environment variables, logs, or URLs. Local
-secret ingress uses a private file descriptor; HTTPS ingress uses a bounded raw
-request body. Step-up TOTP values are transient stdin/dialog data only. Current
-CLI construction does not yet bind the approved Bearer/step-up providers to
-remote HTTPS clients, so remote control commands fail closed with
-`control.authentication_required` or `control.step_up_required` until that
-separate product fix lands. Do not work around this by storing secrets in the
-endpoint or config.
+redirects. Settings actions run the CLI in a transient `systemd --user` service
+with `--pipe --wait --collect`. HTTPS loads only
+`masterjet-control-bearer`; local AF_UNIX loads only
+`masterjet-local-attestation-key`. `systemd` creates `CREDENTIALS_DIRECTORY`
+for that process. Missing systemd user-manager support or credential fails
+closed; there is no plaintext fallback.
+
+Provision fixed encrypted sources once. Replace `/home/USER` with the home
+directory from the local account database, not an environment override. Input
+is read transiently by `systemd-ask-password`; no secret belongs in the command,
+environment, config, cache, or shell history:
+
+```bash
+install -d -m 0700 /home/USER/.config/codex-usage/credentials
+chmod 0700 /home/USER /home/USER/.config /home/USER/.config/codex-usage
+systemd-ask-password --user --echo=no -n "Masterjet HTTPS bearer" |
+  systemd-creds encrypt --user --name=masterjet-control-bearer - \
+  /home/USER/.config/codex-usage/credentials/masterjet-control-bearer.cred
+systemd-ask-password --user --echo=no -n "Masterjet local attestation key" |
+  systemd-creds encrypt --user --name=masterjet-local-attestation-key - \
+  /home/USER/.config/codex-usage/credentials/masterjet-local-attestation-key.cred
+chmod 0400 /home/USER/.config/codex-usage/credentials/*.cred
+```
+
+Provision only the credential for transports this desktop uses. Step-up TOTP
+stays in the same running CLI process through the Settings dialog/stdin pipe.
+Local secret ingress uses a private file descriptor; HTTPS ingress uses a
+bounded raw request body. Do not store secrets in the endpoint or config.
 
 OpenAI re-login only marks synchronization as required. Upload of the canonical
 `auth.json` is always a separate explicit action:

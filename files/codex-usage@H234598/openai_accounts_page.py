@@ -22,6 +22,9 @@ from gi.repository import GLib, Gtk  # noqa: E402
 from JsonSettingsWidgets import SettingsWidget  # noqa: E402
 
 from codex_usage.masterjet_credentials import STEP_UP_SENTINEL  # noqa: E402
+from codex_usage.masterjet_launcher import (  # noqa: E402
+    settings_masterjet_launcher_argv,
+)
 
 _OPENAI_REMOTE_FIELDS = frozenset(
     {
@@ -284,6 +287,7 @@ class BoundedJsonRunner:
         control = bytearray()
         prompted = False
         try:
+            argv = settings_masterjet_launcher_argv(argv)
             process = subprocess.Popen(
                 argv,
                 stdin=(

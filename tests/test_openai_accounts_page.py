@@ -525,6 +525,34 @@ def test_bounded_runner_passes_only_audited_gui_session_environment(monkeypatch)
     assert result.payload == {**allowed, **dict.fromkeys(blocked)}
 
 
+def test_bounded_runner_routes_control_through_systemd_credential_launcher(
+    monkeypatch,
+) -> None:
+    module = _module()
+    calls = []
+
+    def launch(argv):
+        calls.append(argv)
+        return (
+            sys.executable,
+            "-c",
+            "import json; print(json.dumps({'transport': 'systemd'}))",
+        )
+
+    monkeypatch.setattr(module, "settings_masterjet_launcher_argv", launch)
+    command = (
+        "/home/operator/.local/bin/codex-usage",
+        "google",
+        "accounts",
+        "--json",
+    )
+
+    result = module.BoundedJsonRunner(dispatcher=lambda *args: args)._run(command, None)
+
+    assert calls == [command]
+    assert result == module.CommandResult(True, {"transport": "systemd"}, "")
+
+
 def test_bounded_runner_wipes_copied_stdin_when_thread_start_fails(monkeypatch) -> None:
     module = _module()
     events = []
