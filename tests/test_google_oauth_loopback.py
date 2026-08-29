@@ -10,6 +10,7 @@ import codex_usage.google_oauth_loopback as loopback_module
 from codex_usage.google_oauth_loopback import (
     GoogleOAuthBrowserLauncher,
     GoogleOAuthLoopbackError,
+    LoopbackOAuthCallbackLease,
     LoopbackOAuthCallbackProvider,
 )
 
@@ -123,6 +124,104 @@ def test_browser_launcher_rejects_non_ascii_account_before_browser_discovery(
         )
 
     assert selected == []
+
+
+@pytest.mark.parametrize("control_exception", [KeyboardInterrupt, SystemExit])
+def test_browser_launcher_propagates_control_exception(
+    monkeypatch: pytest.MonkeyPatch, control_exception
+) -> None:
+    interrupt = control_exception("stop-now")
+    monkeypatch.setattr(
+        loopback_module, "_select_browser", lambda _browser: (_ for _ in ()).throw(interrupt)
+    )
+
+    with pytest.raises(control_exception) as caught:
+        GoogleOAuthBrowserLauncher().open(
+            "firefox",
+            "google-one",
+            "http://127.0.0.1:8765/oauth/start/nonsecret",
+        )
+
+    assert caught.value is interrupt
+
+
+@pytest.mark.parametrize("control_exception", [KeyboardInterrupt, SystemExit])
+def test_callback_acquire_closes_listener_and_propagates_control_exception(
+    monkeypatch: pytest.MonkeyPatch, control_exception
+) -> None:
+    interrupt = control_exception("stop-now")
+
+    class Listener:
+        closed = False
+
+        def set_inheritable(self, _inheritable: bool) -> None:
+            raise interrupt
+
+        def close(self) -> None:
+            self.closed = True
+
+    listener = Listener()
+    monkeypatch.setattr(loopback_module.socket, "socket", lambda *_args: listener)
+
+    with pytest.raises(control_exception) as caught:
+        LoopbackOAuthCallbackProvider().acquire()
+
+    assert caught.value is interrupt
+    assert listener.closed is True
+
+
+@pytest.mark.parametrize("control_exception", [KeyboardInterrupt, SystemExit])
+def test_callback_prepare_propagates_control_exception(
+    monkeypatch: pytest.MonkeyPatch, control_exception
+) -> None:
+    import codex_usage.masterjet_contracts as contracts
+
+    interrupt = control_exception("stop-now")
+    lease = LoopbackOAuthCallbackProvider().acquire()
+    monkeypatch.setattr(
+        contracts,
+        "google_oauth_redirect_uri",
+        lambda _url: (_ for _ in ()).throw(interrupt),
+    )
+    try:
+        with pytest.raises(control_exception) as caught:
+            lease.prepare_authorization("https://accounts.google.com/o/oauth2/v2/auth")
+        assert caught.value is interrupt
+    finally:
+        lease.close()
+
+
+@pytest.mark.parametrize("control_exception", [KeyboardInterrupt, SystemExit])
+def test_callback_receive_propagates_control_exception_and_revokes_authorization(
+    control_exception,
+) -> None:
+    interrupt = control_exception("stop-now")
+
+    class Listener:
+        closed = False
+
+        def settimeout(self, _timeout: float) -> None:
+            pass
+
+        def accept(self):
+            raise interrupt
+
+        def close(self) -> None:
+            self.closed = True
+
+    listener = Listener()
+    lease = LoopbackOAuthCallbackLease(
+        listener, port=8765, path="/oauth/callback/token", start_path="/oauth/start/token"
+    )
+    lease._authorization_url = "https://accounts.google.com/o/oauth2/v2/auth"
+
+    with pytest.raises(control_exception) as caught:
+        lease.receive(expected_state="state-one", timeout_seconds=1.0)
+
+    assert caught.value is interrupt
+    assert lease._authorization_url is None
+    lease.close()
+    assert listener.closed is True
 
 
 def test_loopback_lease_denies_cross_state_and_replay() -> None:

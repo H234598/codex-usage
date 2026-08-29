@@ -798,10 +798,6 @@ class ResolverPipe:
             raise self.close_error
 
 
-class ResolverAbort(BaseException):
-    pass
-
-
 class ResolverProcess:
     pid = 42
 
@@ -2454,11 +2450,15 @@ def test_resolver_result_must_match_numeric_tcp_sockaddr(monkeypatch, worker):
     assert caught.value.__context__ is None
 
 
-def test_resolver_baseexception_is_sanitized_after_process_reap(monkeypatch):
+@pytest.mark.parametrize("control_exception", [KeyboardInterrupt, SystemExit])
+def test_resolver_control_exception_propagates_after_process_reap(
+    monkeypatch, control_exception
+):
     events = []
+    interrupt = control_exception("stop-now")
     receiver = ResolverPipe(
         events,
-        poll_error=ResolverAbort("private-resolver-state"),
+        poll_error=interrupt,
     )
     sender = ResolverPipe(events)
     process = ResolverProcess(events)
@@ -2470,29 +2470,43 @@ def test_resolver_baseexception_is_sanitized_after_process_reap(monkeypatch):
         _REAL_OPEN_HTTPS_CONNECTION,
     )
 
-    with pytest.raises(
-        MasterjetClientError,
-        match=r"control\.transport_unavailable",
-    ) as caught:
+    with pytest.raises(control_exception) as caught:
         https_client(bearer_provider=lambda: "remote-bearer").call(
             "google.accounts.list", {}
         )
 
-    assert caught.value.__context__ is None
+    assert caught.value is interrupt
     assert events.index("terminate") < events.index("kill") < events.index("process.close")
 
 
-def test_resolver_worker_baseexception_is_contained_and_pipe_is_closed(monkeypatch):
+def test_resolver_worker_exception_is_contained_and_pipe_is_closed(monkeypatch):
     sender = ResolverWorkerSender()
 
     def fail_resolution(*_args, **_kwargs):
-        raise ResolverAbort("private-resolver-state")
+        raise ValueError("private-resolver-state")
 
     monkeypatch.setattr(client_module.socket, "getaddrinfo", fail_resolution)
 
     client_module._resolve_worker("masterjet.example.test", 443, sender)
 
     assert sender.messages == [(False, ())]
+    assert sender.closed is True
+
+
+@pytest.mark.parametrize("control_exception", [KeyboardInterrupt, SystemExit])
+def test_resolver_worker_control_exception_propagates(monkeypatch, control_exception):
+    sender = ResolverWorkerSender()
+    interrupt = control_exception("stop-now")
+
+    def fail_resolution(*_args, **_kwargs):
+        raise interrupt
+
+    monkeypatch.setattr(client_module.socket, "getaddrinfo", fail_resolution)
+
+    with pytest.raises(control_exception) as caught:
+        client_module._resolve_worker("masterjet.example.test", 443, sender)
+
+    assert caught.value is interrupt
     assert sender.closed is True
 
 
@@ -2529,7 +2543,7 @@ def test_resolver_process_cleanup_errors_are_sanitized_after_kill(
     events = []
     receiver = ResolverPipe(
         events,
-        poll_error=ResolverAbort("private-resolver-state"),
+        poll_error=ValueError("private-resolver-state"),
     )
     sender = ResolverPipe(events)
     process = ResolverProcess(events, failing_method=failing_method)

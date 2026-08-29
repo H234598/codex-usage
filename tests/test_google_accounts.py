@@ -418,6 +418,28 @@ def test_oauth_authorize_uses_fresh_default_client_and_raw_code_ingress() -> Non
     assert client.puts[0][1] == b"private-oauth-code"
 
 
+@pytest.mark.parametrize("control_exception", [KeyboardInterrupt, SystemExit])
+def test_oauth_authorize_propagates_browser_control_exception_after_cleanup(
+    control_exception,
+) -> None:
+    client = AuthorizationClient()
+    provider = AuthorizationCallbackProvider()
+    interrupt = control_exception("stop-now")
+    subject = GoogleAccountsController(
+        client,
+        clock=lambda: NOW,
+        idempotency_key_factory=lambda: "idem-one",
+        callback_provider=provider,
+        browser_opener=lambda *_args: (_ for _ in ()).throw(interrupt),
+    )
+
+    with pytest.raises(control_exception) as caught:
+        subject.oauth_authorize("google-one", browser="firefox")
+
+    assert caught.value is interrupt
+    assert provider.lease.close_count == 1
+
+
 @pytest.mark.parametrize("availability", ["missing", "ambiguous", "stale"])
 def test_oauth_authorize_requires_fresh_available_projected_client(availability) -> None:
     client = AuthorizationClient()

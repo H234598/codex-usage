@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 
 import pytest
+from codex_master_test_source import codex_master_test_source
 
 import codex_usage.masterjet_client as client_module
 from codex_usage.config import MasterjetConnection
@@ -20,13 +20,10 @@ from codex_usage.masterjet_credentials import (
     local_attestation_verifier_from_systemd_credentials,
 )
 
-ADMIN_ROOT = Path("/home/teladi/.codex-worktrees/codex-master/admin-control-20260828")
-sys.path.insert(0, str(ADMIN_ROOT / "src"))
-sys.path.insert(0, str(ADMIN_ROOT / "tests"))
-
-from codex_master.admin_service import SecretIngressSessionV1  # noqa: E402
-from codex_master.admin_socket import AdminSocketServer, UnixPeerCredentials  # noqa: E402
-from test_admin_socket import PRINCIPAL, _Hosts, _SecretIngress, _service  # noqa: E402
+with codex_master_test_source(require_tests=True, module_level=True):
+    from codex_master.admin_service import SecretIngressSessionV1
+    from codex_master.admin_socket import AdminSocketServer, UnixPeerCredentials
+    from test_admin_socket import PRINCIPAL, _Hosts, _SecretIngress, _service
 
 PLAN_DIGEST = "sha256:" + "a" * 64
 

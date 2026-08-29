@@ -17,6 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from codex_master_test_source import codex_master_test_source
 
 from codex_usage.config import AppConfig, MasterjetConnection, save_config
 from codex_usage.models import Account
@@ -102,11 +103,8 @@ def _openai_payload():
 
 @contextmanager
 def _task9_unix_control_server(socket_path: Path, attestation_key_fd: int):
-    admin_src = Path(
-        "/home/teladi/.codex-worktrees/codex-master/admin-control-20260828/src"
-    )
-    sys.path.insert(0, str(admin_src))
-    from codex_master.admin_socket import _server_attestation
+    with codex_master_test_source(require_tests=False):
+        from codex_master.admin_socket import _server_attestation
 
     ready = threading.Event()
     stopped = threading.Event()

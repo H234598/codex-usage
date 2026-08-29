@@ -893,22 +893,29 @@ def _close_http(connection: http.client.HTTPSConnection) -> None:
 
 def _resolve_worker(host: str, port: int, sender: object) -> None:
     try:
-        addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-        normalized = [
-            (int(family), int(kind), int(protocol), str(canonical_name), tuple(address))
-            for family, kind, protocol, canonical_name, address in addresses[:32]
-        ]
-        message = (True, normalized)
-    except BaseException:
-        message = (False, ())
-    try:
-        sender.send(message)
-    except BaseException:
-        pass
+        try:
+            addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            normalized = [
+                (
+                    int(family),
+                    int(kind),
+                    int(protocol),
+                    str(canonical_name),
+                    tuple(address),
+                )
+                for family, kind, protocol, canonical_name, address in addresses[:32]
+            ]
+            message = (True, normalized)
+        except Exception:
+            message = (False, ())
+        try:
+            sender.send(message)
+        except Exception:
+            pass
     finally:
         try:
             sender.close()
-        except BaseException:
+        except Exception:
             pass
 
 
@@ -944,7 +951,7 @@ class _ResolverProcessReaper:
                 )
                 try:
                     thread.start()
-                except BaseException:
+                except Exception:
                     return False
                 self._thread = thread
             self._reserved += 1
@@ -996,7 +1003,7 @@ class _ResolverProcessReaper:
         try:
             with self._lock:
                 pending = tuple(self._pending.values())
-        except BaseException:
+        except Exception:
             return
         for process in pending:
             self._reap_once(process)
@@ -1035,7 +1042,7 @@ def _resolve_host(host: str, port: int, deadline: _Deadline) -> list[tuple[objec
                 result = addresses
             else:
                 failure = "control.transport_unavailable"
-    except BaseException:
+    except Exception:
         failure = _resolver_failure_code(deadline)
     finally:
         cleanup_succeeded = _cleanup_resolver(process, receiver, sender)
@@ -1050,7 +1057,7 @@ def _resolver_failure_code(deadline: _Deadline) -> str:
     try:
         if deadline.expired():
             return "control.timeout"
-    except BaseException:
+    except Exception:
         pass
     return "control.transport_unavailable"
 
@@ -1062,7 +1069,7 @@ def _cleanup_resolver(process: object, receiver: object, sender: object) -> bool
             continue
         try:
             pipe.close()
-        except BaseException:
+        except Exception:
             succeeded = False
     if process is None:
         _RESOLVER_REAPER.release()
@@ -1080,7 +1087,7 @@ def _stop_process(process: object) -> tuple[bool, bool]:
     succeeded = True
     try:
         pid = process.pid
-    except BaseException:
+    except Exception:
         pid = 1
         succeeded = False
     if pid is not None:
@@ -1110,14 +1117,14 @@ def _try_process_call(process: object, method: str, **kwargs: object) -> bool:
     try:
         getattr(process, method)(**kwargs)
         return True
-    except BaseException:
+    except Exception:
         return False
 
 
 def _process_alive(process: object) -> tuple[bool, bool]:
     try:
         return process.is_alive() is True, True
-    except BaseException:
+    except Exception:
         return True, False
 
 

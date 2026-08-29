@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import json
-import sys
-from pathlib import Path
 
 import pytest
+from codex_master_test_source import codex_master_test_source
 
 from codex_usage.masterjet_client import _encode_request
 from codex_usage.masterjet_contracts import (
@@ -13,12 +12,9 @@ from codex_usage.masterjet_contracts import (
     parse_google_oauth_client_import_receipt,
 )
 
-ADMIN_ROOT = Path("/home/teladi/.codex-worktrees/codex-master/admin-control-20260828")
-sys.path.insert(0, str(ADMIN_ROOT / "src"))
-sys.path.insert(0, str(ADMIN_ROOT / "tests"))
-
-from codex_master.admin_contracts import AdminRequestV1, parse_admin_request  # noqa: E402
-from test_admin_service import command, principal, service_at  # noqa: E402
+with codex_master_test_source(require_tests=True, module_level=True):
+    from codex_master.admin_contracts import AdminRequestV1, parse_admin_request
+    from test_admin_service import command, principal, service_at
 
 DIGEST = "sha256:" + "a" * 64
 

@@ -65,7 +65,7 @@ class GoogleOAuthBrowserLauncher:
                 env=_browser_environment(),
             )
             return GoogleOAuthBrowserLease(process, profile=profile)
-        except BaseException:
+        except Exception:
             raise GoogleOAuthLoopbackError("oauth.browser_unavailable") from None
 
 
@@ -90,21 +90,25 @@ class GoogleOAuthBrowserLease:
 class LoopbackOAuthCallbackProvider:
     def acquire(self) -> LoopbackOAuthCallbackLease:
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        lease: LoopbackOAuthCallbackLease | None = None
         try:
             listener.set_inheritable(False)
             listener.bind(("127.0.0.1", 0))
             listener.listen(1)
             port = listener.getsockname()[1]
             token = secrets.token_urlsafe(24)
-            return LoopbackOAuthCallbackLease(
+            lease = LoopbackOAuthCallbackLease(
                 listener,
                 port=port,
                 path=f"/oauth/callback/{token}",
                 start_path=f"/oauth/start/{token}",
             )
-        except BaseException:
-            listener.close()
+            return lease
+        except Exception:
             raise GoogleOAuthLoopbackError("oauth.callback_unavailable") from None
+        finally:
+            if lease is None:
+                listener.close()
 
 
 class LoopbackOAuthCallbackLease:
@@ -148,7 +152,7 @@ class LoopbackOAuthCallbackLease:
         try:
             redirect_uri = google_oauth_redirect_uri(authorization_url)
             google_oauth_state(authorization_url)
-        except BaseException:
+        except Exception:
             raise GoogleOAuthLoopbackError("oauth.callback_invalid") from None
         with self._lock:
             if self._closed or self._consumed or redirect_uri != self.redirect_uri:
@@ -212,7 +216,7 @@ class LoopbackOAuthCallbackLease:
             raise GoogleOAuthLoopbackError("oauth.callback_timeout") from None
         except OSError:
             raise GoogleOAuthLoopbackError("oauth.callback_unavailable") from None
-        except BaseException:
+        except Exception:
             raise GoogleOAuthLoopbackError("oauth.callback_invalid") from None
         finally:
             self._authorization_url = None

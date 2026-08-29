@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 APPLET_DIR = ROOT / "files" / "codex-usage@H234598"
 sys.path.insert(0, str(APPLET_DIR))
@@ -13,6 +15,33 @@ sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings/bin")
 
 from dynamic_series_list import DynamicSeriesList  # noqa: E402
 from TreeListWidgets import List  # noqa: E402
+
+_MISSING = object()
+_MASTERJET_CACHE_FIELDS = (
+    "_masterjet_cache",
+    "_masterjet_cache_at",
+    "_masterjet_cache_key",
+)
+
+
+@pytest.fixture(autouse=True)
+def _restore_dynamic_series_class_cache():
+    original = {
+        field: getattr(DynamicSeriesList, field, _MISSING)
+        for field in _MASTERJET_CACHE_FIELDS
+    }
+    for field in _MASTERJET_CACHE_FIELDS:
+        if hasattr(DynamicSeriesList, field):
+            delattr(DynamicSeriesList, field)
+    try:
+        yield
+    finally:
+        for field, value in original.items():
+            if value is _MISSING:
+                if hasattr(DynamicSeriesList, field):
+                    delattr(DynamicSeriesList, field)
+            else:
+                setattr(DynamicSeriesList, field, value)
 
 
 class _SeriesTable:
@@ -219,10 +248,6 @@ def test_masterjet_series_uses_only_codex_usage_control_cli(
         lambda *_args: ([process.stdout], [], []),
     )
     monkeypatch.setattr("dynamic_series_list.os.read", lambda *_args: next(chunks))
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
-    DynamicSeriesList._masterjet_cache_key = None
-
     series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
     assert DynamicSeriesList._masterjet_series(series_widget) == ("A",)
     assert series_widget._masterjet_projection_ready is True
@@ -254,9 +279,6 @@ def test_masterjet_series_rechecks_projection_instead_of_offering_cached_routing
     )
     command.chmod(0o700)
     monkeypatch.setattr("dynamic_series_list.Path.home", lambda: tmp_path)
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
-
     series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
     assert DynamicSeriesList._masterjet_series(series_widget) == ("A",)
 
@@ -264,10 +286,6 @@ def test_masterjet_series_rechecks_projection_instead_of_offering_cached_routing
     command.write_text("raise SystemExit(7)\n", encoding="utf-8")
     assert DynamicSeriesList._masterjet_series(series_widget) == ()
     assert series_widget._masterjet_projection_ready is False
-
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
-
 
 def test_masterjet_series_keeps_ascii_hyphen_and_underscore_prefixes(tmp_path, monkeypatch) -> None:
     command = tmp_path / ".local/bin/codex-usage"
@@ -285,15 +303,8 @@ def test_masterjet_series_keeps_ascii_hyphen_and_underscore_prefixes(tmp_path, m
     )
     command.chmod(0o700)
     monkeypatch.setattr("dynamic_series_list.Path.home", lambda: tmp_path)
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
-
     series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
     assert DynamicSeriesList._masterjet_series(series_widget) == ("A_B", "Q-INPLACE")
-
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
-
 
 def test_stale_routing_projection_is_not_offered_or_editable(tmp_path, monkeypatch) -> None:
     command = tmp_path / ".local/bin/codex-usage"
@@ -368,9 +379,6 @@ def test_masterjet_series_fails_closed_when_child_closes_stdout_but_hangs(
     )
     command.chmod(0o700)
     monkeypatch.setattr("dynamic_series_list.Path.home", lambda: tmp_path)
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
-
     series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
     series_widget._MASTERJET_TIMEOUT_SECONDS = 0.1
     assert DynamicSeriesList._masterjet_series(series_widget) == ()
@@ -409,9 +417,6 @@ def test_masterjet_cleanup_ignores_child_exit_race(monkeypatch) -> None:
         "dynamic_series_list.os.killpg",
         lambda *_args: (_ for _ in ()).throw(ProcessLookupError("group gone")),
     )
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
-
     series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
     assert DynamicSeriesList._masterjet_series(series_widget) == ()
 
@@ -448,8 +453,6 @@ def test_masterjet_cleanup_reaps_after_second_kill(monkeypatch) -> None:
     monkeypatch.setattr("dynamic_series_list.os.read", lambda *_args: b"")
     monkeypatch.setattr("dynamic_series_list.os.killpg", lambda *_args: None)
 
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
     series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
 
     assert DynamicSeriesList._masterjet_series(series_widget) == ()
@@ -494,8 +497,6 @@ def test_masterjet_cleanup_ignores_wait_reaping_race(monkeypatch) -> None:
         lambda *_args: (_ for _ in ()).throw(ProcessLookupError("group gone")),
     )
 
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
     series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
 
     assert DynamicSeriesList._masterjet_series(series_widget) == ()
@@ -738,3 +739,14 @@ def test_open_dialog_survives_base_editor_error_and_restores_schema(monkeypatch)
 
     assert DynamicSeriesList.open_add_edit_dialog(widget, ["alpha", ""]) is None
     assert widget.columns is original_columns
+
+
+@pytest.mark.parametrize("iteration", range(2))
+def test_dynamic_series_cache_state_is_order_independent(iteration: int) -> None:
+    assert iteration in (0, 1)
+    assert not hasattr(DynamicSeriesList, "_masterjet_cache")
+    assert not hasattr(DynamicSeriesList, "_masterjet_cache_at")
+    assert not hasattr(DynamicSeriesList, "_masterjet_cache_key")
+    DynamicSeriesList._masterjet_cache = ("must-not-leak",)
+    DynamicSeriesList._masterjet_cache_at = 99.0
+    DynamicSeriesList._masterjet_cache_key = "must-not-leak"

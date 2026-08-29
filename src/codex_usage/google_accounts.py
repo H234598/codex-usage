@@ -298,7 +298,7 @@ class GoogleAccountsController:
                 try:
                     lease.prepare_authorization(transaction.authorization_url)
                     browser_lease = opener(browser, account.ref, lease.launch_uri)
-                except BaseException:
+                except Exception:
                     raise MasterjetClientError("oauth.browser_unavailable") from None
                 try:
                     code = lease.receive(expected_state=state, timeout_seconds=timeout)
@@ -382,7 +382,7 @@ class GoogleAccountsController:
                 if browser_lease is not None:
                     try:
                         browser_lease.close()
-                    except BaseException:
+                    except Exception:
                         pass
                 if lease is not None and lease is self._callback_lease:
                     try:
@@ -437,7 +437,7 @@ class GoogleAccountsController:
         if timer is not None:
             try:
                 timer.cancel()
-            except BaseException:
+            except Exception:
                 pass
 
     def _quarantine_callback(self) -> None:
@@ -447,7 +447,7 @@ class GoogleAccountsController:
         if timer is not None:
             try:
                 timer.cancel()
-            except BaseException:
+            except Exception:
                 pass
 
     def _require_mutation_allowed(self) -> None:
@@ -474,18 +474,18 @@ class GoogleAccountsController:
             timer_ref.append(timer)
             self._callback_timer = timer
             timer.start()
-        except BaseException:
+        except Exception:
             self._callback_timer = current
             if timer is not None:
                 try:
                     timer.cancel()
-                except BaseException:
+                except Exception:
                     pass
             raise MasterjetClientError("oauth.callback_unavailable") from None
         if current is not None:
             try:
                 current.cancel()
-            except BaseException:
+            except Exception:
                 pass
 
     def _expire_callback(
@@ -810,5 +810,5 @@ def _zero_secret(secret: bytearray) -> None:
 def _close_callback_lease(lease: GoogleOAuthCallbackLease) -> None:
     try:
         lease.close()
-    except BaseException:
+    except Exception:
         raise MasterjetClientError("oauth.callback_unavailable") from None
