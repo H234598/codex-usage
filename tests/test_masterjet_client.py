@@ -17,6 +17,15 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
+from masterjet_resolver_workers import (
+    blocking_resolver_worker,
+    hostname_resolver_worker,
+    malformed_resolver_worker,
+    wrong_family_resolver_worker,
+    wrong_port_resolver_worker,
+    wrong_protocol_resolver_worker,
+    wrong_shape_resolver_worker,
+)
 
 import codex_usage.masterjet_client as client_module
 import codex_usage.masterjet_contracts as contracts_module
@@ -730,40 +739,6 @@ def test_complete_openai_auth_sync_over_real_https_reads_fd_once_and_raw_secret_
     assert requests[3]["body"] == raw_secret
     assert all(raw_secret not in request["body"] for request in requests[:3] + requests[4:])
     assert raw_secret not in repr([request["headers"] for request in requests]).encode()
-
-
-def blocking_resolver_worker(_host: str, _port: int, _sender: object) -> None:
-    time.sleep(60)
-
-
-def malformed_resolver_worker(_host: str, _port: int, sender: object) -> None:
-    sender.send(None)
-    sender.close()
-
-
-def hostname_resolver_worker(_host: str, port: int, sender: object) -> None:
-    sender.send((True, [(2, 1, 6, "", ("localhost", port))]))
-    sender.close()
-
-
-def wrong_port_resolver_worker(_host: str, port: int, sender: object) -> None:
-    sender.send((True, [(2, 1, 6, "", ("127.0.0.1", port + 1))]))
-    sender.close()
-
-
-def wrong_family_resolver_worker(_host: str, port: int, sender: object) -> None:
-    sender.send((True, [(10, 1, 6, "", ("127.0.0.1", port, 0, 0))]))
-    sender.close()
-
-
-def wrong_shape_resolver_worker(_host: str, port: int, sender: object) -> None:
-    sender.send((True, [(2, 1, 6, "", ("127.0.0.1", port, 0, 0))]))
-    sender.close()
-
-
-def wrong_protocol_resolver_worker(_host: str, port: int, sender: object) -> None:
-    sender.send((True, [(2, 1, 17, "", ("127.0.0.1", port))]))
-    sender.close()
 
 
 class ExplodingConnectSocket:
