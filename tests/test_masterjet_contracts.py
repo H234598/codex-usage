@@ -12,6 +12,8 @@ from codex_usage.masterjet_contracts import (
     ControlProblem,
     GoogleControlAccount,
     GoogleControlProject,
+    GoogleOAuthClientImportPlanV1,
+    GoogleOAuthClientImportReceiptV1,
     GoogleOAuthTransactionV1,
     OpenAIControlAccount,
     SecretIngressReceipt,
@@ -19,12 +21,52 @@ from codex_usage.masterjet_contracts import (
     parse_control_operation,
     parse_control_problem,
     parse_google_accounts,
+    parse_google_oauth_client_import_plan,
+    parse_google_oauth_client_import_receipt,
     parse_google_oauth_transaction,
     parse_google_project,
     parse_openai_accounts,
     parse_secret_ingress_receipt,
     parse_secret_ingress_session,
 )
+
+
+def test_google_oauth_client_import_plan_and_receipt_use_exact_canonical_wire() -> None:
+    plan = parse_google_oauth_client_import_plan(
+        {
+            "schema_version": 1,
+            "id": "oauth-import-one",
+            "account_ref": "google-1",
+            "expected_generation": 4,
+            "expires_at": 1_788_000_000.0,
+            "plan_digest": "sha256:" + "a" * 64,
+        }
+    )
+    receipt = parse_google_oauth_client_import_receipt(
+        {
+            "schema_version": 1,
+            "account_ref": "google-1",
+            "client_ref": "client-one",
+            "display_name": "Quiet Client",
+            "inventory_generation": 4,
+            "client_digest": "sha256:" + "b" * 64,
+        }
+    )
+
+    assert plan == GoogleOAuthClientImportPlanV1(
+        "oauth-import-one",
+        "google-1",
+        4,
+        1_788_000_000.0,
+        "sha256:" + "a" * 64,
+    )
+    assert receipt == GoogleOAuthClientImportReceiptV1(
+        "google-1",
+        "client-one",
+        "Quiet Client",
+        4,
+        "sha256:" + "b" * 64,
+    )
 
 
 def valid_google_project() -> dict[str, object]:

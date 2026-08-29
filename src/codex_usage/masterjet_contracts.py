@@ -255,6 +255,38 @@ class GoogleOAuthReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class GoogleOAuthClientImportPlanV1:
+    id: str
+    account_ref: str
+    expected_generation: int
+    expires_at: float
+    plan_digest: str
+
+    def __post_init__(self) -> None:
+        _token(self.id, "id")
+        _ref(self.account_ref, "account_ref")
+        _generation(self.expected_generation, "expected_generation")
+        _epoch_seconds(self.expires_at, "expires_at")
+        _plan_digest(self.plan_digest)
+
+
+@dataclass(frozen=True, slots=True)
+class GoogleOAuthClientImportReceiptV1:
+    account_ref: str
+    client_ref: str
+    display_name: str
+    inventory_generation: int
+    client_digest: str
+
+    def __post_init__(self) -> None:
+        _ref(self.account_ref, "account_ref")
+        _token(self.client_ref, "client_ref")
+        _label(self.display_name, "display_name")
+        _generation(self.inventory_generation, "inventory_generation")
+        _plan_digest(self.client_digest)
+
+
+@dataclass(frozen=True, slots=True)
 class GoogleControlProject:
     ref: str
     project_name: str
@@ -500,6 +532,56 @@ def parse_google_oauth_receipt(payload: object) -> GoogleOAuthReceipt:
         refresh_token_stored=_bool(
             data["refresh_token_stored"], "refresh_token_stored"
         ),
+    )
+
+
+def parse_google_oauth_client_import_plan(
+    payload: object,
+) -> GoogleOAuthClientImportPlanV1:
+    data = _document(
+        payload,
+        {
+            "schema_version",
+            "id",
+            "account_ref",
+            "expected_generation",
+            "expires_at",
+            "plan_digest",
+        },
+    )
+    return GoogleOAuthClientImportPlanV1(
+        id=_token(data["id"], "id"),
+        account_ref=_ref(data["account_ref"], "account_ref"),
+        expected_generation=_generation(
+            data["expected_generation"], "expected_generation"
+        ),
+        expires_at=_epoch_seconds(data["expires_at"], "expires_at"),
+        plan_digest=_plan_digest(data["plan_digest"]),
+    )
+
+
+def parse_google_oauth_client_import_receipt(
+    payload: object,
+) -> GoogleOAuthClientImportReceiptV1:
+    data = _document(
+        payload,
+        {
+            "schema_version",
+            "account_ref",
+            "client_ref",
+            "display_name",
+            "inventory_generation",
+            "client_digest",
+        },
+    )
+    return GoogleOAuthClientImportReceiptV1(
+        account_ref=_ref(data["account_ref"], "account_ref"),
+        client_ref=_token(data["client_ref"], "client_ref"),
+        display_name=_label(data["display_name"], "display_name"),
+        inventory_generation=_generation(
+            data["inventory_generation"], "inventory_generation"
+        ),
+        client_digest=_plan_digest(data["client_digest"]),
     )
 
 

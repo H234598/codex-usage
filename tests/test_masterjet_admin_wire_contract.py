@@ -7,14 +7,18 @@ from pathlib import Path
 import pytest
 
 from codex_usage.masterjet_client import _encode_request
-from codex_usage.masterjet_contracts import parse_google_accounts
+from codex_usage.masterjet_contracts import (
+    parse_google_accounts,
+    parse_google_oauth_client_import_plan,
+    parse_google_oauth_client_import_receipt,
+)
 
 ADMIN_ROOT = Path("/home/teladi/.codex-worktrees/codex-master/admin-control-20260828")
 sys.path.insert(0, str(ADMIN_ROOT / "src"))
 sys.path.insert(0, str(ADMIN_ROOT / "tests"))
 
 from codex_master.admin_contracts import AdminRequestV1, parse_admin_request  # noqa: E402
-from test_admin_service import principal, service_at  # noqa: E402
+from test_admin_service import command, principal, service_at  # noqa: E402
 
 DIGEST = "sha256:" + "a" * 64
 
@@ -198,3 +202,35 @@ def test_usage_parses_real_admin_default_oauth_client_projection() -> None:
     assert len(accounts) == 1
     assert accounts[0].default_oauth_client_ref == "oauth-client-opaque"
     assert accounts[0].oauth_client_availability == "available"
+
+
+def test_usage_parses_real_admin_oauth_client_plan_and_apply_receipt() -> None:
+    service, _owners = service_at()
+    plan_payload = service.command(
+        principal("fleet.google.oauth"),
+        "google.oauth-client-import.plan",
+        {"account_ref": "google-one"},
+        expected_generation=4,
+        idempotency_key="idem-client-plan",
+    )
+    receipt_payload = command(
+        service,
+        "google.oauth-client-import.apply",
+        {"account_ref": "google-one"},
+        "fleet.google.oauth",
+        digest=DIGEST,
+        ingress_session="ingress-session",
+        step_up=True,
+        idempotency_key="idem-client-apply",
+    )
+
+    plan = parse_google_oauth_client_import_plan(
+        {"schema_version": 1, **plan_payload}
+    )
+    receipt = parse_google_oauth_client_import_receipt(
+        {"schema_version": 1, **receipt_payload}
+    )
+
+    assert plan.plan_digest == DIGEST
+    assert receipt.account_ref == "google-one"
+    assert receipt.client_ref == "client-one"

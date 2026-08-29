@@ -1209,6 +1209,55 @@ def test_oauth_begin_decodes_bound_typed_transaction(monkeypatch):
     assert result.generation == 4
 
 
+def test_oauth_client_import_plan_and_receipt_decode_canonical_wire(monkeypatch):
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+    client = https_client(
+        bearer_provider=lambda: "remote-bearer",
+        step_up_provider=lambda: "123456",
+    )
+    FakeHTTPSConnection.response = FakeHTTPResponse(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "id": "oauth-import-one",
+                "account_ref": "google-1",
+                "expected_generation": 4,
+                "expires_at": 1_788_000_000.0,
+                "plan_digest": "sha256:" + "a" * 64,
+            }
+        ).encode()
+    )
+    plan = client.call(
+        "google.oauth-client-import.plan",
+        {"account_ref": "google-1"},
+        expected_generation=4,
+        idempotency_key="idem-plan",
+    )
+    FakeHTTPSConnection.response = FakeHTTPResponse(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "account_ref": "google-1",
+                "client_ref": "client-one",
+                "display_name": "Quiet Client",
+                "inventory_generation": 4,
+                "client_digest": "sha256:" + "b" * 64,
+            }
+        ).encode()
+    )
+    receipt = client.call(
+        "google.oauth-client-import.apply",
+        {"account_ref": "google-1"},
+        expected_generation=4,
+        idempotency_key="idem-apply",
+        plan_digest=plan.plan_digest,
+    )
+
+    assert plan.id == "oauth-import-one"
+    assert receipt.client_ref == "client-one"
+    assert receipt.inventory_generation == 4
+
+
 def test_oauth_begin_rejects_transaction_for_another_account(monkeypatch):
     FakeHTTPSConnection.response = FakeHTTPResponse(
         json.dumps(
