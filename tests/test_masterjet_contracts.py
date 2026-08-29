@@ -198,7 +198,7 @@ def test_google_oauth_transaction_is_typed_redacted_and_immutable():
         ("authorization_url", "https://attacker.invalid/auth"),
         ("authorization_url", "https://user@accounts.google.com/auth"),
         ("authorization_url", "https://accounts.google.com/auth#private"),
-        ("generation", True),
+        ("inventory_generation", True),
         ("account_ref", "ya29.private"),
         ("id", "GOCSPX-private"),
     ],

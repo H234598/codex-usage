@@ -124,8 +124,8 @@ class FakeControlClient:
                 id="oauth-1",
                 account_ref="google-one",
                 authorization_url=self.authorization_url,
-                expires_at=self.oauth_expires_at,
-                generation=4,
+                expires_at=self.oauth_expires_at.timestamp(),
+                inventory_generation=4,
             )
         if name == "google.oauth.complete":
             return operation(
@@ -292,6 +292,18 @@ def controller(client: FakeControlClient, *, clock=lambda: NOW) -> GoogleAccount
         client,
         clock=clock,
         idempotency_key_factory=lambda: "idem-1",
+    )
+
+
+def test_fake_control_client_oauth_begin_uses_current_transaction_contract() -> None:
+    transaction = FakeControlClient().call("google.oauth.begin", {})
+
+    assert transaction == GoogleOAuthTransactionV1(
+        id="oauth-1",
+        account_ref="google-one",
+        authorization_url=AUTHORIZATION_URL,
+        expires_at=(NOW + timedelta(minutes=5)).timestamp(),
+        inventory_generation=4,
     )
 
 

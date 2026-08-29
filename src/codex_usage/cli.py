@@ -1735,7 +1735,10 @@ def _cmd_masterjet_openai_accounts(args: argparse.Namespace) -> int:
             accounts = value
             _save_openai_projection(accounts)
         except MasterjetClientError as live_error:
-            cached = load_control_snapshot(default_state_dir(), 30.0)
+            try:
+                cached = load_control_snapshot(default_state_dir(), 30.0)
+            except Exception:
+                raise live_error from None
             if cached.stale:
                 raise live_error from None
             accounts = cached.snapshot.openai_accounts

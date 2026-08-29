@@ -130,21 +130,50 @@ def test_real_admin_socket_wrong_attestation_key_fails_closed(tmp_path: Path) ->
         os.close(key_fd)
 
 
-def test_missing_attestation_credential_fails_before_request_bytes(tmp_path: Path) -> None:
-    directory, key_fd = _credential_directory(tmp_path, b"s" * 32)
+def test_missing_attestation_credential_fails_before_request_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     missing = tmp_path / "missing"
     missing.mkdir(mode=0o700)
-    server = _running_admin_socket(tmp_path, key_fd)
-    try:
-        verifier = local_attestation_verifier_from_systemd_credentials(
-            environ={"CREDENTIALS_DIRECTORY": os.fspath(missing)}
-        )
-        with pytest.raises(MasterjetClientError, match=r"control\.attestation_required"):
-            _read_request(server.path, verifier)
-    finally:
-        server.close()
-        os.close(key_fd)
-    assert directory.exists()
+    request_bytes = bytearray()
+
+    class _RecordingSocket:
+        def settimeout(self, _timeout: float) -> None:
+            pass
+
+        def connect(self, _endpoint: str) -> None:
+            pass
+
+        def sendall(self, value: bytes) -> None:
+            request_bytes.extend(value)
+
+        def shutdown(self, _how: int) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    identity = type(
+        "SocketIdentity",
+        (),
+        {"st_dev": 1, "st_ino": 2, "st_uid": os.geteuid()},
+    )()
+    monkeypatch.setattr(client_module, "_local_endpoint", lambda _connection: missing)
+    monkeypatch.setattr(client_module, "_socket_identity", lambda _endpoint: identity)
+    monkeypatch.setattr(
+        client_module,
+        "_verify_peer",
+        lambda _sock, *, expected_uid: (os.getpid(), expected_uid, os.getgid()),
+    )
+    monkeypatch.setattr(client_module.socket, "socket", lambda *_args: _RecordingSocket())
+    verifier = local_attestation_verifier_from_systemd_credentials(
+        environ={"CREDENTIALS_DIRECTORY": os.fspath(missing)}
+    )
+
+    with pytest.raises(MasterjetClientError, match=r"control\.attestation_required"):
+        _read_request(missing, verifier)
+
+    assert request_bytes == b""
 
 
 def test_real_admin_socket_raw_put_sends_one_fd_after_attestation_and_wipes_file(

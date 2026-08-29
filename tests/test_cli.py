@@ -36,7 +36,8 @@ from codex_usage.config import (
     load_config,
     save_config,
 )
-from codex_usage.masterjet_cache import CachedControlSnapshot, ControlSnapshot
+from codex_usage.masterjet_cache import CachedControlSnapshot, ControlCacheError, ControlSnapshot
+from codex_usage.masterjet_client import MasterjetClientError
 from codex_usage.masterjet_contracts import OpenAIControlAccount
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.spark_health import set_spark_health
@@ -5935,6 +5936,35 @@ def test_openai_accounts_command_returns_complete_live_projection(monkeypatch, c
         "series-active": True,
     }]
     assert "/private/profile-one" not in json.dumps(payload)
+
+
+def test_openai_accounts_command_preserves_live_error_when_cache_load_fails(
+    tmp_path, monkeypatch, capsys
+):
+    class _UnavailableClient:
+        def call(self, _operation, _arguments):
+            raise MasterjetClientError("control.authentication_required")
+
+    monkeypatch.setattr(cli_module, "load_config", lambda _path: AppConfig(accounts=()))
+    monkeypatch.setattr(
+        cli_module,
+        "_new_masterjet_client",
+        lambda *_args, **_kwargs: _UnavailableClient(),
+    )
+    monkeypatch.setattr(cli_module, "default_state_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        cli_module,
+        "load_control_snapshot",
+        lambda _root, _max_age: (_ for _ in ()).throw(
+            ControlCacheError("control.cache_unavailable")
+        ),
+    )
+
+    assert main(["masterjet", "openai-accounts", "--json"]) == 2
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "code": "control.authentication_required",
+    }
 
 
 def test_account_details_cli_returns_exact_live_projection_envelope(monkeypatch, capsys):
