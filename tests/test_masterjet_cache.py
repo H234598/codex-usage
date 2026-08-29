@@ -6,6 +6,7 @@ import stat
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -57,14 +58,12 @@ def valid_snapshot() -> ControlSnapshot:
             GoogleControlAccount(
                 ref="google-one",
                 label="Google One",
-                enabled=True,
                 subject_bound=True,
-                oauth_state="ready",
                 inventory_generation=7,
-                quota_state="available",
                 project_count=1,
                 billing_count=0,
-                reload_state="current",
+                default_oauth_client_ref="oauth-client-one",
+                oauth_client_availability="available",
             ),
         ),
         google_projects=(
@@ -89,6 +88,21 @@ def valid_snapshot() -> ControlSnapshot:
     )
 
 
+def cached_snapshot(snapshot: ControlSnapshot) -> ControlSnapshot:
+    return ControlSnapshot(
+        openai_accounts=snapshot.openai_accounts,
+        google_accounts=tuple(
+            replace(
+                account,
+                default_oauth_client_ref=None,
+                oauth_client_availability="unavailable",
+            )
+            for account in snapshot.google_accounts
+        ),
+        google_projects=snapshot.google_projects,
+    )
+
+
 def cache_path(root: Path) -> Path:
     return root / "control-snapshot-v1.json"
 
@@ -107,7 +121,7 @@ def test_old_snapshot_is_returned_as_stale(tmp_path: Path) -> None:
 
     loaded = cache.load(max_age_seconds=60)
 
-    assert loaded.snapshot == valid_snapshot()
+    assert loaded.snapshot == cached_snapshot(valid_snapshot())
     assert loaded.observed_at == 1.0
     assert loaded.stale is True
 
@@ -131,7 +145,7 @@ def test_valid_contract_snapshot_round_trips_in_one_private_file(tmp_path: Path)
 
     loaded = cache.load(max_age_seconds=2)
     cache_files = list(tmp_path.glob("*.json"))
-    assert loaded.snapshot == snapshot
+    assert loaded.snapshot == cached_snapshot(snapshot)
     assert loaded.stale is False
     assert len(cache_files) == 1
     assert stat.S_IMODE(cache_files[0].stat().st_mode) == 0o600
@@ -145,7 +159,7 @@ def test_module_api_reads_persisted_snapshot_in_new_cache_instance(tmp_path: Pat
     save_control_snapshot(tmp_path, snapshot, observed_at=1.0)
     loaded = load_control_snapshot(tmp_path, max_age_seconds=60)
 
-    assert loaded.snapshot == snapshot
+    assert loaded.snapshot == cached_snapshot(snapshot)
     assert loaded.stale is True
 
 
@@ -212,7 +226,7 @@ def test_clock_rollback_returns_snapshot_as_stale(tmp_path: Path) -> None:
 
     loaded = cache.load(max_age_seconds=60)
 
-    assert loaded.snapshot == snapshot
+    assert loaded.snapshot == cached_snapshot(snapshot)
     assert loaded.stale is True
 
 
@@ -1021,7 +1035,7 @@ def test_benign_visible_names_with_marker_words_remain_cacheable(
 
     cache.save(snapshot, observed_at=1.0)
 
-    assert cache.load(max_age_seconds=10**10).snapshot == snapshot
+    assert cache.load(max_age_seconds=10**10).snapshot == cached_snapshot(snapshot)
 
 
 def test_semantically_valid_noncanonical_json_is_rejected(tmp_path: Path) -> None:
@@ -1101,9 +1115,9 @@ def test_task9_offline_snapshot_is_read_only_and_stale_after_30_seconds(
     clock.value = 1_030.001
     offline = cache.load(max_age_seconds=30)
 
-    assert boundary.snapshot == snapshot
+    assert boundary.snapshot == cached_snapshot(snapshot)
     assert boundary.stale is False
-    assert offline.snapshot == snapshot
+    assert offline.snapshot == cached_snapshot(snapshot)
     assert offline.stale is True
     assert cache_path(tmp_path).read_bytes() == persisted
     assert b"task9-synthetic-auth" not in persisted

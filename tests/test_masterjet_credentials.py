@@ -86,14 +86,13 @@ def test_systemd_bearer_rejects_wrong_owner(tmp_path: Path, monkeypatch) -> None
         provider()
 
 
-def test_step_up_stdin_is_not_read_until_challenge_and_is_one_shot() -> None:
-    stream = io.BytesIO(b"739104\n")
+def test_step_up_stdin_is_not_read_until_each_same_process_challenge() -> None:
+    stream = io.BytesIO(b"739104\n182736\n")
     provider = stdin_step_up_provider(stream)
 
     assert stream.tell() == 0
     assert provider() == "739104"
-    with pytest.raises(MasterjetCredentialsError):
-        provider()
+    assert provider() == "182736"
 
 
 def test_systemd_credential_directory_is_snapshotted_at_provider_creation(tmp_path: Path) -> None:

@@ -7,11 +7,14 @@ from pathlib import Path
 import pytest
 
 from codex_usage.masterjet_client import _encode_request
+from codex_usage.masterjet_contracts import parse_google_accounts
 
 ADMIN_ROOT = Path("/home/teladi/.codex-worktrees/codex-master/admin-control-20260828")
 sys.path.insert(0, str(ADMIN_ROOT / "src"))
+sys.path.insert(0, str(ADMIN_ROOT / "tests"))
 
 from codex_master.admin_contracts import AdminRequestV1, parse_admin_request  # noqa: E402
+from test_admin_service import principal, service_at  # noqa: E402
 
 DIGEST = "sha256:" + "a" * 64
 
@@ -184,3 +187,14 @@ def test_usage_never_emits_legacy_plan_id(
             idempotency_key="idem-openai-apply",
             plan_digest=DIGEST,
         )
+
+
+def test_usage_parses_real_admin_default_oauth_client_projection() -> None:
+    service, _owners = service_at()
+    payload = service.query(principal("fleet.read"), "google.accounts.list", {})
+
+    accounts = parse_google_accounts({"schema_version": 1, **payload})
+
+    assert len(accounts) == 1
+    assert accounts[0].default_oauth_client_ref == "oauth-client-opaque"
+    assert accounts[0].oauth_client_availability == "available"

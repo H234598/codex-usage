@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import threading
@@ -10,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol, TypeVar, cast
 
+from .google_oauth_loopback import GoogleOAuthLoopbackError
 from .masterjet_client import MasterjetClientError
 from .masterjet_contracts import (
     ControlContractError,
@@ -17,12 +19,14 @@ from .masterjet_contracts import (
     GoogleControlAccount,
     GoogleControlProject,
     GoogleControlProjectList,
+    GoogleOAuthReceipt,
     GoogleOAuthTransactionV1,
     GoogleProvisionPlanV1,
     GoogleProvisionProjectV1,
     SecretIngressReceipt,
     SecretIngressSession,
     google_oauth_redirect_uri,
+    google_oauth_state,
     validate_google_oauth_redirect_uri,
 )
 from .private_io import open_verified_state_home, read_private_bytes_at
@@ -42,6 +46,7 @@ class AuthenticatedGoogleClient(Protocol):
         arguments: object,
         expected_generation: int | None = None,
         idempotency_key: str | None = None,
+        plan_digest: str | None = None,
     ) -> object: ...
 
     def put_secret(
@@ -57,11 +62,22 @@ class GoogleOAuthCallbackLease(Protocol):
     @property
     def redirect_uri(self) -> str: ...
 
+    @property
+    def launch_uri(self) -> str: ...
+
+    def prepare_authorization(self, authorization_url: str) -> None: ...
+
+    def receive(self, *, expected_state: str, timeout_seconds: float) -> bytearray: ...
+
     def close(self) -> None: ...
 
 
 class GoogleOAuthCallbackProvider(Protocol):
     def acquire(self) -> GoogleOAuthCallbackLease: ...
+
+
+class GoogleOAuthBrowserLease(Protocol):
+    def close(self) -> None: ...
 
 
 class _CallbackTimer(Protocol):
@@ -113,6 +129,7 @@ class GoogleOAuthClientImportResult:
 
 class GoogleAccountsController:
     __slots__ = (
+        "_browser_opener",
         "_callback_cleanup_failed",
         "_callback_close_attempts",
         "_callback_lease",
@@ -136,6 +153,9 @@ class GoogleAccountsController:
         idempotency_key_factory: Callable[[], str] | None = None,
         callback_provider: GoogleOAuthCallbackProvider | None = None,
         callback_timer_factory: Callable[[float, Callable[[], None]], _CallbackTimer] | None = None,
+        browser_opener: (
+            Callable[[str, str, str], GoogleOAuthBrowserLease] | None
+        ) = None,
     ) -> None:
         self._client = client
         self._clock = clock if clock is not None else _utc_now
@@ -143,6 +163,7 @@ class GoogleAccountsController:
             idempotency_key_factory if idempotency_key_factory is not None else _uuid_key
         )
         self._callback_provider = callback_provider
+        self._browser_opener = browser_opener
         self._callback_timer_factory = (
             callback_timer_factory if callback_timer_factory is not None else _new_callback_timer
         )
@@ -166,6 +187,9 @@ class GoogleAccountsController:
 
     def oauth_begin(self, account_ref: str, *, browser: str) -> GoogleOAuthTransactionV1:
         return self._guard(lambda: self._oauth_begin(account_ref, browser))
+
+    def oauth_authorize(self, account_ref: str, *, browser: str) -> GoogleOAuthReceipt:
+        return self._guard(lambda: self._oauth_authorize(account_ref, browser))
 
     def oauth_complete(self, transaction: GoogleOAuthTransactionV1) -> ControlOperation:
         return self._guard(lambda: self._oauth_complete(transaction))
@@ -267,6 +291,138 @@ class GoogleAccountsController:
                     self._close_active_callback()
                 raise
             return transaction
+
+    def _oauth_authorize(self, account_ref: str, browser: str) -> GoogleOAuthReceipt:
+        with self._callback_lock:
+            self._require_mutation_allowed()
+            if self._callback_lease is not None:
+                raise MasterjetClientError("oauth.callback_active")
+            provider = self._callback_provider
+            opener = self._browser_opener
+            if provider is None or opener is None:
+                raise MasterjetClientError("oauth.callback_unavailable")
+            lease: GoogleOAuthCallbackLease | None = None
+            browser_lease: GoogleOAuthBrowserLease | None = None
+            code: bytearray | None = None
+            try:
+                lease = provider.acquire()
+                self._callback_lease = lease
+                self._callback_close_attempts = 0
+                redirect_uri = validate_google_oauth_redirect_uri(lease.redirect_uri)
+                account = self._account(account_ref)
+                if (
+                    account.oauth_client_availability != "available"
+                    or account.default_oauth_client_ref is None
+                ):
+                    raise MasterjetClientError("oauth.client_unavailable")
+                transaction = self._client.call(
+                    "google.oauth.begin",
+                    {
+                        "account_ref": account.ref,
+                        "oauth_client_ref": account.default_oauth_client_ref,
+                        "redirect_uri": redirect_uri,
+                        "scope_profile": "inventory_readonly",
+                    },
+                    expected_generation=account.inventory_generation,
+                    idempotency_key=self._idempotency_key(),
+                )
+                if type(transaction) is not GoogleOAuthTransactionV1:
+                    raise MasterjetClientError("control.response_invalid")
+                if (
+                    transaction.account_ref != account.ref
+                    or transaction.inventory_generation != account.inventory_generation
+                    or google_oauth_redirect_uri(transaction.authorization_url) != redirect_uri
+                ):
+                    raise MasterjetClientError("control.response_invalid")
+                state = google_oauth_state(transaction.authorization_url)
+                timeout = transaction.expires_at - _clock_epoch(self._clock)
+                if timeout <= 0:
+                    raise MasterjetClientError("oauth.transaction_expired")
+                self._callback_transaction = transaction
+                self._schedule_callback_timer(lease, transaction, timeout)
+                try:
+                    lease.prepare_authorization(transaction.authorization_url)
+                    browser_lease = opener(browser, account.ref, lease.launch_uri)
+                except BaseException:
+                    raise MasterjetClientError("oauth.browser_unavailable") from None
+                try:
+                    code = lease.receive(expected_state=state, timeout_seconds=timeout)
+                except GoogleOAuthLoopbackError as error:
+                    raise MasterjetClientError(error.code) from None
+                digest = _oauth_flow_digest(
+                    account.ref,
+                    transaction.id,
+                    redirect_uri,
+                    state,
+                    transaction.inventory_generation,
+                )
+                session = self._client.call(
+                    "secret.ingress.create",
+                    {
+                        "account_ref": account.ref,
+                        "credential_kind": "google-oauth-code",
+                        "transaction_id": transaction.id,
+                    },
+                    expected_generation=transaction.inventory_generation,
+                    idempotency_key=self._idempotency_key(),
+                    plan_digest=digest,
+                )
+                if (
+                    type(session) is not SecretIngressSession
+                    or session.account_ref != account.ref
+                    or session.plan_digest != digest
+                    or session.expected_generation != transaction.inventory_generation
+                    or session.session_generation != transaction.inventory_generation
+                ):
+                    raise MasterjetClientError("control.response_invalid")
+                if session.expires_at <= _clock_epoch(self._clock):
+                    raise MasterjetClientError("credential.upload_expired")
+                receipt = self._client.put_secret(
+                    session.id,
+                    code,
+                    expected_generation=session.session_generation,
+                    idempotency_key=self._idempotency_key(),
+                )
+                if (
+                    type(receipt) is not SecretIngressReceipt
+                    or receipt.session_id != session.id
+                    or receipt.account_ref != account.ref
+                    or receipt.state != "consumed"
+                ):
+                    raise MasterjetClientError("control.response_invalid")
+                completed = self._client.call(
+                    "google.oauth.complete",
+                    {
+                        "account_ref": account.ref,
+                        "transaction_id": transaction.id,
+                        "redirect_uri": redirect_uri,
+                        "state": state,
+                    },
+                    expected_generation=session.session_generation,
+                )
+                if (
+                    type(completed) is not GoogleOAuthReceipt
+                    or completed.account_ref != account.ref
+                    or not completed.subject_bound
+                    or not completed.refresh_token_stored
+                ):
+                    raise MasterjetClientError("control.response_invalid")
+                return completed
+            except ControlContractError:
+                raise MasterjetClientError("control.response_invalid") from None
+            finally:
+                if code is not None:
+                    _zero_secret(code)
+                if browser_lease is not None:
+                    try:
+                        browser_lease.close()
+                    except BaseException:
+                        pass
+                if lease is not None and lease is self._callback_lease:
+                    try:
+                        self._close_active_callback()
+                    except MasterjetClientError:
+                        pass
 
     def _begin_with_callback(
         self,
@@ -731,6 +887,23 @@ def _clock_value(clock: Callable[[], datetime]) -> datetime:
     if type(now) is not datetime or now.tzinfo is not UTC:
         raise MasterjetClientError("control.response_invalid")
     return now
+
+
+def _clock_epoch(clock: Callable[[], datetime]) -> float:
+    return _clock_value(clock).timestamp()
+
+
+def _oauth_flow_digest(
+    account_ref: str,
+    transaction_id: str,
+    redirect_uri: str,
+    state: str,
+    generation: int,
+) -> str:
+    payload = "\0".join(
+        (account_ref, transaction_id, redirect_uri, state, str(generation))
+    ).encode("ascii")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
 def _require_unexpired(expires_at: datetime, clock: Callable[[], datetime], code: str) -> None:

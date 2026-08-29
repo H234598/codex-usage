@@ -285,7 +285,7 @@ class BoundedJsonRunner:
         process_group = None
         output = bytearray()
         control = bytearray()
-        prompted = False
+        prompt_count = 0
         try:
             argv = settings_masterjet_launcher_argv(argv)
             process = subprocess.Popen(
@@ -333,13 +333,12 @@ class BoundedJsonRunner:
                         raise ValueError("invalid step-up control")
                     if control != STEP_UP_SENTINEL:
                         continue
-                    if (
-                        prompted
-                        or challenge_callback is None
-                        or process.stdin is None
-                    ):
+                    if challenge_callback is None or process.stdin is None:
                         raise ValueError("invalid step-up control")
-                    prompted = True
+                    prompt_count += 1
+                    if prompt_count > 4:
+                        raise ValueError("too many step-up challenges")
+                    control.clear()
                     secret = self._request_step_up(challenge_callback, deadline, process)
                     try:
                         if process.poll() is not None:
@@ -347,7 +346,6 @@ class BoundedJsonRunner:
                         secret.append(ord("\n"))
                         process.stdin.write(secret)
                         process.stdin.flush()
-                        process.stdin.close()
                     finally:
                         secret[:] = b"\x00" * len(secret)
                         secret.clear()

@@ -41,6 +41,7 @@ REDIRECT_URI = "http://127.0.0.1:8765/oauth/callback"
 AUTHORIZATION_URL = (
     "https://accounts.google.com/o/oauth2/v2/auth?"
     "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback"
+    "&state=state-one"
 )
 
 
@@ -51,14 +52,12 @@ def google_accounts_payload() -> dict[str, object]:
             {
                 "ref": "google-1",
                 "label": "Google account 01_BW",
-                "enabled": True,
                 "subject_bound": True,
-                "oauth_state": "ready",
                 "inventory_generation": 4,
-                "quota_state": "available",
                 "project_count": 12,
                 "billing_count": 1,
-                "reload_state": "current",
+                "default_oauth_client_ref": "oauth-client-1",
+                "oauth_client_availability": "available",
             }
         ],
     }
@@ -112,8 +111,8 @@ def google_oauth_transaction_payload() -> dict[str, object]:
         "id": "oauth-1",
         "account_ref": "google-1",
         "authorization_url": AUTHORIZATION_URL,
-        "expires_at": "2026-08-28T12:05:00Z",
-        "generation": 4,
+        "expires_at": 1_777_463_500.0,
+        "inventory_generation": 4,
     }
 
 

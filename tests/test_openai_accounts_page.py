@@ -732,24 +732,32 @@ def test_bounded_runner_accepts_one_fragmented_step_up_sentinel() -> None:
     assert prompts == ["prompt"]
 
 
-def test_bounded_runner_rejects_duplicate_step_up_sentinel_without_second_prompt() -> None:
+def test_bounded_runner_accepts_two_sequential_step_up_challenges() -> None:
     module = _module()
     prompts = []
     sentinel = "CODEX_USAGE_STEP_UP_REQUIRED\n"
-    script = f"import sys; sys.stderr.write({sentinel!r} * 2); sys.stderr.flush()"
+    script = (
+        "import sys; "
+        f"sys.stderr.write({sentinel!r}); sys.stderr.flush(); "
+        "assert sys.stdin.buffer.readline() == b'739104\\n'; "
+        f"sys.stderr.write({sentinel!r}); sys.stderr.flush(); "
+        "assert sys.stdin.buffer.readline() == b'182736\\n'; "
+        "sys.stdout.write('{\"ok\":true}')"
+    )
     runner = module.BoundedJsonRunner(prompt_dispatcher=lambda callback: callback())
+    codes = iter(("739104", "182736"))
 
     result = runner._run(
         (sys.executable, "-c", script),
         None,
-        lambda: prompts.append("prompt") or "739104",
+        lambda: prompts.append("prompt") or next(codes),
     )
 
-    assert result.ok is False
-    assert prompts == []
+    assert result.ok is True
+    assert prompts == ["prompt", "prompt"]
 
 
-def test_bounded_runner_rejects_fragmented_duplicate_without_second_prompt() -> None:
+def test_bounded_runner_accepts_fragmented_second_challenge() -> None:
     module = _module()
     prompts = []
     sentinel = "CODEX_USAGE_STEP_UP_REQUIRED\n"
@@ -758,7 +766,9 @@ def test_bounded_runner_rejects_fragmented_duplicate_without_second_prompt() -> 
         f"sys.stderr.write({sentinel!r}); sys.stderr.flush(); "
         "assert sys.stdin.buffer.readline() == b'739104\\n'; "
         f"sys.stderr.write({sentinel[:11]!r}); sys.stderr.flush(); "
-        f"sys.stderr.write({sentinel[11:]!r}); sys.stderr.flush()"
+        f"sys.stderr.write({sentinel[11:]!r}); sys.stderr.flush(); "
+        "assert sys.stdin.buffer.readline() == b'739104\\n'; "
+        "sys.stdout.write('{\"ok\":true}')"
     )
     runner = module.BoundedJsonRunner(prompt_dispatcher=lambda callback: callback())
 
@@ -768,8 +778,8 @@ def test_bounded_runner_rejects_fragmented_duplicate_without_second_prompt() -> 
         lambda: prompts.append("prompt") or "739104",
     )
 
-    assert result.ok is False
-    assert prompts == ["prompt"]
+    assert result.ok is True
+    assert prompts == ["prompt", "prompt"]
 
 
 @pytest.mark.parametrize(

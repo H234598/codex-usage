@@ -66,6 +66,10 @@ from .google_accounts import (
     GoogleAccountsError,
     validate_google_plan_digest,
 )
+from .google_oauth_loopback import (
+    GoogleOAuthBrowserLauncher,
+    LoopbackOAuthCallbackProvider,
+)
 from .health import clear_health, load_health, record_health_event
 from .history import HistoryStore
 from .json_utils import loads_strict
@@ -81,7 +85,7 @@ from .masterjet_contracts import (
     GoogleControlAccount,
     GoogleControlProject,
     GoogleControlProjectList,
-    GoogleOAuthTransactionV1,
+    GoogleOAuthReceipt,
     OpenAIControlAccount,
 )
 from .masterjet_credentials import (
@@ -1556,9 +1560,16 @@ def _new_google_controller_for_args(args: argparse.Namespace) -> GoogleAccountsC
     return _new_google_controller(args.config)
 
 
-def _new_google_oauth_controller(_config_path: Path | None) -> GoogleAccountsController:
-    # Productive bound callback provider arrives with Task 8 callback integration.
-    raise GoogleAccountsError("oauth.callback_unavailable")
+def _new_google_oauth_controller(
+    config_path: Path | None, *, step_up_stdin: bool = False
+) -> GoogleAccountsController:
+    config = load_config(config_path)
+    launcher = GoogleOAuthBrowserLauncher()
+    return GoogleAccountsController(
+        _new_masterjet_client(config.masterjet, step_up_stdin=step_up_stdin),
+        callback_provider=LoopbackOAuthCallbackProvider(),
+        browser_opener=launcher.open,
+    )
 
 
 def _cmd_masterjet_status(args: argparse.Namespace) -> int:
@@ -1807,12 +1818,12 @@ def _cmd_google_accounts(args: argparse.Namespace) -> int:
         payload = _google_details_json(details, stale=stale)
         print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
     else:
-        print("REF\tLABEL\tOAUTH\tGENERATION\tQUOTA")
+        print("REF\tLABEL\tSUBJECT\tGENERATION\tOAUTH_CLIENT")
         for detail in details:
             row = detail.account
             print(
-                f"{row.ref}\t{row.label}\t{row.oauth_state}\t"
-                f"{row.inventory_generation}\t{row.quota_state}"
+                f"{row.ref}\t{row.label}\t{row.subject_bound}\t"
+                f"{row.inventory_generation}\t{row.oauth_client_availability}"
             )
     return 0
 
@@ -1837,13 +1848,16 @@ def _cmd_google_add(args: argparse.Namespace) -> int:
 
 def _cmd_google_oauth_begin(args: argparse.Namespace) -> int:
     try:
-        transaction = _new_google_oauth_controller(args.config).oauth_begin(
+        receipt = _new_google_oauth_controller(
+            args.config,
+            step_up_stdin=bool(getattr(args, "step_up_stdin", False)),
+        ).oauth_authorize(
             args.account, browser=args.browser
         )
     except Exception as exc:
         return _print_google_error(exc, json_output=args.json)
     _print_google_payload(
-        _google_oauth_json(transaction),
+        _google_oauth_json(receipt),
         json_output=args.json,
     )
     return 0
@@ -1897,14 +1911,12 @@ def _google_account_json(account: GoogleControlAccount) -> dict[str, object]:
     return {
         "ref": account.ref,
         "label": account.label,
-        "enabled": account.enabled,
         "subject_bound": account.subject_bound,
-        "oauth_state": account.oauth_state,
         "inventory_generation": account.inventory_generation,
-        "quota_state": account.quota_state,
         "project_count": account.project_count,
         "billing_count": account.billing_count,
-        "reload_state": account.reload_state,
+        "default_oauth_client_ref": account.default_oauth_client_ref,
+        "oauth_client_availability": account.oauth_client_availability,
     }
 
 
@@ -1981,13 +1993,12 @@ def _load_google_projection_cache() -> tuple[GoogleAccountDetails, ...] | None:
     return tuple(result)
 
 
-def _google_oauth_json(transaction: GoogleOAuthTransactionV1) -> dict[str, object]:
+def _google_oauth_json(receipt: GoogleOAuthReceipt) -> dict[str, object]:
     return {
-        "id": transaction.id,
-        "account_ref": transaction.account_ref,
-        "authorization_url": transaction.authorization_url,
-        "expires_at": _control_timestamp(transaction.expires_at),
-        "generation": transaction.generation,
+        "account_ref": receipt.account_ref,
+        "subject_bound": receipt.subject_bound,
+        "refresh_token_stored": receipt.refresh_token_stored,
+        "ok": receipt.subject_bound and receipt.refresh_token_stored,
     }
 
 

@@ -44,14 +44,12 @@ def valid_google_account() -> dict[str, object]:
     return {
         "ref": "google-1",
         "label": "Google primary",
-        "enabled": True,
         "subject_bound": True,
-        "oauth_state": "ready",
         "inventory_generation": 4,
-        "quota_state": "available",
         "project_count": 1,
         "billing_count": 1,
-        "reload_state": "current",
+        "default_oauth_client_ref": "oauth-client-1",
+        "oauth_client_availability": "available",
     }
 
 
@@ -110,9 +108,10 @@ def valid_google_oauth_transaction() -> dict[str, object]:
         "authorization_url": (
             "https://accounts.google.com/o/oauth2/v2/auth?"
             "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback"
+            "&state=state-one"
         ),
-        "expires_at": "2026-08-28T12:05:00Z",
-        "generation": 4,
+        "expires_at": 1_777_463_500.0,
+        "inventory_generation": 4,
     }
 
 
@@ -141,12 +140,13 @@ def test_google_oauth_transaction_is_typed_redacted_and_immutable():
         authorization_url=(
             "https://accounts.google.com/o/oauth2/v2/auth?"
             "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback"
+            "&state=state-one"
         ),
-        expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=UTC),
-        generation=4,
+        expires_at=1_777_463_500.0,
+        inventory_generation=4,
     )
     with pytest.raises(FrozenInstanceError):
-        transaction.generation = 5  # type: ignore[misc]
+        transaction.inventory_generation = 5  # type: ignore[misc]
 
 
 @pytest.mark.parametrize(
@@ -769,14 +769,12 @@ def test_control_operation_constructor_rejects_mutable_reason_codes():
         lambda: GoogleControlAccount(
             ref="google-1",
             label="Google primary",
-            enabled=True,
             subject_bound=True,
-            oauth_state="ready",
             inventory_generation=4,
-            quota_state="available",
             project_count=True,
             billing_count=1,
-            reload_state="current",
+            default_oauth_client_ref="oauth-client-1",
+            oauth_client_availability="available",
         ),
         lambda: GoogleControlProject(
             ref="the-hive-1",

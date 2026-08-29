@@ -818,14 +818,12 @@ class ControlSnapshotCache:
         return {
             "ref": item.ref,
             "label": ControlSnapshotCache._public_text(item.label),
-            "enabled": item.enabled,
             "subject_bound": item.subject_bound,
-            "oauth_state": item.oauth_state,
             "inventory_generation": item.inventory_generation,
-            "quota_state": item.quota_state,
             "project_count": item.project_count,
             "billing_count": item.billing_count,
-            "reload_state": item.reload_state,
+            "default_oauth_client_ref": None,
+            "oauth_client_availability": "unavailable",
         }
 
     @staticmethod

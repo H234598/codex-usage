@@ -1418,14 +1418,12 @@ def test_google_cli_fixed_commands_forward_only_redacted_values(monkeypatch, cap
             account = SimpleNamespace(
                 ref="google-one",
                 label="Google One",
-                enabled=True,
                 subject_bound=True,
-                oauth_state="ready",
                 inventory_generation=4,
-                quota_state="fresh",
                 project_count=1,
                 billing_count=0,
-                reload_state="ready",
+                default_oauth_client_ref="oauth-client-one",
+                oauth_client_availability="available",
             )
             project = SimpleNamespace(
                 ref="hive-one", project_name="Amber Orchard", purpose="quota_probe",
@@ -1434,14 +1432,12 @@ def test_google_cli_fixed_commands_forward_only_redacted_values(monkeypatch, cap
             )
             return (SimpleNamespace(account=account, projects=(project,)),)
 
-        def oauth_begin(self, account_ref, *, browser):
+        def oauth_authorize(self, account_ref, *, browser):
             calls.append(("oauth_begin", account_ref, browser))
             return SimpleNamespace(
-                id="oauth-1",
                 account_ref=account_ref,
-                authorization_url="https://accounts.google.com/o/oauth2/v2/auth",
-                expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=ZoneInfo("UTC")),
-                generation=4,
+                subject_bound=True,
+                refresh_token_stored=True,
             )
 
         def import_oauth_client(self, account_ref, path):
@@ -1489,7 +1485,7 @@ def test_google_cli_fixed_commands_forward_only_redacted_values(monkeypatch, cap
     monkeypatch.setattr(cli_module, "_new_google_controller", lambda _path: Controller())
     monkeypatch.setattr(cli_module, "_save_google_projection", lambda _details: None)
     monkeypatch.setattr(
-        cli_module, "_new_google_oauth_controller", lambda _path: Controller()
+        cli_module, "_new_google_oauth_controller", lambda _path, **_kwargs: Controller()
     )
 
     assert main(["google", "accounts", "--json"]) == 0
@@ -1668,7 +1664,10 @@ def test_google_inventory_challenge_has_no_process_retry_metadata(monkeypatch, c
 @pytest.mark.parametrize(
     ("command", "method"),
     [
-        (["google", "oauth-begin", "google-one", "--browser", "firefox", "--json"], "oauth_begin"),
+        (
+            ["google", "oauth-begin", "google-one", "--browser", "firefox", "--json"],
+            "oauth_authorize",
+        ),
         (["google", "provision-plan", "google-one", "--json"], "provision_plan"),
         (
             [
@@ -1697,7 +1696,9 @@ def test_google_single_mutation_challenges_have_no_process_retry_metadata(
             )
 
     monkeypatch.setattr(cli_module, "_new_google_controller_for_args", lambda _args: Controller())
-    monkeypatch.setattr(cli_module, "_new_google_oauth_controller", lambda _path: Controller())
+    monkeypatch.setattr(
+        cli_module, "_new_google_oauth_controller", lambda _path, **_kwargs: Controller()
+    )
 
     assert main(command) == 2
 
@@ -1801,7 +1802,7 @@ def test_google_production_cli_sanitizes_client_construction_failure(monkeypatch
     assert captured.err == ""
 
 
-def test_google_oauth_begin_without_productive_callback_is_json_fail_closed(
+def test_google_oauth_begin_sanitizes_productive_client_construction_failure(
     monkeypatch, capsys
 ):
     monkeypatch.setattr(
@@ -1829,9 +1830,31 @@ def test_google_oauth_begin_without_productive_callback_is_json_fail_closed(
     captured = capsys.readouterr()
     assert json.loads(captured.out) == {
         "ok": False,
-        "code": "oauth.callback_unavailable",
+        "code": "control.transport_unavailable",
     }
     assert captured.err == ""
+
+
+def test_google_oauth_factory_wires_productive_loopback_and_browser(monkeypatch):
+    client = object()
+    monkeypatch.setattr(
+        cli_module,
+        "load_config",
+        lambda _path: SimpleNamespace(masterjet=object()),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_new_masterjet_client",
+        lambda _connection, **_kwargs: client,
+    )
+
+    controller = cli_module._new_google_oauth_controller(None, step_up_stdin=True)
+
+    assert controller._client is client
+    assert isinstance(
+        controller._callback_provider, cli_module.LoopbackOAuthCallbackProvider
+    )
+    assert callable(controller._browser_opener)
 
 
 @pytest.mark.parametrize(

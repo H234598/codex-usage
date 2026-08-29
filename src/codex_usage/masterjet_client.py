@@ -26,6 +26,7 @@ from .masterjet_contracts import (
     parse_control_operation,
     parse_control_problem,
     parse_google_accounts,
+    parse_google_oauth_receipt,
     parse_google_oauth_transaction,
     parse_google_projects,
     parse_google_provision_plan,
@@ -626,6 +627,13 @@ def _decode_response(
             ):
                 raise MasterjetClientError("control.response_invalid")
             return transaction
+        if operation == "google.oauth.complete":
+            receipt = parse_google_oauth_receipt(payload)
+            if type(arguments) is not dict or receipt.account_ref != arguments.get(
+                "account_ref"
+            ):
+                raise MasterjetClientError("control.response_invalid")
+            return receipt
         if operation == "openai.accounts.list":
             return parse_openai_accounts(payload)
         if operation == "google.projects.list":

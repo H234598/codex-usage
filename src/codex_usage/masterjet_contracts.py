@@ -197,26 +197,33 @@ class OpenAIControlAccount:
 class GoogleControlAccount:
     ref: str
     label: str
-    enabled: bool
     subject_bound: bool
-    oauth_state: str
     inventory_generation: int
-    quota_state: str
     project_count: int
     billing_count: int
-    reload_state: str
+    default_oauth_client_ref: str | None
+    oauth_client_availability: str
 
     def __post_init__(self) -> None:
         _ref(self.ref, "ref")
         _label(self.label, "label")
-        _bool(self.enabled, "enabled")
         _bool(self.subject_bound, "subject_bound")
-        _code(self.oauth_state, "oauth_state")
         _generation(self.inventory_generation, "inventory_generation")
-        _code(self.quota_state, "quota_state")
         _count(self.project_count, "project_count", _MAX_COUNT)
         _count(self.billing_count, "billing_count", _MAX_COUNT)
-        _code(self.reload_state, "reload_state")
+        _optional_ref(self.default_oauth_client_ref, "default_oauth_client_ref")
+        availability = _code(self.oauth_client_availability, "oauth_client_availability")
+        if availability not in {
+            "available",
+            "missing",
+            "ambiguous",
+            "revoked",
+            "stale",
+            "unavailable",
+        }:
+            _invalid("oauth_client_availability")
+        if (availability == "available") != (self.default_oauth_client_ref is not None):
+            _invalid("default_oauth_client_ref")
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,15 +231,27 @@ class GoogleOAuthTransactionV1:
     id: str
     account_ref: str
     authorization_url: str
-    expires_at: datetime
-    generation: int
+    expires_at: float
+    inventory_generation: int
 
     def __post_init__(self) -> None:
         _token(self.id, "id")
         _ref(self.account_ref, "account_ref")
         _authorization_url(self.authorization_url)
-        _timestamp_value(self.expires_at, "expires_at")
-        _generation(self.generation, "generation")
+        _epoch_seconds(self.expires_at, "expires_at")
+        _generation(self.inventory_generation, "inventory_generation")
+
+
+@dataclass(frozen=True, slots=True)
+class GoogleOAuthReceipt:
+    account_ref: str
+    subject_bound: bool
+    refresh_token_stored: bool
+
+    def __post_init__(self) -> None:
+        _ref(self.account_ref, "account_ref")
+        _bool(self.subject_bound, "subject_bound")
+        _bool(self.refresh_token_stored, "refresh_token_stored")
 
 
 @dataclass(frozen=True, slots=True)
@@ -456,15 +475,31 @@ def parse_google_oauth_transaction(payload: object) -> GoogleOAuthTransactionV1:
             "account_ref",
             "authorization_url",
             "expires_at",
-            "generation",
+            "inventory_generation",
         },
     )
     return GoogleOAuthTransactionV1(
         id=_token(data["id"], "id"),
         account_ref=_ref(data["account_ref"], "account_ref"),
         authorization_url=_authorization_url(data["authorization_url"]),
-        expires_at=_timestamp(data["expires_at"], "expires_at"),
-        generation=_generation(data["generation"], "generation"),
+        expires_at=_epoch_seconds(data["expires_at"], "expires_at"),
+        inventory_generation=_generation(
+            data["inventory_generation"], "inventory_generation"
+        ),
+    )
+
+
+def parse_google_oauth_receipt(payload: object) -> GoogleOAuthReceipt:
+    data = _document(
+        payload,
+        {"schema_version", "account_ref", "subject_bound", "refresh_token_stored"},
+    )
+    return GoogleOAuthReceipt(
+        account_ref=_ref(data["account_ref"], "account_ref"),
+        subject_bound=_bool(data["subject_bound"], "subject_bound"),
+        refresh_token_stored=_bool(
+            data["refresh_token_stored"], "refresh_token_stored"
+        ),
     )
 
 
@@ -700,27 +735,27 @@ def _parse_google_account(payload: object) -> GoogleControlAccount:
         {
             "ref",
             "label",
-            "enabled",
             "subject_bound",
-            "oauth_state",
             "inventory_generation",
-            "quota_state",
             "project_count",
             "billing_count",
-            "reload_state",
+            "default_oauth_client_ref",
+            "oauth_client_availability",
         },
     )
     return GoogleControlAccount(
         ref=_ref(data["ref"], "ref"),
         label=_label(data["label"], "label"),
-        enabled=_bool(data["enabled"], "enabled"),
         subject_bound=_bool(data["subject_bound"], "subject_bound"),
-        oauth_state=_code(data["oauth_state"], "oauth_state"),
         inventory_generation=_generation(data["inventory_generation"], "inventory_generation"),
-        quota_state=_code(data["quota_state"], "quota_state"),
         project_count=_count(data["project_count"], "project_count", _MAX_COUNT),
         billing_count=_count(data["billing_count"], "billing_count", _MAX_COUNT),
-        reload_state=_code(data["reload_state"], "reload_state"),
+        default_oauth_client_ref=_optional_ref(
+            data["default_oauth_client_ref"], "default_oauth_client_ref"
+        ),
+        oauth_client_availability=_code(
+            data["oauth_client_availability"], "oauth_client_availability"
+        ),
     )
 
 
@@ -952,6 +987,23 @@ def google_oauth_redirect_uri(authorization_url: object) -> str:
     if len(matches) != 1:
         _invalid("authorization_url")
     return validate_google_oauth_redirect_uri(matches[0])
+
+
+def google_oauth_state(authorization_url: object) -> str:
+    value = _authorization_url(authorization_url)
+    try:
+        query = parse_qsl(
+            urlsplit(value).query,
+            keep_blank_values=True,
+            strict_parsing=True,
+            max_num_fields=32,
+        )
+    except (UnicodeError, ValueError):
+        _invalid("authorization_url")
+    matches = [item for name, item in query if name.casefold() == "state"]
+    if len(matches) != 1:
+        _invalid("authorization_url")
+    return _token(matches[0], "state")
 
 
 def _bool(value: object, field: str) -> bool:

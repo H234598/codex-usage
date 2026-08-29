@@ -150,7 +150,7 @@ def stdin_step_up_provider(
     stream: object, *, control_stream: object | None = None
 ) -> Callable[[], str]:
     def read() -> str:
-        reader = getattr(stream, "read", None)
+        reader = getattr(stream, "readline", None)
         if control_stream is None:
             output = getattr(sys.stderr, "buffer", sys.stderr)
         else:
@@ -173,7 +173,7 @@ def stdin_step_up_provider(
             payload[:] = b"\x00" * len(payload)
             payload.clear()
 
-    return _one_shot(read)
+    return read
 
 
 def tty_step_up_provider() -> Callable[[], str]:
@@ -190,7 +190,7 @@ def tty_step_up_provider() -> Callable[[], str]:
             payload[:] = b"\x00" * len(payload)
             payload.clear()
 
-    return _one_shot(read)
+    return read
 
 
 def unavailable_step_up_provider() -> Callable[[], str]:

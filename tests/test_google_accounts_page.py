@@ -44,14 +44,12 @@ def _payload(*, stale: bool = False):
             {
                 "ref": "google-one",
                 "label": "Google One",
-                "enabled": True,
                 "subject_bound": True,
-                "oauth_state": "ready",
                 "inventory_generation": 4,
-                "quota_state": "fresh",
                 "project_count": 2,
                 "billing_count": 1,
-                "reload_state": "ready",
+                "default_oauth_client_ref": "oauth-client-one",
+                "oauth_client_availability": "available",
             }
         ],
         "projects": {
@@ -403,9 +401,10 @@ def test_google_widget_renders_account_cards_status_and_project_table() -> None:
     page.render(_payload())
 
     card = page.card("google-one")
-    assert card.oauth_state == "ready"
+    assert card.default_oauth_client_ref == "oauth-client-one"
+    assert card.oauth_client_availability == "available"
     assert card.inventory_generation == 4
-    assert card.quota_state == "fresh"
+    assert card.oauth_enabled is True
     assert [row.project_name for row in card.projects] == [
         "Amber Meadow",
         "Velvet Orchard",
@@ -483,7 +482,7 @@ def test_missing_stale_projection_is_rejected_fail_closed() -> None:
 
 @pytest.mark.parametrize(
     ("field", "invalid_value"),
-    [("enabled", 1), ("subject_bound", "true")],
+    [("subject_bound", "true")],
 )
 def test_non_boolean_account_projection_is_rejected(field, invalid_value) -> None:
     payload = _payload()
@@ -603,9 +602,19 @@ def test_google_widget_never_persists_secret_or_provider_id_fields() -> None:
 
     with pytest.raises(ValueError, match="private"):
         page.render(payload)
-
     assert "private-provider-id" not in repr(page)
     assert "client_secret" not in repr(page).casefold()
+
+
+def test_oauth_requires_fresh_available_server_projected_client_ref() -> None:
+    model = _module().GoogleAccountsModel()
+    payload = _payload()
+    payload["accounts"][0]["default_oauth_client_ref"] = None
+    payload["accounts"][0]["oauth_client_availability"] = "missing"
+
+    model.render(payload)
+
+    assert model.card("google-one").oauth_enabled is False
 
 
 def test_stale_google_page_disables_every_mutation() -> None:
@@ -782,6 +791,41 @@ def test_oauth_filechooser_passes_only_path_to_private_cli_opening(tmp_path) -> 
     ]
     assert "marker-secret" not in repr(actions)
     assert "marker-secret" not in repr(calls)
+
+
+def test_oauth_uses_dedicated_browser_timeout_runner() -> None:
+    calls = []
+
+    class Runner:
+        def __init__(self, name):
+            self.name = name
+
+        def submit(self, argv, **options):
+            calls.append((self.name, tuple(argv), options))
+
+    actions = _module().GoogleActions(
+        Runner("short"),
+        oauth_runner=Runner("oauth"),
+        executable="/opt/codex-usage",
+    )
+    actions.set_projection_ready(True)
+    actions.oauth_begin("google-one", browser="firefox")
+
+    assert calls == [
+        (
+            "oauth",
+            (
+                "/opt/codex-usage",
+                "google",
+                "oauth-begin",
+                "google-one",
+                "--browser",
+                "firefox",
+                "--json",
+            ),
+            {"stdin_data": None, "callback": None},
+        )
+    ]
 
 
 def test_google_page_actions_use_running_challenge_callbacks(monkeypatch) -> None:

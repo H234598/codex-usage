@@ -13,6 +13,7 @@ from codex_usage.masterjet_contracts import (
     GoogleControlAccount,
     GoogleControlProject,
     GoogleControlProjectList,
+    GoogleOAuthReceipt,
     GoogleOAuthTransactionV1,
     GoogleProvisionPlanV1,
     GoogleProvisionProjectV1,
@@ -26,6 +27,7 @@ REDIRECT_URI = "http://127.0.0.1:8765/oauth/callback"
 AUTHORIZATION_URL = (
     "https://accounts.google.com/o/oauth2/v2/auth?"
     "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback"
+    "&state=state-one"
 )
 
 
@@ -33,14 +35,12 @@ def account(ref: str, generation: int) -> GoogleControlAccount:
     return GoogleControlAccount(
         ref=ref,
         label=ref.replace("-", " ").title(),
-        enabled=True,
         subject_bound=True,
-        oauth_state="ready",
         inventory_generation=generation,
-        quota_state="fresh",
         project_count=0,
         billing_count=0,
-        reload_state="ready",
+        default_oauth_client_ref="oauth-client-1",
+        oauth_client_availability="available",
     )
 
 
@@ -191,6 +191,47 @@ class FakeControlClient:
         )
 
 
+class AuthorizationClient(FakeControlClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.plan_digests: list[str | None] = []
+
+    def call(
+        self,
+        name: str,
+        arguments: object,
+        expected_generation: int | None = None,
+        idempotency_key: str | None = None,
+        plan_digest: str | None = None,
+    ) -> object:
+        self.calls.append((name, arguments, expected_generation, idempotency_key))
+        self.plan_digests.append(plan_digest)
+        if name == "google.accounts.list":
+            return self.accounts
+        if name == "google.oauth.begin":
+            return GoogleOAuthTransactionV1(
+                "oauth-1",
+                "google-one",
+                AUTHORIZATION_URL,
+                (NOW + timedelta(minutes=5)).timestamp(),
+                4,
+            )
+        if name == "secret.ingress.create":
+            assert plan_digest is not None
+            return SecretIngressSession(
+                "ingress-1",
+                "google-one",
+                "pending",
+                plan_digest,
+                4,
+                (NOW + timedelta(minutes=2)).timestamp(),
+                4,
+            )
+        if name == "google.oauth.complete":
+            return GoogleOAuthReceipt("google-one", True, True)
+        raise AssertionError(name)
+
+
 class FakeCallbackLease:
     def __init__(self, redirect_uri: str = REDIRECT_URI, *, close_failures: int = 0) -> None:
         self.redirect_uri = redirect_uri
@@ -201,6 +242,37 @@ class FakeCallbackLease:
         self.close_count += 1
         if self.close_count <= self.close_failures:
             raise OSError("close failed")
+
+
+class AuthorizationCallbackLease(FakeCallbackLease):
+    def __init__(self) -> None:
+        super().__init__(REDIRECT_URI)
+        self.code = bytearray(b"private-oauth-code")
+        self.launch_uri = "http://127.0.0.1:8765/oauth/start/nonsecret"
+
+    def prepare_authorization(self, authorization_url: str) -> None:
+        assert authorization_url == AUTHORIZATION_URL
+
+    def receive(self, *, expected_state: str, timeout_seconds: float) -> bytearray:
+        assert expected_state == "state-one"
+        assert timeout_seconds == pytest.approx(300.0)
+        return self.code
+
+
+class AuthorizationCallbackProvider:
+    def __init__(self) -> None:
+        self.lease = AuthorizationCallbackLease()
+
+    def acquire(self) -> AuthorizationCallbackLease:
+        return self.lease
+
+
+class BrowserLease:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class FakeCallbackProvider:
@@ -268,7 +340,7 @@ def controller(client: FakeControlClient, *, clock=lambda: NOW) -> GoogleAccount
 
 
 def test_list_keeps_google_accounts_separate() -> None:
-    client = FakeControlClient()
+    client = AuthorizationClient()
 
     rows = controller(client).list()
 
@@ -363,6 +435,59 @@ def test_oauth_begin_and_complete_bind_account_generation_and_transaction() -> N
         4,
         "idem-1",
     )
+
+
+def test_oauth_authorize_uses_fresh_default_client_and_raw_code_ingress() -> None:
+    client = AuthorizationClient()
+    provider = AuthorizationCallbackProvider()
+    browser = BrowserLease()
+    opened: list[tuple[str, str, str]] = []
+
+    def open_browser(browser_name: str, account_ref: str, url: str) -> BrowserLease:
+        opened.append((browser_name, account_ref, url))
+        return browser
+
+    subject = GoogleAccountsController(
+        client,
+        clock=lambda: NOW,
+        idempotency_key_factory=iter(
+            ("idem-begin", "idem-create", "idem-put")
+        ).__next__,
+        callback_provider=provider,
+        browser_opener=open_browser,
+    )
+
+    receipt = subject.oauth_authorize("google-one", browser="firefox")
+
+    assert receipt == GoogleOAuthReceipt("google-one", True, True)
+    assert opened == [
+        ("firefox", "google-one", "http://127.0.0.1:8765/oauth/start/nonsecret")
+    ]
+    assert provider.lease.code == bytearray(len(b"private-oauth-code"))
+    assert provider.lease.close_count == 1
+    assert browser.closed is True
+    assert client.calls[1][:3] == (
+        "google.oauth.begin",
+        {
+            "account_ref": "google-one",
+            "oauth_client_ref": "oauth-client-1",
+            "redirect_uri": REDIRECT_URI,
+            "scope_profile": "inventory_readonly",
+        },
+        4,
+    )
+    assert client.calls[-1] == (
+        "google.oauth.complete",
+        {
+            "account_ref": "google-one",
+            "transaction_id": "oauth-1",
+            "redirect_uri": REDIRECT_URI,
+            "state": "state-one",
+        },
+        4,
+        None,
+    )
+    assert client.puts[0][1] == b"private-oauth-code"
 
 
 def test_oauth_begin_without_bound_callback_provider_makes_no_request() -> None:

@@ -19,14 +19,12 @@ _ACCOUNT_FIELDS = frozenset(
     {
         "ref",
         "label",
-        "enabled",
         "subject_bound",
-        "oauth_state",
         "inventory_generation",
-        "quota_state",
         "project_count",
         "billing_count",
-        "reload_state",
+        "default_oauth_client_ref",
+        "oauth_client_availability",
     }
 )
 _PROJECT_FIELDS = frozenset(
@@ -115,14 +113,12 @@ class GoogleProjectRow:
 class GoogleAccountCard:
     ref: str
     label: str
-    enabled: bool
     subject_bound: bool
-    oauth_state: str
     inventory_generation: int
-    quota_state: str
     project_count: int
     billing_count: int
-    reload_state: str
+    default_oauth_client_ref: str | None
+    oauth_client_availability: str
     projects: tuple[GoogleProjectRow, ...]
     add_enabled: bool
     oauth_enabled: bool
@@ -192,23 +188,31 @@ class GoogleAccountsModel:
             project_count = _count(account["project_count"], "project_count")
             if details_available and len(project_rows) != project_count:
                 raise ValueError("invalid Google project_count projection")
+            oauth_client_ref = account["default_oauth_client_ref"]
+            availability = _text(
+                account["oauth_client_availability"],
+                "oauth_client_availability",
+                maximum=64,
+            )
+            if oauth_client_ref is not None:
+                oauth_client_ref = _text(oauth_client_ref, "default_oauth_client_ref")
+            if (availability == "available") != (oauth_client_ref is not None):
+                raise ValueError("invalid OAuth client projection")
             cards.append(
                 GoogleAccountCard(
                     ref=account_ref,
                     label=_text(account["label"], "label"),
-                    enabled=_boolean(account["enabled"], "enabled"),
                     subject_bound=_boolean(account["subject_bound"], "subject_bound"),
-                    oauth_state=_text(account["oauth_state"], "oauth_state", maximum=64),
                     inventory_generation=_count(
                         account["inventory_generation"], "inventory_generation"
                     ),
-                    quota_state=_text(account["quota_state"], "quota_state", maximum=64),
                     project_count=project_count,
                     billing_count=_count(account["billing_count"], "billing_count"),
-                    reload_state=_text(account["reload_state"], "reload_state", maximum=64),
+                    default_oauth_client_ref=oauth_client_ref,
+                    oauth_client_availability=availability,
                     projects=project_rows,
                     add_enabled=mutations_enabled,
-                    oauth_enabled=mutations_enabled,
+                    oauth_enabled=mutations_enabled and availability == "available",
                     inventory_enabled=mutations_enabled,
                     plan_enabled=mutations_enabled,
                     apply_enabled=mutations_enabled,
@@ -294,6 +298,7 @@ class GoogleActions:
     __slots__ = (
         "_confirm",
         "_executable",
+        "_oauth_runner",
         "_projection_ready",
         "_projection_version",
         "_runner",
@@ -305,8 +310,10 @@ class GoogleActions:
         *,
         executable: str | None = None,
         confirm: Callable[[GooglePlanPreview], bool] | None = None,
+        oauth_runner: BoundedJsonRunner | None = None,
     ) -> None:
         self._runner = runner
+        self._oauth_runner = oauth_runner or runner
         self._executable = executable or str(Path.home() / ".local/bin/codex-usage")
         self._confirm = confirm or (lambda _preview: False)
         self._projection_ready = False
@@ -325,14 +332,21 @@ class GoogleActions:
         return self._projection_version
 
     def _submit(
-        self, arguments, *, stdin_data=None, callback=None, mutation=True, challenge_callback=None
+        self,
+        arguments,
+        *,
+        stdin_data=None,
+        callback=None,
+        mutation=True,
+        challenge_callback=None,
+        runner=None,
     ) -> None:
         if mutation and not self._projection_ready:
             raise RuntimeError("STALE")
         options = {"stdin_data": stdin_data, "callback": callback}
         if challenge_callback is not None:
             options["challenge_callback"] = challenge_callback
-        self._runner.submit(
+        (runner or self._runner).submit(
             [self._executable, *(["--step-up-stdin"] if challenge_callback else []), *arguments],
             **options,
         )
@@ -356,6 +370,7 @@ class GoogleActions:
             ],
             callback=callback,
             challenge_callback=challenge_callback,
+            runner=self._oauth_runner,
         )
 
     def import_oauth_client(
@@ -429,7 +444,12 @@ class GoogleAccountsPage(SettingsWidget):
         self.set_spacing(8)
         self.model = GoogleAccountsModel()
         self._runner = BoundedJsonRunner()
-        self._actions = GoogleActions(self._runner, confirm=self._confirm_plan)
+        self._oauth_runner = BoundedJsonRunner(timeout_seconds=900.0)
+        self._actions = GoogleActions(
+            self._runner,
+            confirm=self._confirm_plan,
+            oauth_runner=self._oauth_runner,
+        )
         self._status = Gtk.Label(label="Google-Control noch nicht geladen")
         self._status.set_xalign(0.0)
         self.pack_start(self._status, False, False, 0)
@@ -489,9 +509,9 @@ class GoogleAccountsPage(SettingsWidget):
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
             summary = Gtk.Label(
                 label=(
-                    f"{card.ref} · OAuth {card.oauth_state} · Inventory "
-                    f"{card.inventory_generation} · Quota {card.quota_state} · "
-                    f"Reload {card.reload_state}"
+                    f"{card.ref} · Subject {'gebunden' if card.subject_bound else 'offen'} · "
+                    f"Inventory {card.inventory_generation} · "
+                    f"OAuth-Client {card.oauth_client_availability}"
                 )
             )
             summary.set_xalign(0.0)
