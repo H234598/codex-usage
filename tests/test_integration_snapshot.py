@@ -1249,7 +1249,7 @@ def test_projection_rejects_duplicate_canonical_limit_identity():
 
 
 def test_projection_rejects_duplicate_limit_identity_with_different_reset():
-    from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema1_document
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema2_document
 
     first = LimitWindow(
         name="5h",
@@ -1260,7 +1260,7 @@ def test_projection_rejects_duplicate_limit_identity_with_different_reset():
     second = replace(first, reset_at=RESET.replace(hour=16))
     pools = (_pool("main", (first, second)),)
     with pytest.raises(IntegrationInvalidSource):
-        build_schema1_document((_usage_with_pools(pools),), generated_at=GENERATED)
+        build_schema2_document((_usage_with_pools(pools),), generated_at=GENERATED)
 
 
 def test_serialization_rejects_boolean_schema_version():

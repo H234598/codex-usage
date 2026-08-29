@@ -41,6 +41,12 @@ class _CreatingSecretIngress(_SecretIngress):
         )
 
 
+class _OpenAIGeneration:
+    def account_generation(self, account_ref: str) -> int:
+        assert account_ref == "openai-one"
+        return 0
+
+
 def _credential_directory(tmp_path: Path, secret: bytes) -> tuple[Path, int]:
     directory = tmp_path / "credentials"
     directory.mkdir(mode=0o700)
@@ -51,9 +57,14 @@ def _credential_directory(tmp_path: Path, secret: bytes) -> tuple[Path, int]:
 
 
 def _running_admin_socket(
-    tmp_path: Path, key_fd: int, *, ingress: _SecretIngress | None = None
+    tmp_path: Path,
+    key_fd: int,
+    *,
+    ingress: _SecretIngress | None = None,
+    openai_credentials: object | None = None,
 ) -> AdminSocketServer:
     service = _service(ingress or _SecretIngress(), _Hosts())
+    service._openai_credentials = openai_credentials
 
     def authorize(peer: UnixPeerCredentials):
         assert (peer.pid, peer.uid, peer.gid) == (os.getpid(), os.getuid(), os.getgid())
@@ -179,7 +190,12 @@ def test_real_admin_socket_raw_put_sends_one_fd_after_attestation_and_wipes_file
 
 def test_real_admin_socket_regular_mutation_sends_no_secret_fd(tmp_path: Path) -> None:
     directory, key_fd = _credential_directory(tmp_path, b"s" * 32)
-    server = _running_admin_socket(tmp_path, key_fd, ingress=_CreatingSecretIngress())
+    server = _running_admin_socket(
+        tmp_path,
+        key_fd,
+        ingress=_CreatingSecretIngress(),
+        openai_credentials=_OpenAIGeneration(),
+    )
     try:
         client = MasterjetControlClient(
             MasterjetConnection("local", os.fspath(server.path), 2),

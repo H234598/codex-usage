@@ -3794,6 +3794,8 @@ def test_temporary_launcher_emits_schema2_from_temporary_state(tmp_path):
 
 
 def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts(tmp_path):
+    from test_app_server import _auth, _fake_codex
+
     from codex_usage.app_server import fetch_account_usage_app_server
     from codex_usage.history import usage_samples_from_usage
     from codex_usage.integration_evidence import read_current_evidence
@@ -3805,7 +3807,6 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
     )
     from codex_usage.models import Account, LimitWindow
     from codex_usage.state import save_current_usage
-    from tests.test_app_server import _auth, _fake_codex
 
     release, data_home, state_home = _install(tmp_path)
     auth_home = tmp_path / "codex-home"
@@ -4048,13 +4049,14 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
 
 
 def test_installed_launcher_invalid_real_credit_does_not_commit_current(tmp_path):
+    from test_app_server import _auth, _fake_codex
+
     from codex_usage.app_server import fetch_account_usage_app_server
     from codex_usage.integration_evidence import read_current_evidence
     from codex_usage.integration_snapshot import read_current_usage_records
     from codex_usage.models import Account, LimitWindow
     from codex_usage.scheduler import _apply_watchdog_block
     from codex_usage.state import save_current_usage
-    from tests.test_app_server import _auth, _fake_codex
 
     release, data_home, state_home = _install(tmp_path)
     auth_home = tmp_path / "codex-home-invalid"

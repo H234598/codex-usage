@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+import codex_usage.history as history_module
 import codex_usage.scheduler as scheduler_module
 from codex_usage.app_server import AppServerUnavailableError
 from codex_usage.config import AppConfig
@@ -44,6 +45,19 @@ from codex_usage.scheduler import (
     watch,
     watchdog,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_scheduler_xdg_roots(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    for variable, directory in (
+        ("XDG_DATA_HOME", "xdg-data"),
+        ("XDG_STATE_HOME", "xdg-state"),
+        ("XDG_CONFIG_HOME", "xdg-config"),
+        ("XDG_CACHE_HOME", "xdg-cache"),
+    ):
+        monkeypatch.setenv(variable, str(tmp_path / directory))
 
 
 class _RaisingTimezone(tzinfo):
@@ -2231,6 +2245,17 @@ def test_fetch_all_does_not_persist_explicit_backend_override(monkeypatch):
 
 
 def test_fetch_all_persists_browser_account_with_auth_json_path(monkeypatch, tmp_path):
+    expected_history_path = tmp_path / "xdg-data" / "codex-usage" / "usage-history.sqlite3"
+    opened_history_paths: list[Path] = []
+    real_store_init = history_module.HistoryStore.__init__
+
+    def guarded_store_init(store, path=None):
+        real_store_init(store, path)
+        opened_history_paths.append(store.path)
+        if store.path != expected_history_path:
+            raise AssertionError("scheduler test attempted non-hermetic history path")
+
+    monkeypatch.setattr(history_module.HistoryStore, "__init__", guarded_store_init)
     account = Account(
         id="account",
         label="Account",
@@ -2276,6 +2301,7 @@ def test_fetch_all_persists_browser_account_with_auth_json_path(monkeypatch, tmp
     assert result[0].backend_configured == "direct"
     assert saved_current == ["account"]
     assert saved_snapshots == ["account"]
+    assert opened_history_paths == [expected_history_path]
 
 
 def test_watchdog_does_not_persist_explicit_backend_override(monkeypatch):
