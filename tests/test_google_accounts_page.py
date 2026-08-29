@@ -440,6 +440,83 @@ def test_google_model_starts_unknown_and_fail_closed() -> None:
     assert model.cards == ()
 
 
+@pytest.mark.parametrize("newest_ok", [False, True])
+def test_google_refresh_revokes_immediately_and_accepts_only_newest_result(newest_ok) -> None:
+    module = _module()
+    callbacks = []
+
+    class Runner:
+        def submit(self, _argv, **options):
+            callbacks.append(options.get("callback"))
+
+    page = module.GoogleAccountsPage(None, None, None)
+    page._actions = module.GoogleActions(Runner(), executable="/opt/codex-usage")
+    page.render(_payload())
+    assert page._actions.projection_ready is True
+
+    page._refresh()
+    assert page.model.stale is True
+    assert page._actions.projection_ready is False
+    page._refresh()
+    success = module.CommandResult(True, _payload(), "ok")
+    failure = module.CommandResult(False, None, "control.transport_unavailable")
+    callbacks[1](success if newest_ok else failure)
+    callbacks[0](failure if newest_ok else success)
+
+    assert page.model.stale is not newest_ok
+    assert page._actions.projection_ready is newest_ok
+    assert page._status.get_text() == (
+        "Aktuell"
+        if newest_ok
+        else "STALE · control.transport_unavailable · Mutationen gesperrt"
+    )
+
+
+def test_google_destroy_ignores_pending_result_and_step_up_and_closes_runners(
+    monkeypatch,
+) -> None:
+    module = _module()
+    callbacks = []
+    challenges = []
+
+    class Runner:
+        closed = False
+
+        def submit(self, _argv, **options):
+            callbacks.append(options.get("callback"))
+            challenges.append(options.get("challenge_callback"))
+
+        def close(self):
+            self.closed = True
+
+    runner = Runner()
+    page = module.GoogleAccountsPage(None, None, None)
+    page._runner = runner
+    page._oauth_runner = runner
+    page._actions = module.GoogleActions(
+        runner,
+        oauth_runner=runner,
+        executable="/opt/codex-usage",
+    )
+    page.render(_payload())
+    prompted = []
+    monkeypatch.setattr(
+        page,
+        "prompt_step_up",
+        lambda: prompted.append(True) or bytearray(b"739104"),
+    )
+    page._inventory(None, "google-one")
+    status = page._status.get_text()
+
+    page._on_destroy()
+    callbacks[-1](module.CommandResult(True, {}, "ok"))
+
+    assert challenges[-1]() is None
+    assert prompted == []
+    assert page._status.get_text() == status
+    assert runner.closed is True
+
+
 @pytest.mark.parametrize(
     "invalid_stale",
     [None, 0, 1, "false", {}, []],
@@ -895,6 +972,7 @@ def test_google_page_actions_use_running_challenge_callbacks(monkeypatch) -> Non
     class Actions:
         _executable = "/opt/codex-usage"
         projection_ready = True
+        projection_version = 0
 
         def oauth_begin(self, _account, *, browser, callback, challenge_callback):
             assert browser == "firefox"
@@ -919,10 +997,21 @@ def test_google_page_actions_use_running_challenge_callbacks(monkeypatch) -> Non
             return True
 
     page._actions = Actions()
+
+    def assert_prompted() -> None:
+        code = callbacks[-1]()
+        assert code == bytearray(b"739104")
+        code[:] = b"\x00" * len(code)
+        code.clear()
+
     page._oauth_begin(None, "google-one")
+    assert_prompted()
     page.choose_oauth_client("google-one")
+    assert_prompted()
     page._inventory(None, "google-one")
+    assert_prompted()
     page._plan(None, "google-one")
+    assert_prompted()
     page._plan_loaded(
         module.CommandResult(
             True,
@@ -938,7 +1027,8 @@ def test_google_page_actions_use_running_challenge_callbacks(monkeypatch) -> Non
             "",
         )
     )
-    assert callbacks == [page._prompt_running_step_up] * 5
+    assert_prompted()
+    assert len(callbacks) == 5
 
 
 def test_google_actions_use_own_cli_and_never_masterjet_binary() -> None:

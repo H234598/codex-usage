@@ -450,6 +450,9 @@ class GoogleAccountsPage(SettingsWidget):
             confirm=self._confirm_plan,
             oauth_runner=self._oauth_runner,
         )
+        self._request_epoch = 0
+        self._destroyed = False
+        self.connect("destroy", self._on_destroy)
         self._status = Gtk.Label(label="Google-Control noch nicht geladen")
         self._status.set_xalign(0.0)
         self.pack_start(self._status, False, False, 0)
@@ -467,26 +470,65 @@ class GoogleAccountsPage(SettingsWidget):
         self.show_all()
 
     def _refresh(self, *_args) -> None:
+        try:
+            epoch = self._begin_request()
+        except RuntimeError:
+            return
+        self._revoke_projection()
         self._status.set_text("Google-Control wird geladen …")
         try:
-            self._actions.refresh_accounts(callback=self._accounts_loaded)
+            self._actions.refresh_accounts(
+                callback=self._result_callback(epoch, self._accounts_loaded)
+            )
         except RuntimeError:
             self._status.set_text("STALE · Mutationen gesperrt")
 
+    def _begin_request(self) -> int:
+        if self._destroyed:
+            raise RuntimeError("DESTROYED")
+        self._request_epoch += 1
+        return self._request_epoch
+
+    def _accepts(self, epoch: int) -> bool:
+        return not self._destroyed and epoch == self._request_epoch
+
+    def _result_callback(self, epoch: int, callback):
+        def current(result: CommandResult) -> bool:
+            if not self._accepts(epoch):
+                return False
+            return callback(result)
+
+        return current
+
+    def _challenge_callback(self, epoch: int):
+        return lambda: self._prompt_running_step_up(epoch)
+
+    def _revoke_projection(self) -> None:
+        self.model.fail_closed()
+        self._actions.set_projection_ready(False)
+        self._set_buttons_sensitive(False)
+
+    def _on_destroy(self, *_args) -> None:
+        if self._destroyed:
+            return
+        self._destroyed = True
+        self._request_epoch += 1
+        self.model.fail_closed()
+        self._actions.set_projection_ready(False)
+        self._runner.close()
+        if self._oauth_runner is not self._runner:
+            self._oauth_runner.close()
+
     def _accounts_loaded(self, result: CommandResult) -> bool:
         if not result.ok:
-            self.model.fail_closed()
-            self._actions.set_projection_ready(False)
+            self._revoke_projection()
             self._status.set_text(f"STALE · {result.code} · Mutationen gesperrt")
-            self._set_buttons_sensitive(False)
             return False
         try:
             self.render(result.payload)
         except ValueError:
-            self.model.fail_closed()
-            self._actions.set_projection_ready(False)
+            self._revoke_projection()
             self._status.set_text("Ungültige redigierte Control-Antwort · Mutationen gesperrt")
-            self._set_buttons_sensitive(False)
         return False
 
     def render(self, payload: object) -> None:
@@ -558,36 +600,60 @@ class GoogleAccountsPage(SettingsWidget):
                             button.set_sensitive(sensitive)
 
     def _inventory(self, _button, account_ref: str) -> None:
-        self._actions.inventory_refresh(
-            account_ref,
-            callback=self._operation_finished,
-            challenge_callback=self._prompt_running_step_up,
-        )
+        try:
+            epoch = self._begin_request()
+            self._actions.inventory_refresh(
+                account_ref,
+                callback=self._result_callback(epoch, self._operation_finished),
+                challenge_callback=self._challenge_callback(epoch),
+            )
+        except RuntimeError:
+            self._status.set_text("STALE · Mutationen gesperrt")
 
     def _oauth_begin(self, _button, account_ref: str) -> None:
-        self._actions.oauth_begin(
-            account_ref,
-            browser="firefox",
-            callback=self._operation_finished,
-            challenge_callback=self._prompt_running_step_up,
-        )
+        try:
+            epoch = self._begin_request()
+            self._actions.oauth_begin(
+                account_ref,
+                browser="firefox",
+                callback=self._result_callback(epoch, self._operation_finished),
+                challenge_callback=self._challenge_callback(epoch),
+            )
+        except RuntimeError:
+            self._status.set_text("STALE · Mutationen gesperrt")
 
     def _choose_oauth_client(self, _button, account_ref: str) -> None:
-        self.choose_oauth_client(account_ref)
+        try:
+            self.choose_oauth_client(account_ref, epoch=self._begin_request())
+        except RuntimeError:
+            self._status.set_text("STALE · Mutationen gesperrt")
 
     def _add_account(self, *_args) -> None:
-        account_ref = self._prompt_account_ref()
-        if account_ref is not None:
-            self.choose_oauth_client(account_ref)
+        try:
+            epoch = self._begin_request()
+            account_ref = self._prompt_account_ref(epoch)
+            if account_ref is not None:
+                self.choose_oauth_client(account_ref, epoch=epoch)
+        except RuntimeError:
+            self._status.set_text("STALE · Mutationen gesperrt")
 
     def _plan(self, _button, account_ref: str) -> None:
-        self._actions.provision_plan(
-            account_ref,
-            callback=self._plan_loaded,
-            challenge_callback=self._prompt_running_step_up,
-        )
+        try:
+            epoch = self._begin_request()
+            self._actions.provision_plan(
+                account_ref,
+                callback=self._result_callback(
+                    epoch, lambda result: self._plan_loaded(result, epoch)
+                ),
+                challenge_callback=self._challenge_callback(epoch),
+            )
+        except RuntimeError:
+            self._status.set_text("STALE · Mutationen gesperrt")
 
-    def _plan_loaded(self, result: CommandResult) -> bool:
+    def _plan_loaded(self, result: CommandResult, epoch: int | None = None) -> bool:
+        current_epoch = self._request_epoch if epoch is None else epoch
+        if not self._accepts(current_epoch):
+            return False
         if not result.ok:
             self._operation_finished(result)
             return False
@@ -599,8 +665,8 @@ class GoogleAccountsPage(SettingsWidget):
         try:
             applied = self._actions.apply(
                 preview,
-                callback=self._operation_finished,
-                challenge_callback=self._prompt_running_step_up,
+                callback=self._result_callback(current_epoch, self._operation_finished),
+                challenge_callback=self._challenge_callback(current_epoch),
             )
         except RuntimeError:
             applied = False
@@ -612,13 +678,15 @@ class GoogleAccountsPage(SettingsWidget):
         self._status.set_text("Operation abgeschlossen" if result.ok else f"Fehler: {result.code}")
         return False
 
-    def _prompt_running_step_up(self) -> bytearray | None:
-        if not self._actions.projection_ready:
+    def _prompt_running_step_up(self, epoch: int | None = None) -> bytearray | None:
+        current_epoch = self._request_epoch if epoch is None else epoch
+        if not self._accepts(current_epoch) or not self._actions.projection_ready:
             return None
         projection_version = self._actions.projection_version
         code = self.prompt_step_up()
         if (
-            not self._actions.projection_ready
+            not self._accepts(current_epoch)
+            or not self._actions.projection_ready
             or self._actions.projection_version != projection_version
         ):
             if type(code) is bytearray:
@@ -628,6 +696,9 @@ class GoogleAccountsPage(SettingsWidget):
         return code
 
     def _confirm_plan(self, preview: GooglePlanPreview) -> bool:
+        epoch = self._request_epoch
+        if not self._accepts(epoch):
+            return False
         names = "\n".join(
             f"• {project_name} · {key_name}" for project_name, key_name in preview.names
         )
@@ -642,11 +713,15 @@ class GoogleAccountsPage(SettingsWidget):
         )
         dialog.format_secondary_text(f"Digest: {preview.plan_digest}\n{names}")
         try:
-            return dialog.run() == Gtk.ResponseType.OK
+            accepted = dialog.run() == Gtk.ResponseType.OK
+            return accepted and self._accepts(epoch)
         finally:
             dialog.destroy()
 
-    def choose_oauth_client(self, account_ref: str) -> None:
+    def choose_oauth_client(self, account_ref: str, *, epoch: int | None = None) -> None:
+        current_epoch = self._begin_request() if epoch is None else epoch
+        if not self._accepts(current_epoch):
+            raise RuntimeError("STALE")
         dialog = Gtk.FileChooserDialog(
             title="OAuth-Client-JSON auswählen",
             transient_for=self.get_toplevel()
@@ -663,18 +738,25 @@ class GoogleAccountsPage(SettingsWidget):
         try:
             if dialog.run() != Gtk.ResponseType.OK:
                 return
+            if not self._accepts(current_epoch):
+                return
             filename = dialog.get_filename()
             if isinstance(filename, str):
                 self._actions.import_oauth_client(
                     account_ref,
                     Path(filename),
-                    callback=self._operation_finished,
-                    challenge_callback=self._prompt_running_step_up,
+                    callback=self._result_callback(
+                        current_epoch, self._operation_finished
+                    ),
+                    challenge_callback=self._challenge_callback(current_epoch),
                 )
         finally:
             dialog.destroy()
 
-    def _prompt_account_ref(self) -> str | None:
+    def _prompt_account_ref(self, epoch: int | None = None) -> str | None:
+        current_epoch = self._request_epoch if epoch is None else epoch
+        if not self._accepts(current_epoch):
+            return None
         toplevel = self.get_toplevel()
         dialog = Gtk.Dialog(
             title="Google-Account hinzufügen",
@@ -693,6 +775,8 @@ class GoogleAccountsPage(SettingsWidget):
         dialog.show_all()
         try:
             if dialog.run() != Gtk.ResponseType.OK:
+                return None
+            if not self._accepts(current_epoch):
                 return None
             try:
                 return _text(entry.get_text(), "account_ref")

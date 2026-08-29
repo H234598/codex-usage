@@ -226,7 +226,15 @@ class CommandResult:
 class BoundedJsonRunner:
     """Run only fixed local CLI commands with bounded output in a worker thread."""
 
-    __slots__ = ("_dispatcher", "_max_output", "_prompt_dispatcher", "_timeout")
+    __slots__ = (
+        "_active",
+        "_closed",
+        "_dispatcher",
+        "_lock",
+        "_max_output",
+        "_prompt_dispatcher",
+        "_timeout",
+    )
 
     def __init__(
         self,
@@ -240,6 +248,9 @@ class BoundedJsonRunner:
         self._max_output = max_output_bytes
         self._dispatcher = dispatcher
         self._prompt_dispatcher = prompt_dispatcher
+        self._active: dict[int, tuple[subprocess.Popen[bytes], int]] = {}
+        self._closed = False
+        self._lock = threading.Lock()
 
     def submit(
         self,
@@ -254,6 +265,9 @@ class BoundedJsonRunner:
             not isinstance(part, str) or not part or "\x00" in part for part in command
         ):
             raise ValueError("invalid command")
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("runner closed")
         secret = bytearray(stdin_data) if stdin_data is not None else None
 
         def worker() -> None:
@@ -301,6 +315,15 @@ class BoundedJsonRunner:
                 start_new_session=True,
             )
             process_group = process.pid
+            with self._lock:
+                cancelled = self._closed
+                if not cancelled:
+                    self._active[id(process)] = (process, process_group)
+            if cancelled:
+                _terminate_process_group(process, process_group)
+                process = None
+                process_group = None
+                raise OSError("runner closed")
             if process.stdin is not None:
                 if stdin_data is not None:
                     process.stdin.write(stdin_data)
@@ -359,9 +382,22 @@ class BoundedJsonRunner:
             return CommandResult(False, None, "control.transport_unavailable")
         finally:
             if process is not None and process_group is not None:
-                _terminate_process_group(process, process_group)
+                with self._lock:
+                    owned = self._active.pop(id(process), None) is not None
+                if owned:
+                    _terminate_process_group(process, process_group)
             control[:] = b"\x00" * len(control)
             control.clear()
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            active = tuple(self._active.values())
+            self._active.clear()
+        for process, process_group in active:
+            _terminate_process_group(process, process_group)
 
     def _request_step_up(
         self,
@@ -794,10 +830,15 @@ class OpenAIAccountsPage(SettingsWidget):
         self.set_orientation(Gtk.Orientation.VERTICAL)
         self.set_spacing(6)
         self.model = OpenAIAccountsModel()
+        self._runner = BoundedJsonRunner()
+        self._reauth_runner = BoundedJsonRunner(timeout_seconds=REAUTH_TIMEOUT_SECONDS)
         self._actions = OpenAIActions(
-            BoundedJsonRunner(),
-            reauth_runner=BoundedJsonRunner(timeout_seconds=REAUTH_TIMEOUT_SECONDS),
+            self._runner,
+            reauth_runner=self._reauth_runner,
         )
+        self._request_epoch = 0
+        self._destroyed = False
+        self.connect("destroy", self._on_destroy)
         self._status = Gtk.Label(label="OpenAI-Control nicht geladen")
         self._status.set_xalign(0.0)
         self.pack_start(self._status, False, False, 0)
@@ -809,9 +850,44 @@ class OpenAIAccountsPage(SettingsWidget):
         self.show_all()
 
     def _refresh(self, *_args) -> None:
+        try:
+            epoch = self._begin_request()
+        except RuntimeError:
+            return
         self._revoke_projection()
         self._status.set_text("OpenAI-Control wird geladen …")
-        self._actions.refresh(callback=self._loaded)
+        self._actions.refresh(callback=self._result_callback(epoch, self._loaded))
+
+    def _begin_request(self) -> int:
+        if self._destroyed:
+            raise RuntimeError("DESTROYED")
+        self._request_epoch += 1
+        return self._request_epoch
+
+    def _accepts(self, epoch: int) -> bool:
+        return not self._destroyed and epoch == self._request_epoch
+
+    def _result_callback(self, epoch: int, callback):
+        def current(result: CommandResult) -> bool:
+            if not self._accepts(epoch):
+                return False
+            return callback(result)
+
+        return current
+
+    def _challenge_callback(self, epoch: int):
+        return lambda: self._prompt_running_step_up(epoch)
+
+    def _on_destroy(self, *_args) -> None:
+        if self._destroyed:
+            return
+        self._destroyed = True
+        self._request_epoch += 1
+        self.model.fail_closed()
+        self._actions.set_projection_ready(False)
+        self._runner.close()
+        if self._reauth_runner is not self._runner:
+            self._reauth_runner.close()
 
     def _revoke_projection(self) -> None:
         self.model.fail_closed()
@@ -878,19 +954,24 @@ class OpenAIAccountsPage(SettingsWidget):
         self._body.show_all()
 
     def _reauth(self, _button, account_ref: str) -> None:
-        self._status.set_text("Re-Auth läuft …")
         try:
-            self._actions.reauthenticate(account_ref, callback=self._operation_finished)
+            epoch = self._begin_request()
+            self._status.set_text("Re-Auth läuft …")
+            self._actions.reauthenticate(
+                account_ref,
+                callback=self._result_callback(epoch, self._operation_finished),
+            )
         except RuntimeError:
             self._status.set_text("STALE · Mutationen gesperrt")
 
     def _sync_auth(self, _button, account_ref: str) -> None:
-        self._status.set_text("Auth-Sync läuft …")
         try:
+            epoch = self._begin_request()
+            self._status.set_text("Auth-Sync läuft …")
             self._actions.sync_auth(
                 account_ref,
-                callback=self._operation_finished,
-                challenge_callback=self._prompt_running_step_up,
+                callback=self._result_callback(epoch, self._operation_finished),
+                challenge_callback=self._challenge_callback(epoch),
             )
         except RuntimeError:
             self._status.set_text("STALE · Mutationen gesperrt")
@@ -899,13 +980,15 @@ class OpenAIAccountsPage(SettingsWidget):
         self._status.set_text("Operation abgeschlossen" if result.ok else f"Fehler: {result.code}")
         return False
 
-    def _prompt_running_step_up(self) -> bytearray | None:
-        if not self._actions.projection_ready:
+    def _prompt_running_step_up(self, epoch: int | None = None) -> bytearray | None:
+        current_epoch = self._request_epoch if epoch is None else epoch
+        if not self._accepts(current_epoch) or not self._actions.projection_ready:
             return None
         projection_version = self._actions.projection_version
         code = self.prompt_step_up()
         if (
-            not self._actions.projection_ready
+            not self._accepts(current_epoch)
+            or not self._actions.projection_ready
             or self._actions.projection_version != projection_version
         ):
             if type(code) is bytearray:

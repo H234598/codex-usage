@@ -193,6 +193,117 @@ def test_fresh_page_revokes_real_buttons_before_refresh_and_on_transport_failure
     assert page._actions.projection_ready is False
 
 
+@pytest.mark.parametrize("newest_ok", [False, True])
+def test_openai_refresh_accepts_only_newest_out_of_order_result(newest_ok) -> None:
+    module = _module()
+    callbacks = []
+
+    class Runner:
+        def submit(self, _argv, *, stdin_data=None, callback=None):
+            callbacks.append(callback)
+
+    page = module.OpenAIAccountsPage(None, None, None)
+    page._actions = module.OpenAIActions(Runner(), executable="/opt/codex-usage")
+    page._refresh()
+    page._refresh()
+    success = module.CommandResult(
+        True,
+        {
+            "local_accounts": _local_accounts(),
+            "accounts": _masterjet_accounts(),
+            "stale": False,
+        },
+        "ok",
+    )
+    failure = module.CommandResult(False, None, "control.transport_unavailable")
+
+    callbacks[1](success if newest_ok else failure)
+    callbacks[0](failure if newest_ok else success)
+
+    assert page.model.stale is not newest_ok
+    assert page._actions.projection_ready is newest_ok
+    assert page._status.get_text() == (
+        "Aktuell"
+        if newest_ok
+        else "STALE · control.transport_unavailable · Mutationen gesperrt"
+    )
+
+
+def test_openai_destroy_ignores_pending_result_and_step_up_and_closes_runners(
+    monkeypatch,
+) -> None:
+    module = _module()
+    callbacks = []
+    challenges = []
+
+    class Runner:
+        closed = False
+
+        def submit(self, _argv, **options):
+            callbacks.append(options.get("callback"))
+            challenges.append(options.get("challenge_callback"))
+
+        def close(self):
+            self.closed = True
+
+    runner = Runner()
+    page = module.OpenAIAccountsPage(None, None, None)
+    page._runner = runner
+    page._reauth_runner = runner
+    page._actions = module.OpenAIActions(
+        runner,
+        reauth_runner=runner,
+        executable="/opt/codex-usage",
+    )
+    page.render(_local_accounts(), _masterjet_accounts(), stale=False)
+    prompted = []
+    monkeypatch.setattr(
+        page,
+        "prompt_step_up",
+        lambda: prompted.append(True) or bytearray(b"739104"),
+    )
+    page._sync_auth(None, "BW_Work")
+    status = page._status.get_text()
+
+    page._on_destroy()
+    callbacks[-1](module.CommandResult(True, {}, "ok"))
+
+    assert challenges[-1]() is None
+    assert prompted == []
+    assert page._status.get_text() == status
+    assert runner.closed is True
+
+
+@pytest.mark.parametrize("page_kind", ["openai", "google"])
+def test_destroy_during_step_up_wipes_result_and_returns_no_code(monkeypatch, page_kind) -> None:
+    openai_module = _module()
+    if page_kind == "openai":
+        page = openai_module.OpenAIAccountsPage(None, None, None)
+        actions = openai_module.OpenAIActions(openai_module.BoundedJsonRunner())
+    else:
+        google_path = APPLET_DIR / "google_accounts_page.py"
+        spec = importlib.util.spec_from_file_location("google_accounts_page", google_path)
+        assert spec is not None and spec.loader is not None
+        google_module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = google_module
+        spec.loader.exec_module(google_module)
+        page = google_module.GoogleAccountsPage(None, None, None)
+        actions = google_module.GoogleActions(openai_module.BoundedJsonRunner())
+    page._actions = actions
+    actions.set_projection_ready(True)
+    epoch = page._begin_request()
+    code = bytearray(b"739104")
+
+    def destroy_during_prompt():
+        page._on_destroy()
+        return code
+
+    monkeypatch.setattr(page, "prompt_step_up", destroy_during_prompt)
+
+    assert page._prompt_running_step_up(epoch) is None
+    assert code == b""
+
+
 def test_invalid_live_envelope_revokes_fresh_page_and_action_guard() -> None:
     module = _module()
     calls = []
@@ -1010,6 +1121,32 @@ def test_bounded_runner_wipes_callback_bytearray_after_stdin_write() -> None:
 
     assert result.ok is True
     assert code == b""
+
+
+def test_bounded_runner_close_terminates_active_child_group(tmp_path) -> None:
+    module = _module()
+    pid_file = tmp_path / "closed-runner.pid"
+    script = (
+        "import os,pathlib,time; "
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid())); "
+        "time.sleep(30)"
+    )
+    runner = module.BoundedJsonRunner(timeout_seconds=60)
+    runner.submit((sys.executable, "-c", script))
+    deadline = time.monotonic() + 2
+    while not pid_file.exists():
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+
+    runner.close()
+
+    pid = int(pid_file.read_text(encoding="ascii"))
+    deadline = time.monotonic() + 2
+    while _process_running(pid):
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    with pytest.raises(RuntimeError, match="closed"):
+        runner.submit((sys.executable, "-c", "pass"))
 
 
 def test_bounded_runner_closes_all_child_pipes(monkeypatch) -> None:
