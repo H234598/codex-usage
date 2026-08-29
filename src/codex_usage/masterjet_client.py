@@ -343,13 +343,13 @@ class _UnixTransport:
                 if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
                     raise MasterjetClientError("control.endpoint_invalid")
                 peer = _verify_peer(sock, expected_uid=before.st_uid)
+                _set_socket_deadline(sock, deadline)
+                _attest_local_transport(self._attestation_verifier, peer, sock)
+                deadline.remaining()
                 if not _is_sensitive(operation):
                     _set_socket_deadline(sock, deadline)
                     sock.sendall(request + b"\n")
                 else:
-                    _set_socket_deadline(sock, deadline)
-                    _attest_local_transport(self._attestation_verifier, peer, sock)
-                    deadline.remaining()
                     step_up = _provider_value(
                         self._step_up_provider,
                         "control.step_up_required",
@@ -370,7 +370,8 @@ class _UnixTransport:
                     if sent < len(framed):
                         _set_socket_deadline(sock, deadline)
                         sock.sendall(framed[sent:])
-                return 200, _read_json_line(sock, deadline)
+                sock.shutdown(socket.SHUT_WR)
+                return _unwrap_unix_response(_read_json_line(sock, deadline))
         except MasterjetClientError as exc:
             if deadline.expired():
                 raise MasterjetClientError("control.timeout") from None
@@ -766,6 +767,42 @@ def _read_json_line(sock: socket.socket, deadline: _Deadline) -> bytes:
             return bytes(received[:newline])
         if len(received) > MAX_RESPONSE_BYTES:
             raise MasterjetClientError("control.response_too_large")
+
+
+def _unwrap_unix_response(body: bytes) -> tuple[int, bytes]:
+    payload = _load_json(body)
+    if type(payload) is not dict or payload.get("schema_version") != 1:
+        raise MasterjetClientError("control.response_invalid")
+    if type(payload.get("ok")) is not bool:
+        raise MasterjetClientError("control.response_invalid")
+    if payload["ok"] is True:
+        if set(payload) != {"schema_version", "ok", "result"}:
+            raise MasterjetClientError("control.response_invalid")
+        result = payload.get("result")
+        if type(result) is not dict:
+            raise MasterjetClientError("control.response_invalid")
+        status = 200
+        value = result
+    else:
+        if set(payload) != {"schema_version", "ok", "problem"}:
+            raise MasterjetClientError("control.response_invalid")
+        problem = payload.get("problem")
+        if type(problem) is not dict:
+            raise MasterjetClientError("control.response_invalid")
+        status = 403
+        value = problem
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=True,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("ascii")
+    except (TypeError, ValueError, RecursionError):
+        raise MasterjetClientError("control.response_invalid") from None
+    if len(encoded) > MAX_RESPONSE_BYTES:
+        raise MasterjetClientError("control.response_too_large")
+    return status, encoded
 
 
 def _read_bounded_response(

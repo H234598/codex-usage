@@ -86,6 +86,7 @@ from .masterjet_contracts import (
 )
 from .masterjet_credentials import (
     bearer_provider_from_systemd_credentials,
+    local_attestation_verifier_from_systemd_credentials,
     stdin_step_up_provider,
     tty_step_up_provider,
     unavailable_step_up_provider,
@@ -1517,7 +1518,12 @@ def _new_masterjet_client(
     connection: MasterjetConnection, *, step_up_stdin: bool = False
 ) -> MasterjetControlClient:
     if connection.transport == "local":
-        return MasterjetControlClient(connection)
+        return MasterjetControlClient(
+            connection,
+            local_attestation_verifier=(
+                local_attestation_verifier_from_systemd_credentials()
+            ),
+        )
     step_up = (
         stdin_step_up_provider(
             getattr(sys.stdin, "buffer", sys.stdin),

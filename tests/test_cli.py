@@ -5963,7 +5963,7 @@ def test_live_projection_connection_commands_use_one_canonical_config(
     assert calls[-1] == ("openai.accounts.list", {})
 
 
-def test_masterjet_client_factory_wires_https_providers_and_keeps_local_peer_only(
+def test_masterjet_client_factory_wires_https_and_local_credentials(
     tmp_path, monkeypatch
 ):
     credential_dir = tmp_path / "credentials"
@@ -5971,6 +5971,9 @@ def test_masterjet_client_factory_wires_https_providers_and_keeps_local_peer_onl
     credential = credential_dir / "masterjet-control-bearer"
     credential.write_text("remote-bearer", encoding="ascii")
     credential.chmod(0o400)
+    attestation = credential_dir / "masterjet-local-attestation-key"
+    attestation.write_bytes(b"k" * 32)
+    attestation.chmod(0o400)
     captured = []
 
     class Client:
@@ -5993,7 +5996,8 @@ def test_masterjet_client_factory_wires_https_providers_and_keeps_local_peer_onl
     assert isinstance(local, Client)
     assert set(captured[0][1]) == {"bearer_provider", "step_up_provider"}
     assert captured[0][1]["bearer_provider"]() == "remote-bearer"
-    assert captured[1][1] == {}
+    assert set(captured[1][1]) == {"local_attestation_verifier"}
+    assert callable(captured[1][1]["local_attestation_verifier"])
 
 
 def test_live_projection_connection_set_rejects_invalid_endpoint_before_write(
