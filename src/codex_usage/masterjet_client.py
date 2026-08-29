@@ -41,6 +41,7 @@ MAX_RESPONSE_BYTES = 1_000_000
 MAX_SECRET_BYTES = 10_000_000
 
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _IDEMPOTENCY_RE = re.compile(
     r"^(?:idem-[A-Za-z0-9][A-Za-z0-9._:-]{0,122}|"
     r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
@@ -48,6 +49,7 @@ _IDEMPOTENCY_RE = re.compile(
 _HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
 _INVALID_JSON = object()
 _OPERATION_ARGUMENT_FIELDS = {
+    "hosts.list": ({}, frozenset()),
     "operations.get": (
         {"operation_id": "token", "account_ref": "token"},
         frozenset(),
@@ -57,13 +59,19 @@ _OPERATION_ARGUMENT_FIELDS = {
     "google.oauth.begin": (
         {
             "account_ref": "token",
-            "browser": "token",
+            "oauth_client_ref": "token",
             "redirect_uri": "redirect_uri",
+            "scope_profile": "token",
         },
         frozenset(),
     ),
     "google.oauth.complete": (
-        {"account_ref": "token", "transaction_id": "token"},
+        {
+            "account_ref": "token",
+            "transaction_id": "token",
+            "redirect_uri": "redirect_uri",
+            "state": "token",
+        },
         frozenset(),
     ),
     "google.oauth-client-import.plan": (
@@ -72,37 +80,63 @@ _OPERATION_ARGUMENT_FIELDS = {
     ),
     "google.oauth-client-import.apply": (
         {"account_ref": "token", "plan_id": "token"},
-        frozenset(),
+        frozenset({"plan_id"}),
     ),
-    "google.inventory.refresh": ({"account_ref": "token"}, frozenset()),
+    "google.inventory.refresh": ({}, frozenset()),
     "google.provision.plan": ({"account_ref": "token"}, frozenset()),
     "google.provision.apply": (
         {"account_ref": "token", "plan_id": "token"},
-        frozenset(),
+        frozenset({"plan_id"}),
     ),
     "google.billing.plan": (
         {
             "account_ref": "token",
+            "project_ref": "token",
             "billing_ref": "token",
-            "project_refs": "token_list",
         },
         frozenset(),
     ),
     "google.billing.apply": (
-        {"account_ref": "token", "plan_id": "token"},
+        {
+            "account_ref": "token",
+            "project_ref": "token",
+            "billing_ref": "token",
+            "plan_id": "token",
+        },
         frozenset(),
     ),
     "openai.accounts.list": ({}, frozenset()),
-    "openai.auth-sync.plan": ({"account_ref": "token"}, frozenset()),
-    "openai.auth-sync.apply": (
+    "openai.auth.plan": ({"account_ref": "token"}, frozenset()),
+    "openai.auth.apply": (
         {"account_ref": "token", "plan_id": "token"},
-        frozenset(),
+        frozenset({"plan_id"}),
     ),
     "secret.ingress.create": (
-        {"account_ref": "token", "credential_type": "token", "plan_id": "token"},
-        frozenset(),
+        {
+            "account_ref": "token",
+            "credential_kind": "token",
+            "plan_id": "token",
+        },
+        frozenset({"plan_id"}),
     ),
 }
+_COMMAND_OPERATIONS = frozenset(_OPERATION_ARGUMENT_FIELDS) - {
+    "hosts.list",
+    "openai.accounts.list",
+    "google.accounts.list",
+    "google.projects.list",
+    "operations.get",
+}
+_IDEMPOTENCY_OPERATIONS = _COMMAND_OPERATIONS - {"google.oauth.complete"}
+_DIGEST_OPERATIONS = frozenset(
+    {
+        "openai.auth.apply",
+        "secret.ingress.create",
+        "google.oauth-client-import.apply",
+        "google.provision.apply",
+        "google.billing.apply",
+    }
+)
 _SENSITIVE_OPERATIONS = frozenset(
     {
         "google.oauth.begin",
@@ -111,8 +145,8 @@ _SENSITIVE_OPERATIONS = frozenset(
         "google.oauth-client-import.apply",
         "google.billing.plan",
         "google.billing.apply",
-        "openai.auth-sync.plan",
-        "openai.auth-sync.apply",
+        "openai.auth.plan",
+        "openai.auth.apply",
         "secret.ingress.create",
         "secret.ingress.put",
     }
@@ -189,6 +223,7 @@ class MasterjetControlClient:
         arguments: object,
         expected_generation: int | None = None,
         idempotency_key: str | None = None,
+        plan_digest: str | None = None,
     ) -> object:
         if operation == "secret.ingress.put":
             raise MasterjetClientError("control.request_invalid")
@@ -197,6 +232,7 @@ class MasterjetControlClient:
             arguments,
             expected_generation=expected_generation,
             idempotency_key=idempotency_key,
+            plan_digest=plan_digest,
         )
         return self._request(
             operation,
@@ -484,6 +520,7 @@ def _encode_request(
     *,
     expected_generation: object,
     idempotency_key: object,
+    plan_digest: object = None,
     secret_session_id: object = None,
 ) -> tuple[bytes, memoryview | None]:
     operation = _operation(operation)
@@ -493,6 +530,24 @@ def _encode_request(
         raise MasterjetClientError("control.request_invalid")
     if idempotency_key is not None:
         idempotency_key = _idempotency_key(idempotency_key)
+    if operation == "secret.ingress.put":
+        if plan_digest is not None:
+            raise MasterjetClientError("control.request_invalid")
+    elif operation in _COMMAND_OPERATIONS:
+        if expected_generation is None:
+            raise MasterjetClientError("control.request_invalid")
+        if operation in _IDEMPOTENCY_OPERATIONS:
+            if idempotency_key is None:
+                raise MasterjetClientError("control.request_invalid")
+        elif idempotency_key is not None:
+            raise MasterjetClientError("control.request_invalid")
+        if operation in _DIGEST_OPERATIONS:
+            if type(plan_digest) is not str or _DIGEST_RE.fullmatch(plan_digest) is None:
+                raise MasterjetClientError("control.request_invalid")
+        elif plan_digest is not None:
+            raise MasterjetClientError("control.request_invalid")
+    elif expected_generation is not None or idempotency_key is not None or plan_digest is not None:
+        raise MasterjetClientError("control.request_invalid")
 
     secret = _secret_view(arguments)
     encoded_arguments: object
@@ -524,6 +579,8 @@ def _encode_request(
         document["expected_generation"] = expected_generation
     if idempotency_key is not None:
         document["idempotency_key"] = idempotency_key
+    if plan_digest is not None:
+        document["plan_digest"] = plan_digest
     try:
         encoded = json.dumps(
             document,
@@ -1228,7 +1285,10 @@ def _operation_arguments_valid(operation: str, arguments: object) -> bool:
     if set(arguments) - fields.keys() or fields.keys() - set(arguments) - optional:
         return False
     try:
-        return all(_argument_value_valid(arguments[name], kind) for name, kind in fields.items())
+        return all(
+            name not in arguments or _argument_value_valid(arguments[name], kind)
+            for name, kind in fields.items()
+        )
     except (TypeError, ValueError, RecursionError):
         return False
 
