@@ -8,7 +8,7 @@ import sys
 import tempfile
 import time
 from contextlib import ExitStack
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -46,7 +46,7 @@ from .config import (
     remove_account,
     resolve_account,
     restore_account,
-    save_config,
+    set_masterjet_connection,
 )
 from .consumption import (
     ConsumptionWindow,
@@ -1624,13 +1624,12 @@ def _cmd_masterjet_connection_test(args: argparse.Namespace) -> int:
 
 def _cmd_masterjet_connection_set(args: argparse.Namespace) -> int:
     try:
-        current = load_config(args.config)
         connection = MasterjetConnection(
             transport=args.transport,
             endpoint=args.endpoint,
             timeout_seconds=args.timeout_seconds,
         )
-        save_config(replace(current, masterjet=connection), args.config)
+        set_masterjet_connection(connection, args.config)
     except Exception:
         payload = {"ok": False, "code": "control.endpoint_invalid"}
         _print_connection_payload(payload, json_output=args.json)

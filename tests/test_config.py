@@ -4,6 +4,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Event, Thread, current_thread
 
 import pytest
 
@@ -21,6 +22,7 @@ from codex_usage.config import (
     resolve_account,
     restore_account,
     save_config,
+    set_masterjet_connection,
 )
 from codex_usage.models import Account, AccountUsage, LimitWindow
 from codex_usage.state import load_current_usage, save_current_usage, save_usage_snapshot
@@ -47,6 +49,64 @@ def test_load_config_defaults_masterjet_to_local_connection(tmp_path):
     assert config.masterjet.transport == "local"
     assert config.masterjet.endpoint == ""
     assert config.masterjet.timeout_seconds == 10
+
+
+def test_set_masterjet_connection_atomically_preserves_concurrent_account_update(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("alpha", label="Old", path=config_path)
+    loaded = Event()
+    release = Event()
+    failures: list[BaseException] = []
+    original_load = config_module.load_config
+
+    def paused_load(path):
+        config = original_load(path)
+        if current_thread().name == "connection-update":
+            loaded.set()
+            assert release.wait(2)
+        return config
+
+    def update_connection():
+        try:
+            set_masterjet_connection(
+                MasterjetConnection("https", "https://masterjet.example.test/control", 20),
+                config_path,
+            )
+        except BaseException as exc:
+            failures.append(exc)
+
+    def update_account():
+        try:
+            add_or_update_account(
+                "alpha",
+                label="New",
+                auth_json_path="/private/new-auth.json",
+                path=config_path,
+            )
+        except BaseException as exc:
+            failures.append(exc)
+
+    monkeypatch.setattr(config_module, "load_config", paused_load)
+    connection_thread = Thread(target=update_connection, name="connection-update")
+    account_thread = Thread(target=update_account, name="account-update")
+    connection_thread.start()
+    assert loaded.wait(2)
+    account_thread.start()
+    release.set()
+    connection_thread.join(2)
+    account_thread.join(2)
+
+    assert not connection_thread.is_alive()
+    assert not account_thread.is_alive()
+    assert failures == []
+    result = original_load(config_path)
+    assert result.accounts[0].label == "New"
+    assert result.accounts[0].auth_json_path == "/private/new-auth.json"
+    assert result.masterjet == MasterjetConnection(
+        "https", "https://masterjet.example.test/control", 20
+    )
 
 
 def test_save_and_load_preserves_https_masterjet_connection(tmp_path):

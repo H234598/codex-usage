@@ -163,6 +163,20 @@ def save_config(config: AppConfig, path: Path | None = None) -> Path:
     return config_path
 
 
+def set_masterjet_connection(
+    connection: MasterjetConnection, path: Path | None = None
+) -> AppConfig:
+    if type(connection) is not MasterjetConnection:
+        raise ValueError("masterjet must be a MasterjetConnection")
+    config_path = _select_config_path(path)
+    _prepare_config_directory(config_path.parent)
+    with private_path_lock(config_path, label="config lock"):
+        updated = replace(load_config(config_path), masterjet=connection)
+        _validate_config(updated)
+        _save_config_unlocked(updated, config_path)
+    return updated
+
+
 def _save_config_unlocked(config: AppConfig, config_path: Path) -> None:
     text = _to_toml(config)
     if len(text.encode("utf-8")) > MAX_CONFIG_BYTES:
