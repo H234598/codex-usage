@@ -345,6 +345,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     parser = _build_parser()
     normalized_argv = _default_root_command(sys.argv[1:] if argv is None else argv)
+    if (
+        "--auth-json" in normalized_argv
+        and any(
+            normalized_argv[index : index + 2] == ["account", "auth-sync"]
+            for index in range(len(normalized_argv) - 1)
+        )
+    ):
+        parser.error("--auth-json is not accepted for account auth-sync")
     args = parser.parse_args(normalized_argv)
     try:
         return int(args.func(args))

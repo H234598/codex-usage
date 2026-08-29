@@ -29,6 +29,7 @@ class AuthenticatedControlClient(Protocol):
         arguments: object,
         expected_generation: int | None = None,
         idempotency_key: str | None = None,
+        plan_digest: str | None = None,
     ) -> object: ...
 
     def put_secret(
@@ -98,7 +99,7 @@ def _sync_account_auth(
         expected_generation = remote_account.credential_generation
 
         plan = client.call(
-            "openai.auth-sync.plan",
+            "openai.auth.plan",
             {"account_ref": remote_account.ref},
             expected_generation=expected_generation,
             idempotency_key=_idempotency_key(),
@@ -107,7 +108,7 @@ def _sync_account_auth(
             raise MasterjetClientError("control.response_invalid")
         plan = cast(ControlOperation, plan)
         if (
-            plan.kind != "openai.auth-sync.plan"
+            plan.kind != "openai.auth.plan"
             or plan.state != "planned"
             or plan.expected_generation != expected_generation
             or plan.resulting_generation is not None
@@ -122,23 +123,24 @@ def _sync_account_auth(
                 "secret.ingress.create",
                 {
                     "account_ref": remote_account.ref,
-                    "credential_type": "openai_auth_json",
-                    "plan_id": plan.id,
+                    "credential_kind": "openai.auth-json",
                 },
                 expected_generation=plan.expected_generation,
                 idempotency_key=_idempotency_key(),
+                plan_digest=plan.plan_digest,
             )
             if type(session) is not SecretIngressSession:
                 raise MasterjetClientError("control.response_invalid")
             session = cast(SecretIngressSession, session)
             if (
                 session.account_ref != remote_account.ref
-                or session.plan_id != plan.id
+                or session.plan_digest != plan.plan_digest
                 or session.expected_generation != plan.expected_generation
+                or session.session_generation != plan.expected_generation
             ):
                 raise MasterjetClientError("control.response_invalid")
             now = _clock_value(clock)
-            if session.expires_at <= now:
+            if session.expires_at <= now.timestamp():
                 raise MasterjetClientError("credential.upload_expired")
             if plan.expires_at <= now:
                 raise MasterjetClientError("control.plan_stale")
@@ -146,7 +148,7 @@ def _sync_account_auth(
             receipt = client.put_secret(
                 session.id,
                 secret,
-                expected_generation=plan.expected_generation,
+                expected_generation=session.session_generation,
                 idempotency_key=_idempotency_key(),
             )
             if type(receipt) is not SecretIngressReceipt:
@@ -161,16 +163,17 @@ def _sync_account_auth(
             _require_unexpired(plan.expires_at, clock, "control.plan_stale")
 
             applied = client.call(
-                "openai.auth-sync.apply",
-                {"account_ref": remote_account.ref, "plan_id": plan.id},
+                "openai.auth.apply",
+                {"account_ref": remote_account.ref},
                 expected_generation=plan.expected_generation,
                 idempotency_key=_idempotency_key(),
+                plan_digest=plan.plan_digest,
             )
             if type(applied) is not ControlOperation:
                 raise MasterjetClientError("control.response_invalid")
             applied = cast(ControlOperation, applied)
             if (
-                applied.kind != "openai.auth-sync.apply"
+                applied.kind != "openai.auth.apply"
                 or applied.state != "succeeded"
                 or applied.expected_generation != plan.expected_generation
                 or applied.plan_digest != plan.plan_digest

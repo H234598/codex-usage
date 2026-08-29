@@ -1285,7 +1285,7 @@ def _validate_masterjet_connection(connection: object) -> None:
     if parts.query or parts.fragment:
         raise ValueError("masterjet endpoint must not contain a query or fragment")
     try:
-        parts.port
+        _ = parts.port
     except ValueError as exc:
         raise ValueError("masterjet endpoint must be an HTTPS URL") from exc
 

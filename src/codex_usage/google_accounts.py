@@ -512,7 +512,7 @@ class GoogleAccountsController:
         account = self._account(account_ref)
         result = self._client.call(
             "google.inventory.refresh",
-            {"account_ref": account.ref},
+            {},
             expected_generation=account.inventory_generation,
             idempotency_key=self._idempotency_key(),
         )
@@ -566,9 +566,10 @@ class GoogleAccountsController:
         _require_unexpired(plan.expires_at, self._clock, "control.plan_stale")
         result = self._client.call(
             "google.provision.apply",
-            {"account_ref": account.ref, "plan_id": plan.id},
+            {"account_ref": account.ref},
             expected_generation=plan.expected_generation,
             idempotency_key=idempotency_key,
+            plan_digest=plan.plan_digest,
         )
         applied = _require_operation(
             result,

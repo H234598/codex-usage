@@ -138,10 +138,13 @@ def local_attestation_verifier_from_systemd_credentials(
 def bearer_provider_from_fd(fd: int) -> Callable[[], str]:
     if type(fd) is not int or fd < 0:
         raise MasterjetCredentialsError("credential unavailable")
+    owned_fd = -1
     try:
         owned_fd = os.dup(fd)
         os.set_inheritable(owned_fd, False)
     except OSError as exc:
+        if owned_fd >= 0:
+            os.close(owned_fd)
         raise MasterjetCredentialsError("credential unavailable") from exc
     return _one_shot(lambda: _read_bearer_from_fd(owned_fd))
 

@@ -118,7 +118,9 @@ def test_injected_fd_owns_duplicate_after_original_close_and_reuse(tmp_path: Pat
         os.close(replacement)
 
 
-def test_injected_fd_provider_preserves_caller_offset_and_closes_duplicate(tmp_path: Path, monkeypatch) -> None:
+def test_injected_fd_provider_preserves_caller_offset_and_closes_duplicate(
+    tmp_path: Path, monkeypatch
+) -> None:
     path = _credential(tmp_path, b"remote-bearer")
     original = os.open(path, os.O_RDONLY)
     duplicate = []
@@ -135,6 +137,34 @@ def test_injected_fd_provider_preserves_caller_offset_and_closes_duplicate(tmp_p
     try:
         assert provider() == "remote-bearer"
         assert os.lseek(original, 0, os.SEEK_CUR) == 3
+        with pytest.raises(OSError):
+            os.fstat(duplicate[0])
+    finally:
+        os.close(original)
+
+
+def test_injected_fd_closes_duplicate_when_inheritable_update_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path = _credential(tmp_path, b"remote-bearer")
+    original = os.open(path, os.O_RDONLY)
+    duplicate: list[int] = []
+    real_dup = credentials_module.os.dup
+
+    def remember(fd: int) -> int:
+        owned = real_dup(fd)
+        duplicate.append(owned)
+        return owned
+
+    monkeypatch.setattr(credentials_module.os, "dup", remember)
+    monkeypatch.setattr(
+        credentials_module.os,
+        "set_inheritable",
+        lambda *_args: (_ for _ in ()).throw(OSError("fixture failure")),
+    )
+    try:
+        with pytest.raises(MasterjetCredentialsError, match="credential unavailable"):
+            bearer_provider_from_fd(original)
         with pytest.raises(OSError):
             os.fstat(duplicate[0])
     finally:

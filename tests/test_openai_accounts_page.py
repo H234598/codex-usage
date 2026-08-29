@@ -590,6 +590,10 @@ else:
         max_output_bytes=128,
         dispatcher=lambda *args: args,
     )._run((sys.executable, "-c", helper, mode, str(pid_file)), None)
+    deadline = time.monotonic() + 2
+    while not pid_file.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert pid_file.exists()
     child_pid = int(pid_file.read_text(encoding="ascii"))
 
     try:

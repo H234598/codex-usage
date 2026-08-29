@@ -931,7 +931,7 @@ def test_root_traversal_close_failure_still_closes_next_fd(
         ControlSnapshotCache.for_test(root)
 
     assert caught.value.__context__ is None
-    assert Path("/tmp") in closed_after_failure
+    assert tmp_path.parents[-2] in closed_after_failure
 
 
 def test_recovery_read_close_failure_is_code_only_and_root_is_closed(

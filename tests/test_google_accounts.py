@@ -509,8 +509,9 @@ def test_provision_apply_reloads_and_binds_digest_after_restart() -> None:
         "operation_id": "plan-1",
         "account_ref": "google-one",
     }
-    assert client.calls[-1][1] == {"account_ref": "google-one", "plan_id": "plan-1"}
+    assert client.calls[-1][1] == {"account_ref": "google-one"}
     assert client.calls[-1][2:] == (4, "idem-1")
+    assert client.plan_digests[-1] == plan.plan_digest
 
 
 def test_expired_reloaded_plan_never_reaches_apply() -> None:
@@ -533,7 +534,7 @@ def test_inventory_refresh_uses_projection_generation_and_idempotency() -> None:
     assert result.kind == "google.inventory.refresh"
     assert client.calls[-1] == (
         "google.inventory.refresh",
-        {"account_ref": "google-one"},
+        {},
         4,
         "idem-1",
     )

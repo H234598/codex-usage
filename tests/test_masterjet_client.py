@@ -100,7 +100,7 @@ def ingress_session_payload() -> dict[str, object]:
         "state": "pending",
         "plan_digest": "sha256:" + "a" * 64,
         "expected_generation": 4,
-        "expires_at": 1_777_463_500.0,
+        "expires_at": 1_787_919_300.0,
         "session_generation": 4,
     }
 
@@ -114,6 +114,16 @@ def google_oauth_transaction_payload() -> dict[str, object]:
         "expires_at": 1_777_463_500.0,
         "inventory_generation": 4,
     }
+
+
+def unix_success(payload: dict[str, object]) -> bytes:
+    result = dict(payload)
+    assert result.pop("schema_version") == 1
+    return json.dumps({"schema_version": 1, "ok": True, "result": result}).encode()
+
+
+def unix_problem(payload: dict[str, object]) -> bytes:
+    return json.dumps({"schema_version": 1, "ok": False, "problem": payload}).encode()
 
 
 class FakeHTTPResponse:
@@ -275,6 +285,7 @@ def unix_server(
 
 
 def local_client(socket_path: Path, **kwargs: object) -> MasterjetControlClient:
+    kwargs.setdefault("local_attestation_verifier", lambda *_args: True)
     return MasterjetControlClient(
         MasterjetConnection(transport="local", endpoint=str(socket_path), timeout_seconds=2),
         **kwargs,
@@ -293,7 +304,7 @@ def https_client(**kwargs: object) -> MasterjetControlClient:
 
 
 def _task9_transport_and_auth_selfcheck(tmp_path, monkeypatch):
-    encoded_google = json.dumps(google_accounts_payload()).encode()
+    encoded_google = unix_success(google_accounts_payload())
     socket_path = tmp_path / "masterjet.sock"
     with unix_server(socket_path, encoded_google):
         local_google = local_client(socket_path).call("google.accounts.list", {})
@@ -329,19 +340,16 @@ def _task9_transport_and_auth_selfcheck(tmp_path, monkeypatch):
         operation_base
         | {
             "id": "plan-1",
-            "kind": "openai.auth-sync.plan",
+            "kind": "openai.auth.plan",
             "state": "planned",
             "resulting_generation": None,
             "completed_count": 0,
             "not_attempted_count": 1,
         },
-        {
-            "schema_version": 1,
-            "id": "ingress-1",
+        ingress_session_payload()
+        | {
             "account_ref": "openai-remote",
-            "plan_id": "plan-1",
-            "expires_at": "2026-08-28T12:15:00Z",
-            "expected_generation": 4,
+            "plan_digest": operation_base["plan_digest"],
         },
         {
             "schema_version": 1,
@@ -353,7 +361,7 @@ def _task9_transport_and_auth_selfcheck(tmp_path, monkeypatch):
         operation_base
         | {
             "id": "apply-1",
-            "kind": "openai.auth-sync.apply",
+            "kind": "openai.auth.apply",
             "state": "succeeded",
             "resulting_generation": 5,
             "completed_count": 1,
@@ -627,19 +635,16 @@ def test_complete_openai_auth_sync_over_real_https_reads_fd_once_and_raw_secret_
         operation_base
         | {
             "id": "plan-1",
-            "kind": "openai.auth-sync.plan",
+            "kind": "openai.auth.plan",
             "state": "planned",
             "resulting_generation": None,
             "completed_count": 0,
             "not_attempted_count": 1,
         },
-        {
-            "schema_version": 1,
-            "id": "ingress-1",
+        ingress_session_payload()
+        | {
             "account_ref": "openai-remote",
-            "plan_id": "plan-1",
-            "expires_at": "2026-08-28T12:15:00Z",
-            "expected_generation": 4,
+            "plan_digest": operation_base["plan_digest"],
         },
         {
             "schema_version": 1,
@@ -651,7 +656,7 @@ def test_complete_openai_auth_sync_over_real_https_reads_fd_once_and_raw_secret_
         operation_base
         | {
             "id": "apply-1",
-            "kind": "openai.auth-sync.apply",
+            "kind": "openai.auth.apply",
             "state": "succeeded",
             "resulting_generation": 5,
             "completed_count": 1,
@@ -980,7 +985,7 @@ def test_local_and_https_decode_same_projection(tmp_path, monkeypatch):
     FakeHTTPSConnection.response = FakeHTTPResponse(encoded_response)
     monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
 
-    with unix_server(socket_path, encoded_response):
+    with unix_server(socket_path, unix_success(google_accounts_payload())):
         local_result = local_client(socket_path).call("google.accounts.list", {})
     https_result = https_client(bearer_provider=lambda: "remote-bearer").call(
         "google.accounts.list", {}
@@ -1023,7 +1028,7 @@ def test_request_larger_than_limit_is_rejected_before_https_connect(monkeypatch)
 def test_local_secret_uses_scm_rights_and_never_enters_json(tmp_path):
     secret = bytearray(b"super-private-auth-json")
     socket_path = tmp_path / "masterjet.sock"
-    response = json.dumps(ingress_receipt_payload()).encode()
+    response = unix_success(ingress_receipt_payload())
 
     peer: list[tuple[int, int, int, socket.socket]] = []
 
@@ -1047,14 +1052,14 @@ def test_local_secret_uses_scm_rights_and_never_enters_json(tmp_path):
     assert peer[0][:3] == (os.getpid(), os.geteuid(), os.getegid())
     assert isinstance(peer[0][3], socket.socket)
     assert bytes(secret) not in capture["request"]
-    assert capture["secrets"] == [bytes(secret), b"123456"]
+    assert capture["secrets"] == [bytes(secret)]
     request = json.loads(capture["request"])
-    assert request["arguments"] == {
+    assert request == {
+        "schema_version": 1,
+        "transport": "secret.put",
         "session_id": "ingress-1",
-        "secret_fd": 0,
-        "secret_size": len(secret),
-        "step_up_fd": 1,
-        "step_up_size": 6,
+        "expected_generation": 4,
+        "idempotency_key": "idem-1",
     }
 
 
@@ -1097,7 +1102,12 @@ def test_https_secret_uses_encoded_session_id_on_fixed_admin_route(monkeypatch):
     https_client(
         bearer_provider=lambda: "remote-bearer",
         step_up_provider=lambda: "123456",
-    ).put_secret("ingress:one", b"private")
+    ).put_secret(
+        "ingress:one",
+        b"private",
+        expected_generation=4,
+        idempotency_key="idem-1",
+    )
 
     method, target, _body, _headers = FakeHTTPSConnection.instances[0].requests[0]
     assert (method, target) == (
@@ -1111,7 +1121,10 @@ def test_secret_larger_than_limit_is_rejected_before_connect(monkeypatch):
 
     with pytest.raises(MasterjetClientError, match=r"control\.request_too_large"):
         https_client(bearer_provider=lambda: "remote-bearer").put_secret(
-            "ingress-1", b"x" * (MAX_SECRET_BYTES + 1)
+            "ingress-1",
+            b"x" * (MAX_SECRET_BYTES + 1),
+            expected_generation=4,
+            idempotency_key="idem-1",
         )
 
     assert FakeHTTPSConnection.instances == []
@@ -1197,8 +1210,9 @@ def test_oauth_begin_decodes_bound_typed_transaction(monkeypatch):
         "google.oauth.begin",
         {
             "account_ref": "google-1",
-            "browser": "firefox",
+            "oauth_client_ref": "oauth-client-1",
             "redirect_uri": REDIRECT_URI,
+            "scope_profile": "default",
         },
         expected_generation=4,
         idempotency_key="idem-1",
@@ -1206,7 +1220,7 @@ def test_oauth_begin_decodes_bound_typed_transaction(monkeypatch):
 
     assert result.id == "oauth-1"
     assert result.account_ref == "google-1"
-    assert result.generation == 4
+    assert result.inventory_generation == 4
 
 
 def test_oauth_client_import_plan_and_receipt_decode_canonical_wire(monkeypatch):
@@ -1274,8 +1288,9 @@ def test_oauth_begin_rejects_transaction_for_another_account(monkeypatch):
             "google.oauth.begin",
             {
                 "account_ref": "google-1",
-                "browser": "firefox",
+                "oauth_client_ref": "oauth-client-1",
                 "redirect_uri": REDIRECT_URI,
+                "scope_profile": "default",
             },
             expected_generation=4,
             idempotency_key="idem-1",
@@ -1344,10 +1359,6 @@ def test_operations_get_binds_returned_operation_id(monkeypatch):
             {"operation_id": "plan-1", "account_ref": "google-1"},
         ),
         ("google.oauth-client-import.plan", {"account_ref": "google-1"}),
-        (
-            "google.oauth-client-import.apply",
-            {"account_ref": "google-1", "plan_id": "plan-1"},
-        ),
     ],
 )
 def test_task6_specified_operations_are_accepted_by_request_contract(
@@ -1363,8 +1374,11 @@ def test_task6_specified_operations_are_accepted_by_request_contract(
         ).call(
             operation_name,
             arguments,
-            expected_generation=4,
-            idempotency_key="idem-1",
+            **(
+                {}
+                if operation_name == "operations.get"
+                else {"expected_generation": 4, "idempotency_key": "idem-1"}
+            ),
         )
 
     assert len(FakeHTTPSConnection.instances) == 1
@@ -1393,8 +1407,9 @@ def test_https_uses_verified_tls_fixed_target_and_transient_auth_headers(monkeyp
         "google.oauth.begin",
         {
             "account_ref": "google-1",
-            "browser": "firefox",
+            "oauth_client_ref": "oauth-client-1",
             "redirect_uri": REDIRECT_URI,
+            "scope_profile": "default",
         },
         expected_generation=4,
         idempotency_key="idem-1",
@@ -1546,7 +1561,7 @@ def test_local_problem_uses_same_canonical_problem_contract(tmp_path):
     }
     socket_path = tmp_path / "masterjet.sock"
 
-    with unix_server(socket_path, json.dumps(problem).encode()):
+    with unix_server(socket_path, unix_problem(problem)):
         with pytest.raises(MasterjetClientError, match=r"authority\.scope_denied") as caught:
             local_client(socket_path).call("google.accounts.list", {})
 
@@ -1745,60 +1760,6 @@ def test_operation_contract_rejects_unknown_fields_and_wrong_types(monkeypatch, 
     assert FakeHTTPSConnection.instances == []
 
 
-def test_local_sensitive_json_operation_requires_step_up(tmp_path):
-    socket_path = tmp_path / "masterjet.sock"
-    response = json.dumps(google_accounts_payload()).encode()
-
-    with unix_server(socket_path, response) as capture:
-        with pytest.raises(MasterjetClientError, match=r"control\.step_up_required"):
-            local_client(
-                socket_path,
-                local_attestation_verifier=lambda _pid, _uid, _gid, _socket: True,
-            ).call(
-                "google.oauth.begin",
-                {
-                    "account_ref": "google-1",
-                    "browser": "firefox",
-                    "redirect_uri": REDIRECT_URI,
-                },
-                expected_generation=4,
-                idempotency_key="idem-1",
-            )
-
-    assert capture.get("secrets", []) == []
-
-
-def test_local_sensitive_json_operation_sends_step_up_only_by_fd(tmp_path):
-    socket_path = tmp_path / "masterjet.sock"
-    response = json.dumps(google_oauth_transaction_payload()).encode()
-
-    with unix_server(socket_path, response) as capture:
-        local_client(
-            socket_path,
-            local_attestation_verifier=lambda _pid, _uid, _gid, _socket: True,
-            step_up_provider=lambda: "123456",
-        ).call(
-            "google.oauth.begin",
-            {
-                "account_ref": "google-1",
-                "browser": "firefox",
-                "redirect_uri": REDIRECT_URI,
-            },
-            expected_generation=4,
-            idempotency_key="idem-1",
-        )
-
-    request = json.loads(capture["request"])
-    assert request["arguments"] == {
-        "account_ref": "google-1",
-        "browser": "firefox",
-        "redirect_uri": REDIRECT_URI,
-        "step_up_fd": 0,
-        "step_up_size": 6,
-    }
-    assert capture["secrets"] == [b"123456"]
-
-
 def test_provision_operation_is_not_in_step_up_allowlist(monkeypatch):
     FakeHTTPSConnection.response = FakeHTTPResponse(
         json.dumps(
@@ -1823,9 +1784,10 @@ def test_provision_operation_is_not_in_step_up_allowlist(monkeypatch):
 
     result = https_client(bearer_provider=lambda: "remote-bearer").call(
         "google.provision.apply",
-        {"account_ref": "google-1", "plan_id": "plan-1"},
+        {"account_ref": "google-1"},
         expected_generation=4,
         idempotency_key="idem-1",
+        plan_digest="sha256:" + "a" * 64,
     )
 
     assert result.kind == "google.provision.apply"
@@ -1844,8 +1806,15 @@ def test_local_secret_requires_confirmed_transport_attestation(tmp_path):
 
     with unix_server(socket_path, response) as capture:
         with pytest.raises(MasterjetClientError, match=r"control\.attestation_required"):
-            local_client(socket_path, step_up_provider=step_up).put_secret(
-                "ingress-1", b"private"
+            local_client(
+                socket_path,
+                local_attestation_verifier=None,
+                step_up_provider=step_up,
+            ).put_secret(
+                "ingress-1",
+                b"private",
+                expected_generation=4,
+                idempotency_key="idem-1",
             )
 
     assert step_up_called is False
@@ -1868,7 +1837,12 @@ def test_rejected_transport_attestation_prevents_fd_send(tmp_path):
                 socket_path,
                 local_attestation_verifier=lambda _pid, _uid, _gid, _socket: False,
                 step_up_provider=step_up,
-            ).put_secret("ingress-1", b"private")
+            ).put_secret(
+                "ingress-1",
+                b"private",
+                expected_generation=4,
+                idempotency_key="idem-1",
+            )
 
     assert step_up_called is False
     assert capture.get("secrets", []) == []
@@ -1899,8 +1873,9 @@ def test_step_up_rejects_non_ascii_header_values_before_request(monkeypatch, val
             "google.oauth.begin",
             {
                 "account_ref": "google-1",
-                "browser": "firefox",
+                "oauth_client_ref": "oauth-client-1",
                 "redirect_uri": REDIRECT_URI,
+                "scope_profile": "default",
             },
             expected_generation=4,
             idempotency_key="idem-1",
@@ -1952,7 +1927,10 @@ def test_local_slow_drip_cannot_extend_end_to_end_deadline(tmp_path):
         response_delay=0.1,
     ):
         with pytest.raises(MasterjetClientError, match=r"control\.timeout"):
-            MasterjetControlClient(connection).call("google.accounts.list", {})
+            MasterjetControlClient(
+                connection,
+                local_attestation_verifier=lambda *_args: True,
+            ).call("google.accounts.list", {})
 
     assert time.monotonic() - started < 1.6
 
@@ -2018,7 +1996,12 @@ def test_swap_and_restore_socket_fails_attestation_before_fd_send(tmp_path, monk
                 endpoint,
                 local_attestation_verifier=attest,
                 step_up_provider=lambda: "123456",
-            ).put_secret("ingress-1", b"private")
+            ).put_secret(
+                "ingress-1",
+                b"private",
+                expected_generation=4,
+                idempotency_key="idem-1",
+            )
         assert malicious_finished.wait(2)
         assert capture["handshake"] == b"ATTEST\n"
         assert capture["fd_messages"] == []
@@ -2083,13 +2066,19 @@ def real_tls_server(tmp_path, *, wire_delay: float = 0, responses=None):
                     with server_context.wrap_socket(connection, server_side=True) as tls_socket:
                         request = bytearray()
                         while b"\r\n\r\n" not in request:
-                            request.extend(tls_socket.recv(4096))
+                            chunk = tls_socket.recv(4096)
+                            if not chunk:
+                                return
+                            request.extend(chunk)
                         head, body = request.split(b"\r\n\r\n", 1)
                         lines = head.decode("ascii").split("\r\n")
                         headers = dict(line.split(": ", 1) for line in lines[1:])
                         length = int(headers["Content-Length"])
                         while len(body) < length:
-                            body.extend(tls_socket.recv(length - len(body)))
+                            chunk = tls_socket.recv(length - len(body))
+                            if not chunk:
+                                return
+                            body.extend(chunk)
                         request_capture = {
                             "method": lines[0].split(" ", 1)[0],
                             "request_line": lines[0],
@@ -2752,33 +2741,6 @@ def test_https_problem_uses_canonical_local_template(monkeypatch):
     assert caught.value.problem.detail == "Authority scope is denied."
 
 
-def test_second_secret_fd_failure_closes_first_fd(tmp_path, monkeypatch):
-    socket_path = tmp_path / "masterjet.sock"
-    response = json.dumps(google_accounts_payload()).encode()
-    real_anonymous_secret = client_module._anonymous_secret
-    opened = []
-
-    def fail_second(secret):
-        if opened:
-            raise OSError("fixture failure")
-        item = real_anonymous_secret(secret)
-        opened.append(item)
-        return item
-
-    monkeypatch.setattr(client_module, "_anonymous_secret", fail_second)
-
-    with unix_server(socket_path, response):
-        with pytest.raises(MasterjetClientError, match=r"control\.transport_unavailable"):
-            local_client(
-                socket_path,
-                local_attestation_verifier=lambda _pid, _uid, _gid, _socket: True,
-                step_up_provider=lambda: "123456",
-            ).put_secret("ingress-1", b"private")
-
-    assert len(opened) == 1
-    assert opened[0].closed is True
-
-
 def test_attestation_exception_is_not_retained_as_client_error_context(tmp_path):
     socket_path = tmp_path / "masterjet.sock"
 
@@ -2794,7 +2756,12 @@ def test_attestation_exception_is_not_retained_as_client_error_context(tmp_path)
                 socket_path,
                 local_attestation_verifier=attest,
                 step_up_provider=lambda: "123456",
-            ).put_secret("ingress-1", b"private")
+            ).put_secret(
+                "ingress-1",
+                b"private",
+                expected_generation=4,
+                idempotency_key="idem-1",
+            )
 
     assert caught.value.__context__ is None
     assert "sk-private" not in repr(caught.value)

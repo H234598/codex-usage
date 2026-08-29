@@ -60,14 +60,6 @@
         "google-accounts-section"
       ]
     },
-    "accounts-page": {
-      "type": "page",
-      "title": "Accounts",
-      "sections": [
-        "backend-section",
-        "reactivation-options-section"
-      ]
-    },
     "alerts-page": {
       "type": "page",
       "title": "Warnungen",
@@ -148,13 +140,6 @@
       "title": "Masterjet-Verbindung",
       "keys": [
         "masterjet-connection"
-      ]
-    },
-    "backend-section": {
-      "type": "section",
-      "title": "Abrufwege und Accounts",
-      "keys": [
-        "account-backends"
       ]
     },
     "display-section": {

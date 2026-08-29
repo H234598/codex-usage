@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import queue
 import shutil
 import site
@@ -100,7 +101,13 @@ def _openai_payload():
 
 
 @contextmanager
-def _task9_unix_control_server(socket_path: Path):
+def _task9_unix_control_server(socket_path: Path, attestation_key_fd: int):
+    admin_src = Path(
+        "/home/teladi/.codex-worktrees/codex-master/admin-control-20260828/src"
+    )
+    sys.path.insert(0, str(admin_src))
+    from codex_master.admin_socket import _server_attestation
+
     ready = threading.Event()
     stopped = threading.Event()
     finished = threading.Event()
@@ -135,6 +142,7 @@ def _task9_unix_control_server(socket_path: Path):
                 with connection:
                     if stopped.is_set():
                         break
+                    _server_attestation(connection, attestation_key_fd)
                     raw = bytearray()
                     while b"\n" not in raw:
                         chunk = connection.recv(65_536)
@@ -143,7 +151,12 @@ def _task9_unix_control_server(socket_path: Path):
                         raw.extend(chunk)
                     request = json.loads(raw.split(b"\n", 1)[0])
                     requests.append(request)
-                    response = json.dumps(response_for(request), separators=(",", ":")).encode()
+                    result = response_for(request)
+                    assert result.pop("schema_version") == 1
+                    response = json.dumps(
+                        {"schema_version": 1, "ok": True, "result": result},
+                        separators=(",", ":"),
+                    ).encode()
                     connection.sendall(response + b"\n")
         finally:
             server.close()
@@ -293,7 +306,7 @@ def _task9_https_control_server(
             }
         if operation == "openai.accounts.list":
             return _openai_payload()
-        if operation == "openai.auth-sync.plan":
+        if operation == "openai.auth.plan":
             return operation_base | {
                 "id": "plan-1",
                 "kind": operation,
@@ -303,13 +316,13 @@ def _task9_https_control_server(
                 "not_attempted_count": 1,
             }
         if operation == "google.oauth-client-import.plan":
-            return operation_base | {
+            return {
+                "schema_version": 1,
                 "id": "google-import-plan-1",
-                "kind": operation,
-                "state": "planned",
-                "resulting_generation": None,
-                "completed_count": 0,
-                "not_attempted_count": 1,
+                "account_ref": "google-one",
+                "expected_generation": 4,
+                "expires_at": now.timestamp() + 1_800,
+                "plan_digest": operation_base["plan_digest"],
             }
         if operation == "secret.ingress.create":
             ingress_accounts["ingress-1"] = arguments["account_ref"]
@@ -317,9 +330,11 @@ def _task9_https_control_server(
                 "schema_version": 1,
                 "id": "ingress-1",
                 "account_ref": arguments["account_ref"],
-                "plan_id": arguments["plan_id"],
-                "expires_at": timestamp(timedelta(minutes=15)),
+                "state": "pending",
+                "plan_digest": envelope["plan_digest"],
                 "expected_generation": 4,
+                "expires_at": now.timestamp() + 900,
+                "session_generation": 4,
             }
         if operation == "secret.ingress.put":
             return {
@@ -329,7 +344,7 @@ def _task9_https_control_server(
                 "state": "consumed",
                 "generation": 5,
             }
-        if operation == "openai.auth-sync.apply":
+        if operation == "openai.auth.apply":
             return operation_base | {
                 "id": "apply-1",
                 "kind": operation,
@@ -339,13 +354,13 @@ def _task9_https_control_server(
                 "not_attempted_count": 0,
             }
         if operation == "google.oauth-client-import.apply":
-            return operation_base | {
-                "id": "google-import-apply-1",
-                "kind": operation,
-                "state": "succeeded",
-                "resulting_generation": 5,
-                "completed_count": 1,
-                "not_attempted_count": 0,
+            return {
+                "schema_version": 1,
+                "account_ref": "google-one",
+                "client_ref": "oauth-client-one",
+                "display_name": "Task9 OAuth Client",
+                "inventory_generation": 5,
+                "client_digest": "sha256:" + "b" * 64,
             }
         raise AssertionError(f"unexpected operation: {operation}")
 
@@ -360,13 +375,19 @@ def _task9_https_control_server(
                     with context.wrap_socket(connection, server_side=True) as tls_socket:
                         raw = bytearray()
                         while b"\r\n\r\n" not in raw:
-                            raw.extend(tls_socket.recv(4096))
+                            chunk = tls_socket.recv(4096)
+                            if not chunk:
+                                return
+                            raw.extend(chunk)
                         head, body = raw.split(b"\r\n\r\n", 1)
                         lines = head.decode("ascii").split("\r\n")
                         headers = dict(line.split(": ", 1) for line in lines[1:])
                         length = int(headers["Content-Length"])
                         while len(body) < length:
-                            body.extend(tls_socket.recv(length - len(body)))
+                            chunk = tls_socket.recv(length - len(body))
+                            if not chunk:
+                                return
+                            body.extend(chunk)
                         request = {
                             "method": lines[0].split(" ", 1)[0],
                             "target": lines[0].split(" ")[1],
@@ -1096,16 +1117,16 @@ def test_live_projection_failure_revokes_previous_google_mutations() -> None:
     [
         (
             "secret.ingress.create",
-            ["openai.accounts.list", "openai.auth-sync.plan", "openai.auth-sync.apply"],
+            ["openai.accounts.list", "openai.auth.plan", "openai.auth.apply"],
             ["secret.ingress.create", "secret.ingress.create", "secret.ingress.put"],
         ),
         (
-            "openai.auth-sync.apply",
+            "openai.auth.apply",
             [
                 "openai.accounts.list",
-                "openai.auth-sync.plan",
-                "openai.auth-sync.apply",
-                "openai.auth-sync.apply",
+                "openai.auth.plan",
+                "openai.auth.apply",
+                "openai.auth.apply",
             ],
             ["secret.ingress.create", "secret.ingress.put"],
         ),
@@ -1441,6 +1462,16 @@ def test_task9_remote_outage_fail_closes_both_pages_and_all_account_writes(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    credential_directory = tmp_path / "credentials"
+    credential_directory.mkdir(mode=0o700)
+    attestation_key = credential_directory / "masterjet-local-attestation-key"
+    attestation_key.write_bytes(b"k" * 32)
+    attestation_key.chmod(0o400)
+    monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(credential_directory))
+    attestation_key_fd = os.open(
+        attestation_key,
+        os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+    )
     completed = queue.Queue()
     argv_seen = []
 
@@ -1470,37 +1501,44 @@ def test_task9_remote_outage_fail_closes_both_pages_and_all_account_writes(
         callback(result)
         return result
 
-    with _task9_unix_control_server(socket_path) as (requests, stop_endpoint):
-        openai_page._refresh()
-        assert dispatch_one().ok is True
-        google_page._refresh()
-        assert dispatch_one().ok is True
-        preview = google_page.model.preview_plan(
-            {
-                "account_ref": "google-one",
-                "plan_id": "plan-one",
-                "expected_generation": 4,
-                "plan_digest": "sha256:" + "a" * 64,
-                "expires_at": "2026-08-28T18:00:00Z",
-                "step_count": 1,
-                "projects": [{"project_name": "Amber Meadow", "key_name": "Quiet River"}],
-            }
-        )
-        assert openai_page.model.stale is False
-        assert google_page.model.stale is False
-        assert openai_page._actions.projection_ready is True
-        assert google_page._actions.projection_ready is True
-        assert [request["operation"] for request in requests] == [
-            "openai.accounts.list",
-            "google.accounts.list",
-            "google.projects.list",
-        ]
-        stop_endpoint()
+    try:
+        with _task9_unix_control_server(
+            socket_path, attestation_key_fd
+        ) as (requests, stop_endpoint):
+            openai_page._refresh()
+            assert dispatch_one().ok is True
+            google_page._refresh()
+            assert dispatch_one().ok is True
+            preview = google_page.model.preview_plan(
+                {
+                    "account_ref": "google-one",
+                    "plan_id": "plan-one",
+                    "expected_generation": 4,
+                    "plan_digest": "sha256:" + "a" * 64,
+                    "expires_at": "2026-08-28T18:00:00Z",
+                    "step_count": 1,
+                    "projects": [
+                        {"project_name": "Amber Meadow", "key_name": "Quiet River"}
+                    ],
+                }
+            )
+            assert openai_page.model.stale is False
+            assert google_page.model.stale is False
+            assert openai_page._actions.projection_ready is True
+            assert google_page._actions.projection_ready is True
+            assert [request["operation"] for request in requests] == [
+                "openai.accounts.list",
+                "google.accounts.list",
+                "google.projects.list",
+            ]
+            stop_endpoint()
 
-        openai_page._refresh()
-        assert dispatch_one().payload["stale"] is True
-        google_page._refresh()
-        assert dispatch_one().payload["stale"] is True
+            openai_page._refresh()
+            assert dispatch_one().payload["stale"] is True
+            google_page._refresh()
+            assert dispatch_one().payload["stale"] is True
+    finally:
+        os.close(attestation_key_fd)
 
     calls_before_blocked_writes = len(argv_seen)
 

@@ -148,14 +148,12 @@ pytest -q tests/test_masterjet_client.py tests/test_masterjet_cache.py \
   tests/test_openai_accounts_page.py tests/test_google_accounts_page.py
 ```
 
-[Open separate fleet management and Ollama guidance](#fleet-management-and-ollama).
-
 ### Fleet management and Ollama
 
 Fleet lifecycle, worker placement, and Ollama belong to Masterjet's separate
-fleet-management surface. Codex Usage only deep-links there; it does not list
-Ollama as an OpenAI or Google account and never invokes `codex-master-mcp fleet`
-from a settings widget.
+fleet-management surface. Codex Usage has no fleet-management or Ollama link:
+it does not list Ollama as an OpenAI or Google account and never invokes
+`codex-master-mcp fleet` from a settings widget.
 
 ## Run
 

@@ -1257,7 +1257,11 @@ def test_account_auth_sync_success_clears_persisted_sync_required(
     config_path = tmp_path / "config.toml"
     add_or_update_account("openai-1", path=config_path)
     config_module.mark_account_auth_sync_required("openai-1", path=config_path)
-    monkeypatch.setattr(cli_module, "MasterjetControlClient", lambda _connection: object())
+    monkeypatch.setattr(
+        cli_module,
+        "MasterjetControlClient",
+        lambda _connection, **_kwargs: object(),
+    )
     monkeypatch.setattr(
         cli_module,
         "sync_account_auth",
@@ -1283,7 +1287,11 @@ def test_account_auth_sync_old_completion_cannot_clear_newer_reauth_and_retry_ca
         "openai-1", path=config_path
     )
     assert first.auth_sync_generation == 1
-    monkeypatch.setattr(cli_module, "MasterjetControlClient", lambda _connection: object())
+    monkeypatch.setattr(
+        cli_module,
+        "MasterjetControlClient",
+        lambda _connection, **_kwargs: object(),
+    )
 
     def sync_with_concurrent_reauth(account, _client):
         assert account.auth_sync_generation == 1
@@ -1328,7 +1336,9 @@ def test_account_auth_sync_has_no_secret_path_or_provider_argv(monkeypatch, caps
 
     assert caught.value.code == 2
     assert called == []
-    assert "top-secret" not in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert "top-secret" not in captured.out
+    assert "top-secret" not in captured.err
 
 
 def test_account_auth_sync_without_productive_providers_fails_closed(
@@ -1754,6 +1764,8 @@ def test_google_json_flag_selects_json_instead_of_human_output(monkeypatch, caps
         project_count=1,
         billing_count=0,
         reload_state="ready",
+        default_oauth_client_ref="oauth-client-one",
+        oauth_client_availability="available",
     )
     project = SimpleNamespace(
         ref="hive-one", project_name="Amber Orchard", purpose="quota_probe",
@@ -1925,7 +1937,11 @@ def test_masterjet_openai_routing_options_uses_control_client(monkeypatch, capsy
             return (remote,)
 
     monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
-    monkeypatch.setattr(cli_module, "MasterjetControlClient", lambda _connection: _Client())
+    monkeypatch.setattr(
+        cli_module,
+        "MasterjetControlClient",
+        lambda _connection, **_kwargs: _Client(),
+    )
 
     assert main(["masterjet", "openai-routing-options", "--json"]) == 0
     assert calls == [("openai.accounts.list", {})]
@@ -1976,7 +1992,7 @@ def test_masterjet_openai_routing_options_uses_fresh_control_cache_on_outage(
     monkeypatch.setattr(
         cli_module,
         "MasterjetControlClient",
-        lambda _connection: _UnavailableClient(),
+        lambda _connection, **_kwargs: _UnavailableClient(),
     )
     monkeypatch.setattr(cli_module, "default_state_dir", lambda: tmp_path)
     monkeypatch.setattr(
@@ -2012,7 +2028,7 @@ def test_masterjet_openai_routing_options_rejects_stale_control_cache(
     monkeypatch.setattr(
         cli_module,
         "MasterjetControlClient",
-        lambda _connection: _UnavailableClient(),
+        lambda _connection, **_kwargs: _UnavailableClient(),
     )
     monkeypatch.setattr(cli_module, "default_state_dir", lambda: tmp_path)
     monkeypatch.setattr(
@@ -5926,6 +5942,8 @@ def test_account_details_cli_returns_exact_live_projection_envelope(monkeypatch,
         ref="google-one", label="Google One", enabled=True, subject_bound=True,
         oauth_state="ready", inventory_generation=4, quota_state="fresh",
         project_count=1, billing_count=0, reload_state="ready",
+        default_oauth_client_ref="oauth-client-one",
+        oauth_client_availability="available",
     )
     project = SimpleNamespace(
         ref="hive-one", project_name="Amber Orchard", purpose="quota_probe",
