@@ -268,9 +268,11 @@ def valid_ingress_session() -> dict[str, object]:
         "schema_version": 1,
         "id": "ingress-1",
         "account_ref": "openai-1",
-        "plan_id": "plan-1",
-        "expires_at": "2026-08-28T12:01:00Z",
+        "state": "pending",
+        "plan_digest": "sha256:" + "a" * 64,
         "expected_generation": 4,
+        "expires_at": 1_777_463_500.0,
+        "session_generation": 4,
     }
 
 
@@ -291,9 +293,11 @@ def test_secret_ingress_contracts_are_typed_immutable_and_redacted():
     assert session == SecretIngressSession(
         id="ingress-1",
         account_ref="openai-1",
-        plan_id="plan-1",
-        expires_at=datetime(2026, 8, 28, 12, 1, tzinfo=UTC),
+        state="pending",
+        plan_digest="sha256:" + "a" * 64,
         expected_generation=4,
+        expires_at=1_777_463_500.0,
+        session_generation=4,
     )
     assert receipt == SecretIngressReceipt(
         session_id="ingress-1",

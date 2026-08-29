@@ -79,14 +79,14 @@ _OPERATION_ARGUMENT_FIELDS = {
         frozenset(),
     ),
     "google.oauth-client-import.apply": (
-        {"account_ref": "token", "plan_id": "token"},
-        frozenset({"plan_id"}),
+        {"account_ref": "token"},
+        frozenset(),
     ),
     "google.inventory.refresh": ({}, frozenset()),
     "google.provision.plan": ({"account_ref": "token"}, frozenset()),
     "google.provision.apply": (
-        {"account_ref": "token", "plan_id": "token"},
-        frozenset({"plan_id"}),
+        {"account_ref": "token"},
+        frozenset(),
     ),
     "google.billing.plan": (
         {
@@ -108,16 +108,16 @@ _OPERATION_ARGUMENT_FIELDS = {
     "openai.accounts.list": ({}, frozenset()),
     "openai.auth.plan": ({"account_ref": "token"}, frozenset()),
     "openai.auth.apply": (
-        {"account_ref": "token", "plan_id": "token"},
-        frozenset({"plan_id"}),
+        {"account_ref": "token"},
+        frozenset(),
     ),
     "secret.ingress.create": (
         {
             "account_ref": "token",
             "credential_kind": "token",
-            "plan_id": "token",
+            "transaction_id": "token",
         },
-        frozenset({"plan_id"}),
+        frozenset({"transaction_id"}),
     ),
 }
 _COMMAND_OPERATIONS = frozenset(_OPERATION_ARGUMENT_FIELDS) - {
@@ -135,20 +135,6 @@ _DIGEST_OPERATIONS = frozenset(
         "google.oauth-client-import.apply",
         "google.provision.apply",
         "google.billing.apply",
-    }
-)
-_SENSITIVE_OPERATIONS = frozenset(
-    {
-        "google.oauth.begin",
-        "google.oauth.complete",
-        "google.oauth-client-import.plan",
-        "google.oauth-client-import.apply",
-        "google.billing.plan",
-        "google.billing.apply",
-        "openai.auth.plan",
-        "openai.auth.apply",
-        "secret.ingress.create",
-        "secret.ingress.put",
     }
 )
 _SECRET_INGRESS_OPERATIONS = frozenset({"secret.ingress.put"})
@@ -241,6 +227,7 @@ class MasterjetControlClient:
             secret,
             expected_generation,
             idempotency_key,
+            plan_digest,
             secret_session_id=None,
         )
 
@@ -266,6 +253,7 @@ class MasterjetControlClient:
             secret_view,
             expected_generation,
             idempotency_key,
+            None,
             secret_session_id=session_id,
         )
 
@@ -277,6 +265,7 @@ class MasterjetControlClient:
         secret: memoryview | None,
         expected_generation: int | None,
         idempotency_key: str | None,
+        plan_digest: str | None,
         *,
         secret_session_id: str | None,
     ) -> object:
@@ -308,7 +297,13 @@ class MasterjetControlClient:
             )
         else:
             raise MasterjetClientError("control.endpoint_invalid")
-        return _decode_response(operation, arguments, response)
+        return _decode_response(
+            operation,
+            arguments,
+            response,
+            expected_generation=expected_generation,
+            plan_digest=plan_digest,
+        )
 
 
 class _UnixTransport:
@@ -332,7 +327,8 @@ class _UnixTransport:
         endpoint = _local_endpoint(self._connection)
         before = _socket_identity(endpoint)
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        secret_files = []
+        secret_file = None
+        writable_secret_file = None
         deadline = _Deadline(_timeout(self._connection))
         try:
             with _DeadlineGuard(deadline, lambda: _abort_socket(sock)):
@@ -346,21 +342,12 @@ class _UnixTransport:
                 _set_socket_deadline(sock, deadline)
                 _attest_local_transport(self._attestation_verifier, peer, sock)
                 deadline.remaining()
-                if not _is_sensitive(operation):
+                if secret is None:
                     _set_socket_deadline(sock, deadline)
                     sock.sendall(request + b"\n")
                 else:
-                    step_up = _provider_value(
-                        self._step_up_provider,
-                        "control.step_up_required",
-                        maximum=128,
-                    ).encode("ascii")
-                    step_up_index = 1 if secret is not None else 0
-                    request = _add_step_up_fd(request, len(step_up), step_up_index)
-                    if secret is not None:
-                        secret_files.append(_anonymous_secret(secret))
-                    secret_files.append(_anonymous_secret(memoryview(step_up)))
-                    descriptor = array.array("i", [item.fileno() for item in secret_files])
+                    secret_file, writable_secret_file = _readonly_secret_file(secret)
+                    descriptor = array.array("i", [secret_file.fileno()])
                     framed = request + b"\n"
                     _set_socket_deadline(sock, deadline)
                     sent = sock.sendmsg(
@@ -383,8 +370,17 @@ class _UnixTransport:
                 raise MasterjetClientError("control.timeout") from None
             raise MasterjetClientError("control.transport_unavailable") from None
         finally:
-            for secret_file in secret_files:
+            if writable_secret_file is not None:
+                try:
+                    writable_secret_file.seek(0)
+                    writable_secret_file.write(b"\0" * len(secret))
+                    writable_secret_file.flush()
+                except OSError:
+                    pass
+            if secret_file is not None:
                 secret_file.close()
+            if writable_secret_file is not None:
+                writable_secret_file.close()
             sock.close()
 
 
@@ -532,7 +528,7 @@ def _encode_request(
     if idempotency_key is not None:
         idempotency_key = _idempotency_key(idempotency_key)
     if operation == "secret.ingress.put":
-        if plan_digest is not None:
+        if plan_digest is not None or expected_generation is None or idempotency_key is None:
             raise MasterjetClientError("control.request_invalid")
     elif operation in _COMMAND_OPERATIONS:
         if expected_generation is None:
@@ -565,17 +561,23 @@ def _encode_request(
         session_id = _token(secret_session_id, "control.request_invalid")
         if secret.nbytes > MAX_SECRET_BYTES:
             raise MasterjetClientError("control.request_too_large")
-        encoded_arguments = {
-            "session_id": session_id,
-            "secret_fd": 0,
-            "secret_size": secret.nbytes,
-        }
+        encoded_arguments = None
 
-    document: dict[str, object] = {
-        "schema_version": 1,
-        "operation": operation,
-        "arguments": encoded_arguments,
-    }
+    document: dict[str, object]
+    if secret is not None:
+        document = {
+            "schema_version": 1,
+            "transport": "secret.put",
+            "session_id": session_id,
+            "expected_generation": expected_generation,
+            "idempotency_key": idempotency_key,
+        }
+    else:
+        document = {
+            "schema_version": 1,
+            "operation": operation,
+            "arguments": encoded_arguments,
+        }
     if expected_generation is not None:
         document["expected_generation"] = expected_generation
     if idempotency_key is not None:
@@ -596,7 +598,14 @@ def _encode_request(
     return encoded, secret
 
 
-def _decode_response(operation: str, arguments: object, response: tuple[int, bytes]) -> object:
+def _decode_response(
+    operation: str,
+    arguments: object,
+    response: tuple[int, bytes],
+    *,
+    expected_generation: int | None,
+    plan_digest: str | None,
+) -> object:
     status, body = response
     payload = _load_json(body)
     if payload is _INVALID_JSON:
@@ -632,7 +641,8 @@ def _decode_response(operation: str, arguments: object, response: tuple[int, byt
             if (
                 type(arguments) is not dict
                 or session.account_ref != arguments.get("account_ref")
-                or session.plan_id != arguments.get("plan_id")
+                or session.plan_digest != plan_digest
+                or session.expected_generation != expected_generation
             ):
                 raise MasterjetClientError("control.response_invalid")
             return session
@@ -738,17 +748,6 @@ def _invoke_attestation(
         return False
 
 
-def _add_step_up_fd(request: bytes, size: int, index: int) -> bytes:
-    document = json.loads(request)
-    arguments = document["arguments"]
-    arguments["step_up_fd"] = index
-    arguments["step_up_size"] = size
-    encoded = json.dumps(document, ensure_ascii=True, separators=(",", ":")).encode("ascii")
-    if len(encoded) > MAX_REQUEST_BYTES:
-        raise MasterjetClientError("control.request_too_large")
-    return encoded
-
-
 def _read_json_line(sock: socket.socket, deadline: _Deadline) -> bytes:
     received = bytearray()
     while True:
@@ -779,10 +778,10 @@ def _unwrap_unix_response(body: bytes) -> tuple[int, bytes]:
         if set(payload) != {"schema_version", "ok", "result"}:
             raise MasterjetClientError("control.response_invalid")
         result = payload.get("result")
-        if type(result) is not dict:
+        if type(result) is not dict or "schema_version" in result:
             raise MasterjetClientError("control.response_invalid")
         status = 200
-        value = result
+        value = {"schema_version": payload["schema_version"], **result}
     else:
         if set(payload) != {"schema_version", "ok", "problem"}:
             raise MasterjetClientError("control.response_invalid")
@@ -1201,16 +1200,19 @@ def _open_https_connection(
         raise
 
 
-def _anonymous_secret(secret: memoryview):
-    if hasattr(os, "memfd_create"):
-        fd = os.memfd_create("codex-usage-masterjet-secret", os.MFD_CLOEXEC)
-        secret_file = os.fdopen(fd, "w+b", closefd=True)
-    else:
-        secret_file = tempfile.TemporaryFile(mode="w+b")
-    secret_file.write(secret)
-    secret_file.flush()
-    secret_file.seek(0)
-    return secret_file
+def _readonly_secret_file(secret: memoryview):
+    writable_file = tempfile.NamedTemporaryFile(mode="w+b")
+    try:
+        writable_file.write(secret)
+        writable_file.flush()
+        fd = os.open(
+            writable_file.name,
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        return os.fdopen(fd, "rb", closefd=True), writable_file
+    except BaseException:
+        writable_file.close()
+        raise
 
 
 def _https_endpoint(connection: MasterjetConnection) -> tuple[str, int | None, str]:
@@ -1396,7 +1398,3 @@ def _timeout(connection: MasterjetConnection) -> int:
     if type(connection.timeout_seconds) is not int or connection.timeout_seconds < 1:
         raise MasterjetClientError("control.endpoint_invalid")
     return connection.timeout_seconds
-
-
-def _is_sensitive(operation: str) -> bool:
-    return operation in _SENSITIVE_OPERATIONS

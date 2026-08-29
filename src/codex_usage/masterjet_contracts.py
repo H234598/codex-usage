@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -371,16 +372,20 @@ class ControlOperation:
 class SecretIngressSession:
     id: str
     account_ref: str
-    plan_id: str
-    expires_at: datetime
+    state: str
+    plan_digest: str
     expected_generation: int
+    expires_at: float
+    session_generation: int
 
     def __post_init__(self) -> None:
         _token(self.id, "id")
         _ref(self.account_ref, "account_ref")
-        _token(self.plan_id, "plan_id")
-        _timestamp_value(self.expires_at, "expires_at")
+        _code(self.state, "state")
+        _plan_digest(self.plan_digest)
         _generation(self.expected_generation, "expected_generation")
+        _epoch_seconds(self.expires_at, "expires_at")
+        _generation(self.session_generation, "session_generation")
 
 
 @dataclass(frozen=True, slots=True)
@@ -614,17 +619,21 @@ def parse_secret_ingress_session(payload: object) -> SecretIngressSession:
             "schema_version",
             "id",
             "account_ref",
-            "plan_id",
-            "expires_at",
+            "state",
+            "plan_digest",
             "expected_generation",
+            "expires_at",
+            "session_generation",
         },
     )
     return SecretIngressSession(
         id=_token(data["id"], "id"),
         account_ref=_ref(data["account_ref"], "account_ref"),
-        plan_id=_token(data["plan_id"], "plan_id"),
-        expires_at=_timestamp(data["expires_at"], "expires_at"),
+        state=_code(data["state"], "state"),
+        plan_digest=_plan_digest(data["plan_digest"]),
         expected_generation=_generation(data["expected_generation"], "expected_generation"),
+        expires_at=_epoch_seconds(data["expires_at"], "expires_at"),
+        session_generation=_generation(data["session_generation"], "session_generation"),
     )
 
 
@@ -955,6 +964,12 @@ def _generation(value: object, field: str) -> int:
     if type(value) is not int or not 0 <= value <= _MAX_GENERATION:
         _invalid(field)
     return value
+
+
+def _epoch_seconds(value: object, field: str) -> float:
+    if type(value) not in {int, float} or not math.isfinite(value) or value <= 0:
+        _invalid(field)
+    return float(value)
 
 
 def _optional_generation(value: object, field: str) -> int | None:

@@ -1,19 +1,17 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pytest
 
 from codex_usage.masterjet_client import _encode_request
 
-
 ADMIN_ROOT = Path("/home/teladi/.codex-worktrees/codex-master/admin-control-20260828")
 sys.path.insert(0, str(ADMIN_ROOT / "src"))
 
 from codex_master.admin_contracts import AdminRequestV1, parse_admin_request  # noqa: E402
-
 
 DIGEST = "sha256:" + "a" * 64
 
@@ -35,7 +33,7 @@ DIGEST = "sha256:" + "a" * 64
         ("openai.auth.plan", {"account_ref": "openai-one"}, 4, "idem-openai-plan", None),
         (
             "openai.auth.apply",
-            {"account_ref": "openai-one", "plan_id": "plan-one"},
+            {"account_ref": "openai-one"},
             4,
             "idem-openai-apply",
             DIGEST,
@@ -45,7 +43,6 @@ DIGEST = "sha256:" + "a" * 64
             {
                 "account_ref": "openai-one",
                 "credential_kind": "openai.auth-json",
-                "plan_id": "plan-one",
             },
             4,
             "idem-ingress",
@@ -84,7 +81,7 @@ DIGEST = "sha256:" + "a" * 64
         ),
         (
             "google.oauth-client-import.apply",
-            {"account_ref": "google-one", "plan_id": "plan-one"},
+            {"account_ref": "google-one"},
             4,
             "idem-client-apply",
             DIGEST,
@@ -154,12 +151,36 @@ def test_usage_request_is_accepted_by_real_admin_v1_parser(
     assert parsed.plan_digest == plan_digest
 
 
-def test_usage_never_emits_legacy_plan_id_only_apply() -> None:
-    with pytest.raises(Exception, match="control.request_invalid"):
+@pytest.mark.parametrize(
+    ("operation", "arguments"),
+    [
+        ("openai.auth.apply", {"account_ref": "openai-one", "plan_id": "plan-one"}),
+        (
+            "secret.ingress.create",
+            {
+                "account_ref": "openai-one",
+                "credential_kind": "openai.auth-json",
+                "plan_id": "plan-one",
+            },
+        ),
+        (
+            "google.oauth-client-import.apply",
+            {"account_ref": "google-one", "plan_id": "plan-one"},
+        ),
+        (
+            "google.provision.apply",
+            {"account_ref": "google-one", "plan_id": "plan-one"},
+        ),
+    ],
+)
+def test_usage_never_emits_legacy_plan_id(
+    operation: str, arguments: dict[str, str]
+) -> None:
+    with pytest.raises(Exception, match=r"control\.request_invalid"):
         _encode_request(
-            "openai.auth.apply",
-            {"account_ref": "openai-one", "plan_id": "plan-one"},
+            operation,
+            arguments,
             expected_generation=4,
             idempotency_key="idem-openai-apply",
-            plan_digest=None,
+            plan_digest=DIGEST,
         )

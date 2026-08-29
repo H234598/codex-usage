@@ -98,9 +98,11 @@ def ingress_session_payload() -> dict[str, object]:
         "schema_version": 1,
         "id": "ingress-1",
         "account_ref": "openai-1",
-        "plan_id": "plan-1",
-        "expires_at": "2026-08-28T12:01:00Z",
+        "state": "pending",
+        "plan_digest": "sha256:" + "a" * 64,
         "expected_generation": 4,
+        "expires_at": 1_777_463_500.0,
+        "session_generation": 4,
     }
 
 
@@ -509,7 +511,11 @@ def test_https_client_caches_one_shot_bearer_across_multiple_requests(monkeypatc
         calls += 1
         return "remote-bearer"
 
-    monkeypatch.setattr(client_module, "_open_https_connection", lambda *args: SequencedConnection(args[0]))
+    monkeypatch.setattr(
+        client_module,
+        "_open_https_connection",
+        lambda *args: SequencedConnection(args[0]),
+    )
     client = https_client(bearer_provider=bearer)
     client.call("google.accounts.list", {})
     client.call("google.accounts.list", {})
@@ -1150,15 +1156,16 @@ def test_secret_ingress_create_returns_bound_typed_session(monkeypatch):
         "secret.ingress.create",
         {
             "account_ref": "openai-1",
-            "credential_type": "openai_auth_json",
-            "plan_id": "plan-1",
+            "credential_kind": "openai.auth-json",
         },
         expected_generation=4,
         idempotency_key="idem-1",
+        plan_digest="sha256:" + "a" * 64,
     )
 
     assert session.id == "ingress-1"
-    assert session.plan_id == "plan-1"
+    assert session.plan_digest == "sha256:" + "a" * 64
+    assert session.session_generation == 4
 
 
 def test_secret_ingress_receipt_for_another_session_is_rejected(monkeypatch):
@@ -1170,7 +1177,12 @@ def test_secret_ingress_receipt_for_another_session_is_rejected(monkeypatch):
         https_client(
             bearer_provider=lambda: "remote-bearer",
             step_up_provider=lambda: "123456",
-        ).put_secret("ingress-1", b"private")
+        ).put_secret(
+            "ingress-1",
+            b"private",
+            expected_generation=4,
+            idempotency_key="idem-secret-put",
+        )
 
 
 def test_oauth_begin_decodes_bound_typed_transaction(monkeypatch):
