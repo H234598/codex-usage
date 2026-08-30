@@ -65,6 +65,7 @@ def valid_snapshot() -> ControlSnapshot:
                 quota_state="fresh",
                 project_count=1,
                 billing_count=0,
+                billing_refs=(),
                 reload_state="ready",
                 default_oauth_client_ref="oauth-client-one",
                 oauth_client_availability="available",

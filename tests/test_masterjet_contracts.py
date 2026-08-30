@@ -86,7 +86,11 @@ def test_google_accounts_list_requires_registry_generation() -> None:
     result = parse_google_account_list(payload)
 
     assert result == GoogleControlAccountList(
-        accounts=(GoogleControlAccount(**valid_google_account()),),
+        accounts=(
+            GoogleControlAccount(
+                **(valid_google_account() | {"billing_refs": ("billing-1",)})
+            ),
+        ),
         registry_generation=12,
     )
 
@@ -132,6 +136,7 @@ def valid_google_account() -> dict[str, object]:
         "quota_state": "fresh",
         "project_count": 1,
         "billing_count": 1,
+        "billing_refs": ["billing-1"],
         "reload_state": "ready",
         "default_oauth_client_ref": "oauth-client-1",
         "oauth_client_availability": "available",
@@ -973,6 +978,7 @@ def test_control_operation_constructor_rejects_mutable_reason_codes():
             quota_state="fresh",
             project_count=True,
             billing_count=1,
+            billing_refs=("billing-1",),
             reload_state="ready",
             default_oauth_client_ref="oauth-client-1",
             oauth_client_availability="available",

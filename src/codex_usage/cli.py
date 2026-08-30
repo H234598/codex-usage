@@ -2058,6 +2058,7 @@ def _google_account_json(account: GoogleControlAccount) -> dict[str, object]:
         "quota_state": account.quota_state,
         "project_count": account.project_count,
         "billing_count": account.billing_count,
+        "billing_refs": list(account.billing_refs),
         "reload_state": account.reload_state,
         "default_oauth_client_ref": account.default_oauth_client_ref,
         "oauth_client_availability": account.oauth_client_availability,

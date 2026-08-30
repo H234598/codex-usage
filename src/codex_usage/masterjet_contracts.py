@@ -206,6 +206,7 @@ class GoogleControlAccount:
     quota_state: str
     project_count: int
     billing_count: int
+    billing_refs: tuple[str, ...]
     reload_state: str
     default_oauth_client_ref: str | None
     oauth_client_availability: str
@@ -220,6 +221,11 @@ class GoogleControlAccount:
         _code(self.quota_state, "quota_state")
         _count(self.project_count, "project_count", _MAX_COUNT)
         _count(self.billing_count, "billing_count", _MAX_COUNT)
+        if type(self.billing_refs) is not tuple or len(self.billing_refs) > _MAX_COUNT:
+            _invalid("billing_refs")
+        refs = tuple(_ref(item, "billing_refs") for item in self.billing_refs)
+        if len(refs) != self.billing_count or len(refs) != len(set(refs)):
+            _invalid("billing_refs")
         _code(self.reload_state, "reload_state")
         _optional_ref(self.default_oauth_client_ref, "default_oauth_client_ref")
         availability = _code(self.oauth_client_availability, "oauth_client_availability")
@@ -988,6 +994,7 @@ def _parse_google_account(payload: object) -> GoogleControlAccount:
             "quota_state",
             "project_count",
             "billing_count",
+            "billing_refs",
             "reload_state",
             "default_oauth_client_ref",
             "oauth_client_availability",
@@ -1003,6 +1010,10 @@ def _parse_google_account(payload: object) -> GoogleControlAccount:
         quota_state=_code(data["quota_state"], "quota_state"),
         project_count=_count(data["project_count"], "project_count", _MAX_COUNT),
         billing_count=_count(data["billing_count"], "billing_count", _MAX_COUNT),
+        billing_refs=tuple(
+            _ref(item, "billing_refs")
+            for item in _list(data["billing_refs"], "billing_refs", _MAX_COUNT)
+        ),
         reload_state=_code(data["reload_state"], "reload_state"),
         default_oauth_client_ref=_optional_ref(
             data["default_oauth_client_ref"], "default_oauth_client_ref"

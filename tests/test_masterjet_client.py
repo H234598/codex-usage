@@ -69,6 +69,7 @@ def google_accounts_payload() -> dict[str, object]:
                 "quota_state": "available",
                 "project_count": 12,
                 "billing_count": 1,
+                "billing_refs": ["billing-1"],
                 "reload_state": "idle",
                 "default_oauth_client_ref": "oauth-client-1",
                 "oauth_client_availability": "available",

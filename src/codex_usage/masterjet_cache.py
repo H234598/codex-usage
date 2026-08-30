@@ -825,6 +825,7 @@ class ControlSnapshotCache:
             "quota_state": item.quota_state,
             "project_count": item.project_count,
             "billing_count": item.billing_count,
+            "billing_refs": list(item.billing_refs),
             "reload_state": item.reload_state,
             "default_oauth_client_ref": None,
             "oauth_client_availability": "unavailable",

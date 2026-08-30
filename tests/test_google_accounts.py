@@ -47,6 +47,7 @@ def account(ref: str, generation: int) -> GoogleControlAccount:
         quota_state="fresh",
         project_count=0,
         billing_count=0,
+        billing_refs=(),
         reload_state="ready",
         default_oauth_client_ref="oauth-client-1",
         oauth_client_availability="available",
@@ -217,8 +218,18 @@ class FakeControlClient:
 class BillingControlClient:
     def __init__(self) -> None:
         self.accounts = (
-            replace(account("google-one", 4), project_count=2, billing_count=1),
-            replace(account("google-two", 4), project_count=1, billing_count=1),
+            replace(
+                account("google-one", 4),
+                project_count=2,
+                billing_count=1,
+                billing_refs=("billing-one",),
+            ),
+            replace(
+                account("google-two", 4),
+                project_count=1,
+                billing_count=1,
+                billing_refs=("billing-two",),
+            ),
         )
         self.projects = {
             "google-one": (
@@ -227,7 +238,7 @@ class BillingControlClient:
                     "active", "ready", "fresh",
                 ),
                 GoogleControlProject(
-                    "project-two", "Velvet Harbor", "quota_probe", "Silver Forest", "billing-one",
+                    "project-two", "Velvet Harbor", "quota_probe", "Silver Forest", None,
                     "active", "ready", "fresh",
                 ),
             ),

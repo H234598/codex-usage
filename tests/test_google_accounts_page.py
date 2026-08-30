@@ -50,7 +50,8 @@ def _payload(*, stale: bool = False):
                 "subject_bound": True,
                 "inventory_generation": 4,
                 "project_count": 2,
-                "billing_count": 1,
+                "billing_count": 2,
+                "billing_refs": ["billing-one", "billing-unused"],
                 "default_oauth_client_ref": "oauth-client-one",
                 "oauth_client_availability": "available",
                 "oauth_state": "ready",
@@ -874,7 +875,10 @@ def test_billing_preview_and_candidates_stay_within_the_same_google_account() ->
     page = module.GoogleAccountsModel()
     page.render(_payload())
 
-    assert page.card("google-one").billing_candidates == (("hive-two", "billing-one"),)
+    assert page.card("google-one").billing_candidates == (
+        ("hive-two", "billing-one"),
+        ("hive-two", "billing-unused"),
+    )
     preview = page.preview_billing_plan(
         {
             "account_ref": "google-one",

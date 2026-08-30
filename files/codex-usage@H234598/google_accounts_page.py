@@ -24,6 +24,7 @@ _ACCOUNT_FIELDS = frozenset(
         "inventory_generation",
         "project_count",
         "billing_count",
+        "billing_refs",
         "default_oauth_client_ref",
         "oauth_client_availability",
         "oauth_state",
@@ -251,9 +252,17 @@ class GoogleAccountsModel:
                 raise ValueError("invalid OAuth client projection")
             enabled = _boolean(account["enabled"], "enabled")
             account_mutations_enabled = mutations_enabled and enabled
+            raw_billing_refs = account["billing_refs"]
+            if not isinstance(raw_billing_refs, list):
+                raise ValueError("invalid Google billing_refs projection")
             billing_refs = tuple(
-                sorted({project.billing_ref for project in project_rows if project.billing_ref})
+                _text(value, "billing_refs") for value in raw_billing_refs
             )
+            if (
+                len(billing_refs) != _count(account["billing_count"], "billing_count")
+                or len(billing_refs) != len(set(billing_refs))
+            ):
+                raise ValueError("invalid Google billing_refs projection")
             billing_candidates = tuple(
                 (project.ref, billing_ref)
                 for project in project_rows
@@ -270,7 +279,7 @@ class GoogleAccountsModel:
                         account["inventory_generation"], "inventory_generation"
                     ),
                     project_count=project_count,
-                    billing_count=_count(account["billing_count"], "billing_count"),
+                    billing_count=len(billing_refs),
                     default_oauth_client_ref=oauth_client_ref,
                     oauth_client_availability=availability,
                     oauth_state=_text(account["oauth_state"], "oauth_state", maximum=64),

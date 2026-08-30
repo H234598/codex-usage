@@ -756,7 +756,7 @@ class GoogleAccountsController:
             or value.inventory_generation != account.inventory_generation
             or len(value.projects) != account.project_count
             or not any(project.ref == project_ref for project in value.projects)
-            or not any(project.billing_ref == billing_ref for project in value.projects)
+            or billing_ref not in account.billing_refs
         ):
             raise MasterjetClientError("control.response_invalid")
 
