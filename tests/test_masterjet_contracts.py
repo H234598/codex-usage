@@ -96,8 +96,7 @@ def test_google_account_add_receipt_is_ref_and_generation_only() -> None:
     receipt = parse_google_account_add_receipt(
         {
             "schema_version": 1,
-            "account_ref": "google-three",
-            "resulting_generation": 13,
+            "account": {"ref": "google-three", "generation": 13},
         }
     )
 

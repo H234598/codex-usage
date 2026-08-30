@@ -1477,8 +1477,7 @@ def test_google_account_add_uses_fixed_post_route_and_binds_receipt(monkeypatch)
         json.dumps(
             {
                 "schema_version": 1,
-                "account_ref": "google-3",
-                "resulting_generation": 10,
+                "account": {"ref": "google-3", "generation": 10},
             }
         ).encode()
     )
@@ -1499,8 +1498,8 @@ def test_google_account_add_uses_fixed_post_route_and_binds_receipt(monkeypatch)
 @pytest.mark.parametrize(
     "payload",
     [
-        {"schema_version": 1, "account_ref": "google-other", "resulting_generation": 10},
-        {"schema_version": 1, "account_ref": "google-3", "resulting_generation": 11},
+        {"schema_version": 1, "account": {"ref": "google-other", "generation": 10}},
+        {"schema_version": 1, "account": {"ref": "google-3", "generation": 11}},
     ],
 )
 def test_google_account_add_rejects_unbound_receipt(monkeypatch, payload):

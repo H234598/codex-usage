@@ -129,7 +129,11 @@ def _task9_unix_control_server(socket_path: Path, attestation_key_fd: int):
             return _openai_payload()
         if operation == "google.accounts.list":
             payload = _payload()
-            return {"schema_version": 1, "accounts": payload["accounts"]}
+            return {
+                "schema_version": 1,
+                "registry_generation": 8,
+                "accounts": payload["accounts"],
+            }
         if operation == "google.projects.list":
             payload = _payload()
             return {

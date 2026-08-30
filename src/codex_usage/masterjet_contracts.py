@@ -542,10 +542,11 @@ def parse_google_account_list(payload: object) -> GoogleControlAccountList:
 
 
 def parse_google_account_add_receipt(payload: object) -> GoogleAccountAddReceiptV1:
-    data = _document(payload, {"schema_version", "account_ref", "resulting_generation"})
+    data = _document(payload, {"schema_version", "account"})
+    account = _mapping(data["account"], {"ref", "generation"})
     return GoogleAccountAddReceiptV1(
-        account_ref=_ref(data["account_ref"], "account_ref"),
-        resulting_generation=_generation(data["resulting_generation"], "resulting_generation"),
+        account_ref=_ref(account["ref"], "account_ref"),
+        resulting_generation=_generation(account["generation"], "resulting_generation"),
     )
 
 

@@ -7,6 +7,7 @@ from codex_master_test_source import codex_master_test_source
 
 from codex_usage.masterjet_client import _encode_request
 from codex_usage.masterjet_contracts import (
+    parse_google_account_add_receipt,
     parse_google_account_list,
     parse_google_oauth_client_import_plan,
     parse_google_oauth_client_import_receipt,
@@ -19,12 +20,35 @@ with codex_master_test_source(require_tests=True, module_level=True):
 DIGEST = "sha256:" + "a" * 64
 
 
+def test_usage_parses_real_google_account_add_receipt() -> None:
+    service, _owners = service_at()
+    payload = service.command(
+        principal("fleet.google.oauth"),
+        "google.accounts.add",
+        {"account_ref": "google-two", "label": "Google Two"},
+        expected_generation=4,
+        idempotency_key="idem-google-account-add",
+    )
+
+    receipt = parse_google_account_add_receipt({"schema_version": 1, **payload})
+
+    assert receipt.account_ref == "google-two"
+    assert receipt.resulting_generation == 5
+
+
 @pytest.mark.parametrize(
     ("operation", "arguments", "generation", "idempotency_key", "plan_digest"),
     [
         ("hosts.list", {}, None, None, None),
         ("openai.accounts.list", {}, None, None, None),
         ("google.accounts.list", {}, None, None, None),
+        (
+            "google.accounts.add",
+            {"account_ref": "google-two", "label": "Google Two"},
+            4,
+            "idem-google-account-add",
+            None,
+        ),
         ("google.projects.list", {"account_ref": "google-one"}, None, None, None),
         (
             "operations.get",
