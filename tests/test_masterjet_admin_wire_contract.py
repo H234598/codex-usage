@@ -146,9 +146,14 @@ def test_usage_request_is_accepted_by_real_admin_v1_parser(
 
     assert secret is None
     parsed = parse_admin_request(json.loads(encoded))
+    expected_arguments = (
+        {"operation_id": arguments["operation_id"]}
+        if operation == "operations.get"
+        else arguments
+    )
     assert type(parsed) is AdminRequestV1
     assert parsed.operation == operation
-    assert dict(parsed.arguments) == arguments
+    assert dict(parsed.arguments) == expected_arguments
     assert parsed.expected_generation == generation
     assert parsed.idempotency_key == idempotency_key
     assert parsed.plan_digest == plan_digest

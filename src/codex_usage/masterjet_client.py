@@ -690,7 +690,7 @@ def _encode_request(
             arguments,
         ):
             raise MasterjetClientError("control.request_invalid")
-        encoded_arguments = arguments
+        encoded_arguments = _wire_arguments(operation, arguments)
     else:
         if operation not in _SECRET_INGRESS_OPERATIONS or secret_session_id is None:
             raise MasterjetClientError("control.request_invalid")
@@ -815,10 +815,16 @@ def _decode_response(
             and "projects" in payload
         ):
             plan = parse_google_provision_plan(payload)
+            expected_account_ref = (
+                arguments.get("account_ref") if type(arguments) is dict else None
+            )
             if (
                 type(arguments) is not dict
                 or plan.id != arguments.get("operation_id")
-                or plan.account_ref != arguments.get("account_ref")
+                or (
+                    expected_account_ref is not None
+                    and plan.account_ref != expected_account_ref
+                )
             ):
                 raise MasterjetClientError("control.response_invalid")
             return plan
@@ -1494,6 +1500,12 @@ def _operation_arguments_valid(operation: str, arguments: object) -> bool:
         )
     except (TypeError, ValueError, RecursionError):
         return False
+
+
+def _wire_arguments(operation: str, arguments: dict[object, object]) -> dict[object, object]:
+    if operation == "operations.get":
+        return {"operation_id": arguments["operation_id"]}
+    return arguments
 
 
 def _argument_value_valid(value: object, kind: str) -> bool:

@@ -1581,6 +1581,38 @@ def test_operations_get_accepts_operation_id_without_account_route_ref(monkeypat
     assert (method, target, body) == ("GET", "/admin/v1/operations/plan-1", b"")
 
 
+def test_operations_get_without_account_ref_accepts_matching_provision_plan(monkeypatch):
+    payload = {
+        "schema_version": 1,
+        "id": "plan-1",
+        "account_ref": "google-1",
+        "kind": "google.provision.plan",
+        "state": "planned",
+        "expected_generation": 4,
+        "resulting_generation": None,
+        "plan_digest": "sha256:" + "a" * 64,
+        "created_at": "2026-08-28T12:00:00Z",
+        "expires_at": "2026-08-28T12:05:00Z",
+        "completed_count": 0,
+        "failed_count": 0,
+        "not_attempted_count": 1,
+        "reason_codes": [],
+        "step_count": 1,
+        "projects": [{"project_name": "Amber Orchard", "key_name": "Willow Meadow"}],
+    }
+    FakeHTTPSConnection.response = FakeHTTPResponse(json.dumps(payload).encode())
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    result = https_client(bearer_provider=lambda: "remote-bearer").call(
+        "operations.get", {"operation_id": "plan-1"}
+    )
+
+    assert result.id == "plan-1"
+    assert result.account_ref == "google-1"
+    method, target, body, _headers = FakeHTTPSConnection.instances[0].requests[0]
+    assert (method, target, body) == ("GET", "/admin/v1/operations/plan-1", b"")
+
+
 def test_https_uses_verified_tls_fixed_target_and_transient_auth_headers(monkeypatch):
     FakeHTTPSConnection.response = FakeHTTPResponse(
         json.dumps(google_oauth_transaction_payload()).encode()
