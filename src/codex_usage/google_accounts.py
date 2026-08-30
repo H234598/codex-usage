@@ -17,6 +17,8 @@ from .masterjet_contracts import (
     ControlContractError,
     ControlOperation,
     GoogleAccountAddReceiptV1,
+    GoogleBillingPlanV1,
+    GoogleBillingReceiptV1,
     GoogleControlAccount,
     GoogleControlAccountList,
     GoogleControlProject,
@@ -108,6 +110,18 @@ class GoogleProvisionPlan:
     expires_at: datetime
     step_count: int
     projects: tuple[GoogleProvisionProjectV1, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class GoogleBillingPlan:
+    account_ref: str
+    project_ref: str
+    billing_ref: str
+    plan_id: str
+    expected_generation: int
+    plan_digest: str
+    expires_at: datetime
+    idempotency_key: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +220,34 @@ class GoogleAccountsController:
         self, plan_id: str, *, account_ref: str, plan_digest: str
     ) -> ControlOperation:
         return self._guard(lambda: self._provision_apply(plan_id, account_ref, plan_digest))
+
+    def billing_plan(
+        self, account_ref: str, project_ref: str, billing_ref: str
+    ) -> GoogleBillingPlan:
+        return self._guard(lambda: self._billing_plan(account_ref, project_ref, billing_ref))
+
+    def billing_apply(
+        self,
+        plan_id: str,
+        *,
+        account_ref: str,
+        project_ref: str,
+        billing_ref: str,
+        expected_generation: int,
+        plan_digest: str,
+        idempotency_key: str,
+    ) -> GoogleBillingReceiptV1:
+        return self._guard(
+            lambda: self._billing_apply(
+                plan_id,
+                account_ref,
+                project_ref,
+                billing_ref,
+                expected_generation,
+                plan_digest,
+                idempotency_key,
+            )
+        )
 
     def import_oauth_client(self, account_ref: str, source: Path) -> GoogleOAuthClientImportResult:
         try:
@@ -625,6 +667,98 @@ class GoogleAccountsController:
         if applied.plan_digest != plan.plan_digest:
             raise MasterjetClientError("control.response_invalid")
         return applied
+
+    def _billing_plan(
+        self, account_ref: str, project_ref: str, billing_ref: str
+    ) -> GoogleBillingPlan:
+        self._require_mutation_allowed()
+        account = self._account(account_ref)
+        project_ref = _account_ref(project_ref)
+        billing_ref = _account_ref(billing_ref)
+        self._require_local_billing_binding(account, project_ref, billing_ref)
+        idempotency_key = self._idempotency_key()
+        result = self._client.call(
+            "google.billing.plan",
+            {
+                "account_ref": account.ref,
+                "project_ref": project_ref,
+                "billing_ref": billing_ref,
+            },
+            expected_generation=account.inventory_generation,
+            idempotency_key=idempotency_key,
+        )
+        if (
+            type(result) is not GoogleBillingPlanV1
+            or result.account_ref != account.ref
+            or result.project_ref != project_ref
+            or result.billing_ref != billing_ref
+            or result.inventory_generation != account.inventory_generation
+        ):
+            raise MasterjetClientError("control.response_invalid")
+        _require_unexpired(result.expires_at, self._clock, "control.plan_stale")
+        return GoogleBillingPlan(
+            account_ref=result.account_ref,
+            project_ref=result.project_ref,
+            billing_ref=result.billing_ref,
+            plan_id=result.id,
+            expected_generation=result.inventory_generation,
+            plan_digest=result.plan_digest,
+            expires_at=result.expires_at,
+            idempotency_key=idempotency_key,
+        )
+
+    def _billing_apply(
+        self,
+        plan_id: str,
+        account_ref: str,
+        project_ref: str,
+        billing_ref: str,
+        expected_generation: int,
+        plan_digest: str,
+        idempotency_key: str,
+    ) -> GoogleBillingReceiptV1:
+        self._require_mutation_allowed()
+        plan_digest = validate_google_plan_digest(plan_digest)
+        if type(expected_generation) is not int or not 0 <= expected_generation <= 2**63 - 1:
+            raise MasterjetClientError("control.response_invalid")
+        account = self._account(account_ref)
+        project_ref = _account_ref(project_ref)
+        billing_ref = _account_ref(billing_ref)
+        if account.inventory_generation != expected_generation:
+            raise MasterjetClientError("control.plan_stale")
+        self._require_local_billing_binding(account, project_ref, billing_ref)
+        result = self._client.call(
+            "google.billing.apply",
+            {
+                "account_ref": account.ref,
+                "project_ref": project_ref,
+                "billing_ref": billing_ref,
+                "plan_id": plan_id,
+            },
+            expected_generation=expected_generation,
+            idempotency_key=idempotency_key,
+            plan_digest=plan_digest,
+        )
+        if type(result) is not GoogleBillingReceiptV1 or result.plan_id != plan_id:
+            raise MasterjetClientError("control.response_invalid")
+        return result
+
+    def _require_local_billing_binding(
+        self,
+        account: GoogleControlAccount,
+        project_ref: str,
+        billing_ref: str,
+    ) -> None:
+        value = self._client.call("google.projects.list", {"account_ref": account.ref})
+        if (
+            type(value) is not GoogleControlProjectList
+            or value.account_ref != account.ref
+            or value.inventory_generation != account.inventory_generation
+            or len(value.projects) != account.project_count
+            or not any(project.ref == project_ref for project in value.projects)
+            or not any(project.billing_ref == billing_ref for project in value.projects)
+        ):
+            raise MasterjetClientError("control.response_invalid")
 
     def _import_oauth_client(self, account_ref: str, source: Path) -> GoogleOAuthClientImportResult:
         self._require_mutation_allowed()

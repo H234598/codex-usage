@@ -10,6 +10,8 @@ from codex_usage.masterjet_contracts import (
     ControlContractError,
     ControlOperation,
     ControlProblem,
+    GoogleBillingPlanV1,
+    GoogleBillingReceiptV1,
     GoogleControlAccount,
     GoogleControlAccountList,
     GoogleControlProject,
@@ -24,6 +26,8 @@ from codex_usage.masterjet_contracts import (
     parse_google_account_add_receipt,
     parse_google_account_list,
     parse_google_accounts,
+    parse_google_billing_plan,
+    parse_google_billing_receipt,
     parse_google_oauth_client_import_plan,
     parse_google_oauth_client_import_receipt,
     parse_google_oauth_transaction,
@@ -178,6 +182,32 @@ def valid_google_provision_plan() -> dict[str, object]:
             {"project_name": "Amber Orchard", "key_name": "Willow Meadow"},
             {"project_name": "Velvet Harbor", "key_name": "Silver Forest"},
         ],
+    }
+
+
+def valid_google_billing_plan() -> dict[str, object]:
+    return {
+        "id": "billing-plan-one",
+        "account_ref": "google-1",
+        "inventory_generation": 4,
+        "snapshot_fingerprint": "b" * 64,
+        "project_ref": "project-one",
+        "billing_ref": "billing-one",
+        "plan_digest": "sha256:" + "a" * 64,
+        "created_at": "2026-08-28T12:00:00Z",
+        "expires_at": "2026-08-28T12:05:00Z",
+    }
+
+
+def valid_google_billing_receipt() -> dict[str, object]:
+    return {
+        "plan_id": "billing-plan-one",
+        "state": "succeeded",
+        "attempted": 1,
+        "completed": 1,
+        "failed": 0,
+        "not_attempted": 0,
+        "reason_code": "billing.binding_created",
     }
 
 
@@ -456,6 +486,55 @@ def test_full_plan_preview_is_typed_complete_and_redacted():
             masterjet_contracts.GoogleProvisionProjectV1("Velvet Harbor", "Silver Forest"),
         ),
     )
+
+
+def test_google_billing_plan_and_receipt_are_exact_typed_redacted_wires() -> None:
+    plan = parse_google_billing_plan(valid_google_billing_plan())
+    receipt = parse_google_billing_receipt(valid_google_billing_receipt())
+
+    assert plan == GoogleBillingPlanV1(
+        id="billing-plan-one",
+        account_ref="google-1",
+        inventory_generation=4,
+        snapshot_fingerprint="b" * 64,
+        project_ref="project-one",
+        billing_ref="billing-one",
+        plan_digest="sha256:" + "a" * 64,
+        created_at=datetime(2026, 8, 28, 12, tzinfo=UTC),
+        expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=UTC),
+    )
+    assert receipt == GoogleBillingReceiptV1(
+        plan_id="billing-plan-one",
+        state="succeeded",
+        attempted=1,
+        completed=1,
+        failed=0,
+        not_attempted=0,
+        reason_code="billing.binding_created",
+    )
+
+
+@pytest.mark.parametrize(
+    ("parser", "payload"),
+    [
+        (
+            parse_google_billing_plan,
+            valid_google_billing_plan() | {"billing_account_id": "private"},
+        ),
+        (
+            parse_google_billing_plan,
+            valid_google_billing_plan() | {"snapshot_fingerprint": "private"},
+        ),
+        (parse_google_billing_receipt, valid_google_billing_receipt() | {"failed": True}),
+        (
+            parse_google_billing_receipt,
+            valid_google_billing_receipt() | {"provider_error": "private"},
+        ),
+    ],
+)
+def test_google_billing_wires_fail_closed_on_private_or_invalid_fields(parser, payload) -> None:
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parser(payload)
 
 
 @pytest.mark.parametrize(

@@ -10,6 +10,8 @@ from codex_usage.masterjet_client import MasterjetClientError
 from codex_usage.masterjet_contracts import (
     ControlOperation,
     GoogleAccountAddReceiptV1,
+    GoogleBillingPlanV1,
+    GoogleBillingReceiptV1,
     GoogleControlAccount,
     GoogleControlAccountList,
     GoogleControlProject,
@@ -210,6 +212,80 @@ class FakeControlClient:
             state="consumed",
             generation=5,
         )
+
+
+class BillingControlClient:
+    def __init__(self) -> None:
+        self.accounts = (
+            replace(account("google-one", 4), project_count=2, billing_count=1),
+            replace(account("google-two", 4), project_count=1, billing_count=1),
+        )
+        self.projects = {
+            "google-one": (
+                GoogleControlProject(
+                    "project-one", "Amber Orchard", "quota_probe", "Willow Meadow", None,
+                    "active", "ready", "fresh",
+                ),
+                GoogleControlProject(
+                    "project-two", "Velvet Harbor", "quota_probe", "Silver Forest", "billing-one",
+                    "active", "ready", "fresh",
+                ),
+            ),
+            "google-two": (
+                GoogleControlProject(
+                    "project-foreign",
+                    "Golden Meadow",
+                    "quota_probe",
+                    "Autumn Grove",
+                    "billing-two",
+                    "active", "ready", "fresh",
+                ),
+            ),
+        }
+        self.calls: list[tuple[str, object, int | None, str | None, str | None]] = []
+
+    def call(
+        self,
+        name: str,
+        arguments: object,
+        expected_generation: int | None = None,
+        idempotency_key: str | None = None,
+        plan_digest: str | None = None,
+    ) -> object:
+        self.calls.append((name, arguments, expected_generation, idempotency_key, plan_digest))
+        if name == "google.accounts.list":
+            return self.accounts
+        if name == "google.projects.list":
+            account_ref = str(arguments["account_ref"])
+            return GoogleControlProjectList(
+                schema_version=1,
+                account_ref=account_ref,
+                inventory_generation=4,
+                projects=self.projects[account_ref],
+            )
+        if name == "google.billing.plan":
+            return GoogleBillingPlanV1(
+                id="billing-plan-one",
+                account_ref="google-one",
+                inventory_generation=4,
+                snapshot_fingerprint="b" * 64,
+                project_ref="project-one",
+                billing_ref="billing-one",
+                plan_digest=DIGEST,
+                created_at=NOW - timedelta(minutes=1),
+                expires_at=NOW + timedelta(minutes=5),
+            )
+        if name == "google.billing.apply":
+            return GoogleBillingReceiptV1(
+                plan_id="billing-plan-one",
+                state="succeeded",
+                attempted=1,
+                completed=1,
+                failed=0,
+                not_attempted=0,
+                reason_code="billing.binding_created",
+            )
+        raise AssertionError(name)
 
 
 class AuthorizationClient(FakeControlClient):
@@ -833,3 +909,44 @@ def test_provision_apply_rejects_preview_digest_mismatch_before_apply() -> None:
         )
 
     assert not any(call[0] == "google.provision.apply" for call in client.calls)
+
+
+def test_billing_plan_rejects_billing_ref_from_another_google_account_before_request() -> None:
+    client = BillingControlClient()
+
+    with pytest.raises(GoogleAccountsError, match=r"control\.response_invalid"):
+        controller(client).billing_plan("google-one", "project-one", "billing-two")
+
+    assert not any(call[0] == "google.billing.plan" for call in client.calls)
+
+
+def test_billing_plan_and_apply_preserve_plan_idempotency_and_generation() -> None:
+    client = BillingControlClient()
+    subject = controller(client)
+
+    plan = subject.billing_plan("google-one", "project-one", "billing-one")
+    receipt = subject.billing_apply(
+        plan.plan_id,
+        account_ref=plan.account_ref,
+        project_ref=plan.project_ref,
+        billing_ref=plan.billing_ref,
+        expected_generation=plan.expected_generation,
+        plan_digest=plan.plan_digest,
+        idempotency_key=plan.idempotency_key,
+    )
+
+    assert plan.expected_generation == 4
+    assert plan.idempotency_key == "idem-1"
+    assert receipt.plan_id == plan.plan_id
+    assert client.calls[-1] == (
+        "google.billing.apply",
+        {
+            "account_ref": "google-one",
+            "project_ref": "project-one",
+            "billing_ref": "billing-one",
+            "plan_id": "billing-plan-one",
+        },
+        4,
+        "idem-1",
+        DIGEST,
+    )

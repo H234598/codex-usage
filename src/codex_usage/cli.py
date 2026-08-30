@@ -203,6 +203,9 @@ Masterjet und Google:
   codex-usage google inventory-refresh ACCOUNT --json
   codex-usage google provision-plan ACCOUNT --json
   codex-usage google provision-apply ACCOUNT PLAN_ID --plan-digest DIGEST --confirm --json
+  codex-usage google billing-plan ACCOUNT PROJECT BILLING --json
+  codex-usage google billing-apply ACCOUNT PROJECT BILLING PLAN_ID
+    --expected-generation N --plan-digest DIGEST --idempotency-key KEY --confirm --json
 
 Abruf und Ueberwachung:
   codex-usage once [--account ACCOUNT] [--format table|json] [--headed]
@@ -575,6 +578,27 @@ def _build_parser() -> argparse.ArgumentParser:
     google_apply.add_argument("--confirm", action="store_true")
     google_apply.add_argument("--json", action="store_true")
     google_apply.set_defaults(func=_cmd_google_provision_apply)
+    google_billing_plan = google_sub.add_parser(
+        "billing-plan", help="Billing-Bindungsplan erzeugen"
+    )
+    google_billing_plan.add_argument("account")
+    google_billing_plan.add_argument("project")
+    google_billing_plan.add_argument("billing")
+    google_billing_plan.add_argument("--json", action="store_true")
+    google_billing_plan.set_defaults(func=_cmd_google_billing_plan)
+    google_billing_apply = google_sub.add_parser(
+        "billing-apply", help="Billing-Bindungsplan anwenden"
+    )
+    google_billing_apply.add_argument("account")
+    google_billing_apply.add_argument("project")
+    google_billing_apply.add_argument("billing")
+    google_billing_apply.add_argument("plan_id")
+    google_billing_apply.add_argument("--expected-generation", required=True, type=int)
+    google_billing_apply.add_argument("--plan-digest", required=True)
+    google_billing_apply.add_argument("--idempotency-key", required=True)
+    google_billing_apply.add_argument("--confirm", action="store_true")
+    google_billing_apply.add_argument("--json", action="store_true")
+    google_billing_apply.set_defaults(func=_cmd_google_billing_apply)
 
     once = sub.add_parser("once", help="Alle oder einzelne Accounts einmal auslesen")
     once.add_argument("--account", action="append", dest="account_ids")
@@ -1964,6 +1988,63 @@ def _cmd_google_provision_apply(args: argparse.Namespace) -> int:
     except Exception as exc:
         return _print_google_error(exc, json_output=args.json)
     return _print_google_operation(operation, json_output=args.json)
+
+
+def _cmd_google_billing_plan(args: argparse.Namespace) -> int:
+    try:
+        plan = _new_google_controller_for_args(args).billing_plan(
+            args.account, args.project, args.billing
+        )
+    except Exception as exc:
+        return _print_google_error(exc, json_output=args.json)
+    _print_google_payload(
+        {
+            "account_ref": plan.account_ref,
+            "project_ref": plan.project_ref,
+            "billing_ref": plan.billing_ref,
+            "plan_id": plan.plan_id,
+            "expected_generation": plan.expected_generation,
+            "plan_digest": plan.plan_digest,
+            "expires_at": _control_timestamp(plan.expires_at),
+            "idempotency_key": plan.idempotency_key,
+        },
+        json_output=args.json,
+    )
+    return 0
+
+
+def _cmd_google_billing_apply(args: argparse.Namespace) -> int:
+    if args.confirm is not True:
+        return _print_google_error(
+            GoogleAccountsError("confirmation_required"),
+            json_output=args.json,
+        )
+    try:
+        plan_digest = validate_google_plan_digest(args.plan_digest)
+        receipt = _new_google_controller_for_args(args).billing_apply(
+            args.plan_id,
+            account_ref=args.account,
+            project_ref=args.project,
+            billing_ref=args.billing,
+            expected_generation=args.expected_generation,
+            plan_digest=plan_digest,
+            idempotency_key=args.idempotency_key,
+        )
+    except Exception as exc:
+        return _print_google_error(exc, json_output=args.json)
+    _print_google_payload(
+        {
+            "plan_id": receipt.plan_id,
+            "state": receipt.state,
+            "attempted": receipt.attempted,
+            "completed": receipt.completed,
+            "failed": receipt.failed,
+            "not_attempted": receipt.not_attempted,
+            "reason_code": receipt.reason_code,
+        },
+        json_output=args.json,
+    )
+    return 0
 
 
 def _google_account_json(account: GoogleControlAccount) -> dict[str, object]:

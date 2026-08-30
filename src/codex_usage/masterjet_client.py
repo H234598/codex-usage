@@ -27,6 +27,8 @@ from .masterjet_contracts import (
     parse_control_problem,
     parse_google_account_add_receipt,
     parse_google_account_list,
+    parse_google_billing_plan,
+    parse_google_billing_receipt,
     parse_google_oauth_client_import_plan,
     parse_google_oauth_client_import_receipt,
     parse_google_oauth_receipt,
@@ -821,6 +823,22 @@ def _decode_response(
             if type(arguments) is not dict or plan.account_ref != arguments.get("account_ref"):
                 raise MasterjetClientError("control.response_invalid")
             return plan
+        if operation == "google.billing.plan":
+            plan = parse_google_billing_plan(payload)
+            if (
+                type(arguments) is not dict
+                or plan.account_ref != arguments.get("account_ref")
+                or plan.project_ref != arguments.get("project_ref")
+                or plan.billing_ref != arguments.get("billing_ref")
+                or plan.inventory_generation != expected_generation
+            ):
+                raise MasterjetClientError("control.response_invalid")
+            return plan
+        if operation == "google.billing.apply":
+            receipt = parse_google_billing_receipt(payload)
+            if type(arguments) is not dict or receipt.plan_id != arguments.get("plan_id"):
+                raise MasterjetClientError("control.response_invalid")
+            return receipt
         if operation == "secret.ingress.create":
             session = parse_secret_ingress_session(payload)
             if (

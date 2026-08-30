@@ -869,6 +869,111 @@ def test_plan_preview_shows_every_name_and_step_count() -> None:
     )
 
 
+def test_billing_preview_and_candidates_stay_within_the_same_google_account() -> None:
+    module = _module()
+    page = module.GoogleAccountsModel()
+    page.render(_payload())
+
+    assert page.card("google-one").billing_candidates == (("hive-two", "billing-one"),)
+    preview = page.preview_billing_plan(
+        {
+            "account_ref": "google-one",
+            "project_ref": "hive-two",
+            "billing_ref": "billing-one",
+            "plan_id": "billing-plan-one",
+            "expected_generation": 4,
+            "plan_digest": "sha256:" + "a" * 64,
+            "expires_at": "2026-08-28T18:00:00Z",
+            "idempotency_key": "idem-billing-one",
+        }
+    )
+
+    assert preview.project_ref == "hive-two"
+    assert preview.billing_ref == "billing-one"
+    assert preview.idempotency_key == "idem-billing-one"
+
+
+def test_billing_apply_runs_only_after_confirmation_and_preserves_plan_fields() -> None:
+    module = _module()
+    preview = module.GoogleAccountsModel().preview_billing_plan(
+        {
+            "account_ref": "google-one",
+            "project_ref": "hive-two",
+            "billing_ref": "billing-one",
+            "plan_id": "billing-plan-one",
+            "expected_generation": 4,
+            "plan_digest": "sha256:" + "a" * 64,
+            "expires_at": "2026-08-28T18:00:00Z",
+            "idempotency_key": "idem-billing-one",
+        }
+    )
+    calls = []
+
+    class Runner:
+        def submit(self, argv, *, stdin_data=None, callback=None):
+            calls.append((tuple(argv), stdin_data, callback))
+
+    declined = module.GoogleActions(
+        Runner(), executable="/opt/codex-usage", confirm_billing=lambda _preview: False
+    )
+    declined.set_projection_ready(True)
+    assert declined.billing_apply(preview) is False
+    assert calls == []
+
+    accepted = module.GoogleActions(
+        Runner(), executable="/opt/codex-usage", confirm_billing=lambda _preview: True
+    )
+    accepted.set_projection_ready(True)
+    assert accepted.billing_apply(preview) is True
+    assert calls == [
+        (
+            (
+                "/opt/codex-usage",
+                "google",
+                "billing-apply",
+                "google-one",
+                "hive-two",
+                "billing-one",
+                "billing-plan-one",
+                "--expected-generation",
+                "4",
+                "--plan-digest",
+                "sha256:" + "a" * 64,
+                "--idempotency-key",
+                "idem-billing-one",
+                "--confirm",
+                "--json",
+            ),
+            None,
+            None,
+        )
+    ]
+
+
+def test_billing_partial_receipt_is_visible_in_the_google_page() -> None:
+    module = _module()
+    page = module.GoogleAccountsPage(None, None, None)
+
+    page._billing_finished(
+        module.CommandResult(
+            True,
+            {
+                "plan_id": "billing-plan-one",
+                "state": "partial",
+                "attempted": 1,
+                "completed": 0,
+                "failed": 1,
+                "not_attempted": 0,
+                "reason_code": "billing.provider_failed",
+            },
+            "",
+        )
+    )
+
+    assert "Teilfehler" in page._status.get_text()
+    assert "billing.provider_failed" in page._status.get_text()
+
+
 def test_apply_runs_only_after_visible_confirmation() -> None:
     module = _module()
     preview = module.GoogleAccountsModel().preview_plan(

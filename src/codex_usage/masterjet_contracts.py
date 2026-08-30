@@ -27,6 +27,7 @@ _LABEL_RE = re.compile(r'^[^{}\[\]"`:\\]+$')
 _VISIBLE_NAME_RE = re.compile(r"^[A-Za-z]+(?:[ -][A-Za-z]+)*$")
 _TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$")
 _PLAN_DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
+_SNAPSHOT_FINGERPRINT_RE = re.compile(r"^[a-f0-9]{64}$")
 _SECRET_VALUE_RE = re.compile(
     r"(?:\bAIza[A-Za-z0-9_-]*|\bya29(?:\.[A-Za-z0-9._-]*)?\b|"
     r"\b1//|\bGOCSPX-|\beyJ[A-Za-z0-9_-]{20,}|\bsk-|"
@@ -429,6 +430,57 @@ class GoogleProvisionPlanV1:
 
 
 @dataclass(frozen=True, slots=True)
+class GoogleBillingPlanV1:
+    id: str
+    account_ref: str
+    inventory_generation: int
+    snapshot_fingerprint: str
+    project_ref: str
+    billing_ref: str
+    plan_digest: str
+    created_at: datetime
+    expires_at: datetime
+
+    def __post_init__(self) -> None:
+        _token(self.id, "id")
+        _ref(self.account_ref, "account_ref")
+        _generation(self.inventory_generation, "inventory_generation")
+        _snapshot_fingerprint(self.snapshot_fingerprint)
+        _ref(self.project_ref, "project_ref")
+        _ref(self.billing_ref, "billing_ref")
+        _plan_digest(self.plan_digest)
+        _timestamp_value(self.created_at, "created_at")
+        _timestamp_value(self.expires_at, "expires_at")
+        if self.expires_at <= self.created_at:
+            _invalid("expires_at")
+
+
+@dataclass(frozen=True, slots=True)
+class GoogleBillingReceiptV1:
+    plan_id: str
+    state: str
+    attempted: int
+    completed: int
+    failed: int
+    not_attempted: int
+    reason_code: str
+
+    def __post_init__(self) -> None:
+        _token(self.plan_id, "plan_id")
+        if _code(self.state, "state") not in {"succeeded", "partial"}:
+            _invalid("state")
+        _count(self.attempted, "attempted", _MAX_COUNT)
+        _count(self.completed, "completed", _MAX_COUNT)
+        _count(self.failed, "failed", _MAX_COUNT)
+        _count(self.not_attempted, "not_attempted", _MAX_COUNT)
+        _code(self.reason_code, "reason_code")
+        if self.attempted != self.completed + self.failed:
+            _invalid("attempted")
+        if self.state == "succeeded" and self.failed != 0:
+            _invalid("state")
+
+
+@dataclass(frozen=True, slots=True)
 class ControlOperation:
     id: str
     kind: str
@@ -737,6 +789,58 @@ def parse_google_provision_plan(payload: object) -> GoogleProvisionPlanV1:
         reason_codes=_parse_reason_codes(data["reason_codes"]),
         step_count=_count(data["step_count"], "step_count", _MAX_COUNT),
         projects=projects,
+    )
+
+
+def parse_google_billing_plan(payload: object) -> GoogleBillingPlanV1:
+    data = _mapping(
+        payload,
+        {
+            "id",
+            "account_ref",
+            "inventory_generation",
+            "snapshot_fingerprint",
+            "project_ref",
+            "billing_ref",
+            "plan_digest",
+            "created_at",
+            "expires_at",
+        },
+    )
+    return GoogleBillingPlanV1(
+        id=_token(data["id"], "id"),
+        account_ref=_ref(data["account_ref"], "account_ref"),
+        inventory_generation=_generation(data["inventory_generation"], "inventory_generation"),
+        snapshot_fingerprint=_snapshot_fingerprint(data["snapshot_fingerprint"]),
+        project_ref=_ref(data["project_ref"], "project_ref"),
+        billing_ref=_ref(data["billing_ref"], "billing_ref"),
+        plan_digest=_plan_digest(data["plan_digest"]),
+        created_at=_timestamp(data["created_at"], "created_at"),
+        expires_at=_timestamp(data["expires_at"], "expires_at"),
+    )
+
+
+def parse_google_billing_receipt(payload: object) -> GoogleBillingReceiptV1:
+    data = _mapping(
+        payload,
+        {
+            "plan_id",
+            "state",
+            "attempted",
+            "completed",
+            "failed",
+            "not_attempted",
+            "reason_code",
+        },
+    )
+    return GoogleBillingReceiptV1(
+        plan_id=_token(data["plan_id"], "plan_id"),
+        state=_code(data["state"], "state"),
+        attempted=_count(data["attempted"], "attempted", _MAX_COUNT),
+        completed=_count(data["completed"], "completed", _MAX_COUNT),
+        failed=_count(data["failed"], "failed", _MAX_COUNT),
+        not_attempted=_count(data["not_attempted"], "not_attempted", _MAX_COUNT),
+        reason_code=_code(data["reason_code"], "reason_code"),
     )
 
 
@@ -1195,6 +1299,12 @@ def _optional_retry_seconds(value: object, field: str) -> int | None:
 def _plan_digest(value: object) -> str:
     if type(value) is not str or not _PLAN_DIGEST_RE.fullmatch(value):
         _invalid("plan_digest")
+    return value
+
+
+def _snapshot_fingerprint(value: object) -> str:
+    if type(value) is not str or not _SNAPSHOT_FINGERPRINT_RE.fullmatch(value):
+        _invalid("snapshot_fingerprint")
     return value
 
 

@@ -55,6 +55,29 @@ _PLAN_FIELDS = frozenset(
     }
 )
 _PLAN_PROJECT_FIELDS = frozenset({"project_name", "key_name"})
+_BILLING_PLAN_FIELDS = frozenset(
+    {
+        "account_ref",
+        "project_ref",
+        "billing_ref",
+        "plan_id",
+        "expected_generation",
+        "plan_digest",
+        "expires_at",
+        "idempotency_key",
+    }
+)
+_BILLING_RECEIPT_FIELDS = frozenset(
+    {
+        "plan_id",
+        "state",
+        "attempted",
+        "completed",
+        "failed",
+        "not_attempted",
+        "reason_code",
+    }
+)
 _SECRET_FIELD_PARTS = (
     "access_token",
     "refresh_token",
@@ -128,6 +151,7 @@ class GoogleAccountCard:
     quota_state: str
     reload_state: str
     projects: tuple[GoogleProjectRow, ...]
+    billing_candidates: tuple[tuple[str, str], ...]
     add_enabled: bool
     oauth_enabled: bool
     inventory_enabled: bool
@@ -144,6 +168,18 @@ class GooglePlanPreview:
     expires_at: str
     step_count: int
     names: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class GoogleBillingPreview:
+    account_ref: str
+    project_ref: str
+    billing_ref: str
+    plan_id: str
+    expected_generation: int
+    plan_digest: str
+    expires_at: str
+    idempotency_key: str
 
 
 class GoogleAccountsModel:
@@ -215,6 +251,15 @@ class GoogleAccountsModel:
                 raise ValueError("invalid OAuth client projection")
             enabled = _boolean(account["enabled"], "enabled")
             account_mutations_enabled = mutations_enabled and enabled
+            billing_refs = tuple(
+                sorted({project.billing_ref for project in project_rows if project.billing_ref})
+            )
+            billing_candidates = tuple(
+                (project.ref, billing_ref)
+                for project in project_rows
+                if project.billing_ref is None
+                for billing_ref in billing_refs
+            )
             cards.append(
                 GoogleAccountCard(
                     ref=account_ref,
@@ -232,6 +277,7 @@ class GoogleAccountsModel:
                     quota_state=_text(account["quota_state"], "quota_state", maximum=64),
                     reload_state=_text(account["reload_state"], "reload_state", maximum=64),
                     projects=project_rows,
+                    billing_candidates=billing_candidates,
                     add_enabled=account_mutations_enabled,
                     oauth_enabled=account_mutations_enabled and availability == "available",
                     inventory_enabled=account_mutations_enabled,
@@ -308,6 +354,22 @@ class GoogleAccountsModel:
             names=tuple(names),
         )
 
+    def preview_billing_plan(self, payload: object) -> GoogleBillingPreview:
+        plan = _mapping(payload, _BILLING_PLAN_FIELDS, "Google billing plan")
+        digest = plan["plan_digest"]
+        if type(digest) is not str or _PLAN_DIGEST_RE.fullmatch(digest) is None:
+            raise ValueError("invalid plan_digest")
+        return GoogleBillingPreview(
+            account_ref=_text(plan["account_ref"], "account_ref"),
+            project_ref=_text(plan["project_ref"], "project_ref"),
+            billing_ref=_text(plan["billing_ref"], "billing_ref"),
+            plan_id=_text(plan["plan_id"], "plan_id"),
+            expected_generation=_count(plan["expected_generation"], "expected_generation"),
+            plan_digest=digest,
+            expires_at=_text(plan["expires_at"], "expires_at", maximum=64),
+            idempotency_key=_text(plan["idempotency_key"], "idempotency_key", maximum=128),
+        )
+
     def __repr__(self) -> str:
         return (
             f"{type(self).__name__}(cards={self._cards!r}, "
@@ -318,6 +380,7 @@ class GoogleAccountsModel:
 class GoogleActions:
     __slots__ = (
         "_confirm",
+        "_confirm_billing",
         "_executable",
         "_oauth_runner",
         "_projection_ready",
@@ -331,12 +394,14 @@ class GoogleActions:
         *,
         executable: str | None = None,
         confirm: Callable[[GooglePlanPreview], bool] | None = None,
+        confirm_billing: Callable[[GoogleBillingPreview], bool] | None = None,
         oauth_runner: BoundedJsonRunner | None = None,
     ) -> None:
         self._runner = runner
         self._oauth_runner = oauth_runner or runner
         self._executable = executable or str(Path.home() / ".local/bin/codex-usage")
         self._confirm = confirm or (lambda _preview: False)
+        self._confirm_billing = confirm_billing or (lambda _preview: False)
         self._projection_ready = False
         self._projection_version = 0
 
@@ -467,6 +532,59 @@ class GoogleActions:
         )
         return True
 
+    def billing_plan(
+        self,
+        account_ref: str,
+        project_ref: str,
+        billing_ref: str,
+        *,
+        callback=None,
+        challenge_callback=None,
+    ) -> None:
+        self._submit(
+            [
+                "google",
+                "billing-plan",
+                _text(account_ref, "account_ref"),
+                _text(project_ref, "project_ref"),
+                _text(billing_ref, "billing_ref"),
+                "--json",
+            ],
+            callback=callback,
+            challenge_callback=challenge_callback,
+        )
+
+    def billing_apply(
+        self, preview: GoogleBillingPreview, *, callback=None, challenge_callback=None
+    ) -> bool:
+        if not self._projection_ready:
+            raise RuntimeError("STALE")
+        if not isinstance(preview, GoogleBillingPreview) or not self._confirm_billing(preview):
+            return False
+        if not self._projection_ready:
+            return False
+        self._submit(
+            [
+                "google",
+                "billing-apply",
+                preview.account_ref,
+                preview.project_ref,
+                preview.billing_ref,
+                preview.plan_id,
+                "--expected-generation",
+                str(preview.expected_generation),
+                "--plan-digest",
+                preview.plan_digest,
+                "--idempotency-key",
+                preview.idempotency_key,
+                "--confirm",
+                "--json",
+            ],
+            callback=callback,
+            challenge_callback=challenge_callback,
+        )
+        return True
+
     def __repr__(self) -> str:
         return f"{type(self).__name__}(projection_ready={self._projection_ready!r})"
 
@@ -485,6 +603,7 @@ class GoogleAccountsPage(SettingsWidget):
         self._actions = GoogleActions(
             self._runner,
             confirm=self._confirm_plan,
+            confirm_billing=self._confirm_billing_plan,
             oauth_runner=self._oauth_runner,
         )
         self._request_epoch = 0
@@ -625,6 +744,14 @@ class GoogleAccountsPage(SettingsWidget):
             plan.set_sensitive(card.plan_enabled)
             plan.connect("clicked", self._plan, card.ref)
             buttons.pack_start(plan, False, False, 0)
+            for project_ref, billing_ref in card.billing_candidates:
+                project = next(project for project in card.projects if project.ref == project_ref)
+                billing = Gtk.Button(
+                    label=f"{project.project_name} an Billing {billing_ref} binden"
+                )
+                billing.set_sensitive(card.apply_enabled)
+                billing.connect("clicked", self._billing_plan, card.ref, project_ref, billing_ref)
+                buttons.pack_start(billing, False, False, 0)
             box.pack_start(buttons, False, False, 0)
             frame.add(box)
             self._body.pack_start(frame, False, False, 0)
@@ -744,8 +871,70 @@ class GoogleAccountsPage(SettingsWidget):
             self._status.set_text("STALE · Apply gesperrt")
         return False
 
+    def _billing_plan(self, _button, account_ref: str, project_ref: str, billing_ref: str) -> None:
+        try:
+            epoch = self._begin_request()
+            self._actions.billing_plan(
+                account_ref,
+                project_ref,
+                billing_ref,
+                callback=self._result_callback(
+                    epoch, lambda result: self._billing_plan_loaded(result, epoch)
+                ),
+                challenge_callback=self._challenge_callback(epoch),
+            )
+        except RuntimeError:
+            self._status.set_text("STALE · Mutationen gesperrt")
+
+    def _billing_plan_loaded(self, result: CommandResult, epoch: int | None = None) -> bool:
+        current_epoch = self._request_epoch if epoch is None else epoch
+        if not self._accepts(current_epoch):
+            return False
+        if not result.ok:
+            self._operation_finished(result)
+            return False
+        try:
+            preview = self.model.preview_billing_plan(result.payload)
+            applied = self._actions.billing_apply(
+                preview,
+                callback=self._result_callback(current_epoch, self._billing_finished),
+                challenge_callback=self._challenge_callback(current_epoch),
+            )
+        except (RuntimeError, ValueError):
+            applied = False
+        if not applied:
+            self._status.set_text("Billing-Planvorschau nicht angewendet · Apply gesperrt")
+        return False
+
+    def _billing_finished(self, result: CommandResult) -> bool:
+        if not result.ok:
+            return self._operation_finished(result)
+        try:
+            receipt = _mapping(result.payload, _BILLING_RECEIPT_FIELDS, "Google billing receipt")
+            state = _text(receipt["state"], "state", maximum=64)
+            completed = _count(receipt["completed"], "completed")
+            failed = _count(receipt["failed"], "failed")
+            not_attempted = _count(receipt["not_attempted"], "not_attempted")
+            reason_code = _text(receipt["reason_code"], "reason_code", maximum=128)
+        except ValueError:
+            self._status.set_text("Billing-Receipt unvollständig · Status unbekannt")
+            return False
+        if state == "partial":
+            self._status.set_text(
+                f"Teilfehler · {completed} abgeschlossen · {failed} fehlgeschlagen · "
+                f"{not_attempted} nicht gestartet · {reason_code}"
+            )
+            return False
+        self._status.set_text("Billing-Bindung abgeschlossen")
+        return False
+
     def _operation_finished(self, result: CommandResult) -> bool:
-        self._status.set_text("Operation abgeschlossen" if result.ok else f"Fehler: {result.code}")
+        if result.ok:
+            self._status.set_text("Operation abgeschlossen")
+        elif result.code in {"control.plan_stale", "billing.plan_stale"}:
+            self._status.set_text("STALE · Plan erneut laden · Apply gesperrt")
+        else:
+            self._status.set_text(f"Fehler: {result.code}")
         return False
 
     def _prompt_running_step_up(self, epoch: int | None = None) -> bytearray | None:
@@ -782,6 +971,29 @@ class GoogleAccountsPage(SettingsWidget):
             text=f"{preview.step_count} Schritte anwenden?",
         )
         dialog.format_secondary_text(f"Digest: {preview.plan_digest}\n{names}")
+        try:
+            accepted = dialog.run() == Gtk.ResponseType.OK
+            return accepted and self._accepts(epoch)
+        finally:
+            dialog.destroy()
+
+    def _confirm_billing_plan(self, preview: GoogleBillingPreview) -> bool:
+        epoch = self._request_epoch
+        if not self._accepts(epoch):
+            return False
+        dialog = Gtk.MessageDialog(
+            transient_for=self.get_toplevel()
+            if isinstance(self.get_toplevel(), Gtk.Window)
+            else None,
+            flags=Gtk.DialogFlags.MODAL,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.OK_CANCEL,
+            text="Billing-Bindung anwenden?",
+        )
+        dialog.format_secondary_text(
+            f"Projekt {preview.project_ref} wird mit Billing {preview.billing_ref} verbunden.\n"
+            f"Digest: {preview.plan_digest}"
+        )
         try:
             accepted = dialog.run() == Gtk.ResponseType.OK
             return accepted and self._accepts(epoch)

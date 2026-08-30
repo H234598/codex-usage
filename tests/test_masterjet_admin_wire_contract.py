@@ -9,6 +9,8 @@ from codex_usage.masterjet_client import _encode_request
 from codex_usage.masterjet_contracts import (
     parse_google_account_add_receipt,
     parse_google_account_list,
+    parse_google_billing_plan,
+    parse_google_billing_receipt,
     parse_google_oauth_client_import_plan,
     parse_google_oauth_client_import_receipt,
 )
@@ -34,6 +36,39 @@ def test_usage_parses_real_google_account_add_receipt() -> None:
 
     assert receipt.account_ref == "google-two"
     assert receipt.resulting_generation == 5
+
+
+def test_usage_parses_current_master_google_billing_plan_and_receipt() -> None:
+    service, _owners = service_at()
+    arguments = {
+        "account_ref": "google-one",
+        "project_ref": "project-one",
+        "billing_ref": "billing-one",
+    }
+    plan_payload = service.command(
+        principal("fleet.google.billing.bind"),
+        "google.billing.plan",
+        arguments,
+        expected_generation=4,
+        idempotency_key="idem-billing-wire",
+    )
+    plan = parse_google_billing_plan(plan_payload)
+
+    receipt_payload = service.command(
+        principal("fleet.google.billing.bind", step_up=True),
+        "google.billing.apply",
+        {**arguments, "plan_id": plan.id},
+        expected_generation=plan.inventory_generation,
+        idempotency_key="idem-billing-wire",
+        plan_digest=plan.plan_digest,
+    )
+    receipt = parse_google_billing_receipt(receipt_payload)
+
+    assert plan.account_ref == "google-one"
+    assert plan.project_ref == "project-one"
+    assert plan.billing_ref == "billing-one"
+    assert receipt.plan_id == plan.id
+    assert receipt.state in {"succeeded", "partial"}
 
 
 @pytest.mark.parametrize(

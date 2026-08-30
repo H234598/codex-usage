@@ -3126,6 +3126,62 @@ def test_full_plan_preview_dispatches_to_typed_redacted_contract(monkeypatch):
     ]
 
 
+def test_billing_plan_and_receipt_dispatch_to_exact_typed_contracts(monkeypatch):
+    plan_payload = {
+        "id": "billing-plan-one",
+        "account_ref": "google-1",
+        "inventory_generation": 4,
+        "snapshot_fingerprint": "b" * 64,
+        "project_ref": "project-1",
+        "billing_ref": "billing-1",
+        "plan_digest": "sha256:" + "a" * 64,
+        "created_at": "2026-08-28T12:00:00Z",
+        "expires_at": "2026-08-28T12:05:00Z",
+    }
+    FakeHTTPSConnection.response = FakeHTTPResponse(json.dumps(plan_payload).encode())
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+    client = https_client(bearer_provider=lambda: "remote-bearer")
+    arguments = {
+        "account_ref": "google-1",
+        "project_ref": "project-1",
+        "billing_ref": "billing-1",
+    }
+
+    plan = client.call(
+        "google.billing.plan",
+        arguments,
+        expected_generation=4,
+        idempotency_key="idem-billing-one",
+    )
+
+    assert plan.account_ref == "google-1"
+    assert plan.project_ref == "project-1"
+    assert plan.billing_ref == "billing-1"
+    FakeHTTPSConnection.response = FakeHTTPResponse(
+        json.dumps(
+            {
+                "plan_id": "billing-plan-one",
+                "state": "succeeded",
+                "attempted": 1,
+                "completed": 1,
+                "failed": 0,
+                "not_attempted": 0,
+                "reason_code": "billing.binding_created",
+            }
+        ).encode()
+    )
+    receipt = client.call(
+        "google.billing.apply",
+        {**arguments, "plan_id": "billing-plan-one"},
+        expected_generation=4,
+        idempotency_key="idem-billing-one",
+        plan_digest=plan.plan_digest,
+    )
+
+    assert receipt.plan_id == "billing-plan-one"
+    assert receipt.completed == 1
+
+
 def test_task9_selfcheck_covers_both_transports_and_synthetic_auth(tmp_path, monkeypatch):
     result = _task9_transport_and_auth_selfcheck(tmp_path, monkeypatch)
 

@@ -1420,6 +1420,139 @@ def test_google_provision_apply_requires_confirm_before_config_or_request(
     assert captured.err == ""
 
 
+def test_google_billing_apply_requires_confirm_before_config_or_request(monkeypatch, capsys):
+    monkeypatch.setattr(
+        cli_module,
+        "load_config",
+        lambda _path: (_ for _ in ()).throw(AssertionError("request started")),
+    )
+
+    assert (
+        main(
+            [
+                "google",
+                "billing-apply",
+                "google-one",
+                "project-one",
+                "billing-one",
+                "billing-plan-one",
+                "--expected-generation",
+                "4",
+                "--plan-digest",
+                "sha256:" + "a" * 64,
+                "--idempotency-key",
+                "idem-billing-one",
+                "--json",
+            ]
+        )
+        == 2
+    )
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "ok": False,
+        "code": "confirmation_required",
+    }
+    assert captured.err == ""
+
+
+def test_google_billing_cli_preserves_plan_generation_digest_and_idempotency(
+    monkeypatch, capsys
+) -> None:
+    calls = []
+
+    class Controller:
+        def billing_plan(self, account_ref, project_ref, billing_ref):
+            calls.append(("plan", account_ref, project_ref, billing_ref))
+            return SimpleNamespace(
+                account_ref=account_ref,
+                project_ref=project_ref,
+                billing_ref=billing_ref,
+                plan_id="billing-plan-one",
+                expected_generation=4,
+                plan_digest="sha256:" + "a" * 64,
+                expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=ZoneInfo("UTC")),
+                idempotency_key="idem-billing-one",
+            )
+
+        def billing_apply(self, plan_id, **values):
+            calls.append(("apply", plan_id, values))
+            return SimpleNamespace(
+                plan_id=plan_id,
+                state="succeeded",
+                attempted=1,
+                completed=1,
+                failed=0,
+                not_attempted=0,
+                reason_code="billing.binding_created",
+            )
+
+    monkeypatch.setattr(cli_module, "_new_google_controller_for_args", lambda _args: Controller())
+
+    assert (
+        main(
+            [
+                "google",
+                "billing-plan",
+                "google-one",
+                "project-one",
+                "billing-one",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    plan_payload = json.loads(capsys.readouterr().out)
+    assert plan_payload == {
+        "account_ref": "google-one",
+        "project_ref": "project-one",
+        "billing_ref": "billing-one",
+        "plan_id": "billing-plan-one",
+        "expected_generation": 4,
+        "plan_digest": "sha256:" + "a" * 64,
+        "expires_at": "2026-08-28T12:05:00Z",
+        "idempotency_key": "idem-billing-one",
+    }
+
+    assert (
+        main(
+            [
+                "google",
+                "billing-apply",
+                "google-one",
+                "project-one",
+                "billing-one",
+                "billing-plan-one",
+                "--expected-generation",
+                "4",
+                "--plan-digest",
+                "sha256:" + "a" * 64,
+                "--idempotency-key",
+                "idem-billing-one",
+                "--confirm",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["completed"] == 1
+    assert calls == [
+        ("plan", "google-one", "project-one", "billing-one"),
+        (
+            "apply",
+            "billing-plan-one",
+            {
+                "account_ref": "google-one",
+                "project_ref": "project-one",
+                "billing_ref": "billing-one",
+                "expected_generation": 4,
+                "plan_digest": "sha256:" + "a" * 64,
+                "idempotency_key": "idem-billing-one",
+            },
+        ),
+    ]
+
+
 def test_google_cli_fixed_commands_forward_only_redacted_values(monkeypatch, capsys):
     calls = []
 
