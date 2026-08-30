@@ -9,7 +9,9 @@ from codex_usage.google_accounts import GoogleAccountsController, GoogleAccounts
 from codex_usage.masterjet_client import MasterjetClientError
 from codex_usage.masterjet_contracts import (
     ControlOperation,
+    GoogleAccountAddReceiptV1,
     GoogleControlAccount,
+    GoogleControlAccountList,
     GoogleControlProject,
     GoogleControlProjectList,
     GoogleOAuthClientImportPlanV1,
@@ -123,6 +125,8 @@ class FakeControlClient:
         self.plan_digests.append(plan_digest)
         if name == "google.accounts.list":
             return self.accounts
+        if name == "google.accounts.add":
+            return GoogleAccountAddReceiptV1(str(arguments["account_ref"]), 9)
         if name == "google.oauth.begin":
             return GoogleOAuthTransactionV1(
                 id="oauth-1",
@@ -319,6 +323,64 @@ def test_list_keeps_google_accounts_separate() -> None:
     assert [row.ref for row in rows] == ["google-one", "google-two"]
     assert rows[0].inventory_generation == 4
     assert rows[1].inventory_generation == 4
+
+
+def test_register_account_uses_fresh_registry_generation_and_binds_receipt() -> None:
+    client = FakeControlClient()
+    client.accounts = GoogleControlAccountList(
+        accounts=(account("google-one", 4),),
+        registry_generation=8,
+    )
+
+    result = controller(client).register_account("google-two", "Google Two")
+
+    assert result.account_ref == "google-two"
+    assert result.generation == 9
+    assert result.status == "succeeded"
+    assert client.calls == [
+        ("google.accounts.list", {}, None, None),
+        (
+            "google.accounts.add",
+            {"account_ref": "google-two", "label": "Google Two"},
+            8,
+            "idem-1",
+        ),
+    ]
+
+
+def test_register_account_fails_closed_without_registry_generation() -> None:
+    client = FakeControlClient()
+
+    with pytest.raises(GoogleAccountsError, match=r"control\.response_invalid"):
+        controller(client).register_account("google-three", "Google Three")
+
+    assert [call[0] for call in client.calls] == ["google.accounts.list"]
+
+
+def test_register_account_rejects_unbound_resulting_generation() -> None:
+    class WrongGenerationClient(FakeControlClient):
+        def call(
+            self,
+            name,
+            arguments,
+            expected_generation=None,
+            idempotency_key=None,
+            plan_digest=None,
+        ):
+            if name == "google.accounts.list":
+                self.calls.append((name, arguments, expected_generation, idempotency_key))
+                self.plan_digests.append(plan_digest)
+                return GoogleControlAccountList(accounts=(), registry_generation=8)
+            if name == "google.accounts.add":
+                self.calls.append((name, arguments, expected_generation, idempotency_key))
+                self.plan_digests.append(plan_digest)
+                return GoogleAccountAddReceiptV1("google-three", 10)
+            return super().call(
+                name, arguments, expected_generation, idempotency_key, plan_digest
+            )
+
+    with pytest.raises(GoogleAccountsError, match=r"control\.response_invalid"):
+        controller(WrongGenerationClient()).register_account("google-three", "Google Three")
 
 
 def test_account_details_cover_exact_accounts_generations_and_project_counts() -> None:

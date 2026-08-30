@@ -145,7 +145,7 @@ def test_root_help_lists_all_commands(capsys):
     )
     assert "codex-usage account terminal ACCOUNT" in output
     assert (
-        "codex-usage google add ACCOUNT --oauth-client-json PATH --json" in output
+        "codex-usage google add ACCOUNT --label LABEL --oauth-client-json PATH --json" in output
     )
     assert "--format table|json" in output
     assert "codex-usage profile jobs [--account ACCOUNT] [--json]" in output
@@ -1579,6 +1579,12 @@ def test_google_add_keeps_oauth_client_path_local(monkeypatch, tmp_path, capsys)
     seen = []
 
     class Controller:
+        def register_account(self, account_ref, label):
+            seen.append(("register", account_ref, label))
+            return SimpleNamespace(
+                account_ref=account_ref, generation=4, status="succeeded"
+            )
+
         def import_oauth_client(self, account_ref, path):
             seen.append(("import", account_ref, path))
             return SimpleNamespace(account_ref=account_ref, generation=5, status="succeeded")
@@ -1591,6 +1597,8 @@ def test_google_add_keeps_oauth_client_path_local(monkeypatch, tmp_path, capsys)
                 "google",
                 "add",
                 "google-one",
+                "--label",
+                "Google One",
                 "--oauth-client-json",
                 str(source),
                 "--json",
@@ -1599,7 +1607,10 @@ def test_google_add_keeps_oauth_client_path_local(monkeypatch, tmp_path, capsys)
         == 0
     )
 
-    assert seen == [("import", "google-one", source)]
+    assert seen == [
+        ("register", "google-one", "Google One"),
+        ("import", "google-one", source),
+    ]
     output = json.loads(capsys.readouterr().out)
     assert output == {
         "account_ref": "google-one",
@@ -1625,6 +1636,8 @@ def test_google_add_rejects_browser_before_controller(monkeypatch, tmp_path, cap
                 "google",
                 "add",
                 "google-one",
+                "--label",
+                "Google One",
                 "--oauth-client-json",
                 str(source),
                 "--browser",
@@ -1730,7 +1743,12 @@ def test_google_add_terminal_receipt_failure_is_nonzero_structured(
     source = tmp_path / "oauth-client.json"
     source.write_text("private", encoding="utf-8")
     result = SimpleNamespace(account_ref="google-one", generation=4, status=state)
-    controller = SimpleNamespace(import_oauth_client=lambda *_args: result)
+    controller = SimpleNamespace(
+        register_account=lambda *_args: SimpleNamespace(
+            account_ref="google-one", generation=4, status="succeeded"
+        ),
+        import_oauth_client=lambda *_args: result,
+    )
     monkeypatch.setattr(cli_module, "_new_google_controller", lambda _path: controller)
 
     assert (
@@ -1739,6 +1757,8 @@ def test_google_add_terminal_receipt_failure_is_nonzero_structured(
                 "google",
                 "add",
                 "google-one",
+                "--label",
+                "Google One",
                 "--oauth-client-json",
                 str(source),
                 "--json",

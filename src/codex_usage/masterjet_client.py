@@ -25,7 +25,8 @@ from .masterjet_contracts import (
     ControlProblem,
     parse_control_operation,
     parse_control_problem,
-    parse_google_accounts,
+    parse_google_account_add_receipt,
+    parse_google_account_list,
     parse_google_oauth_client_import_plan,
     parse_google_oauth_client_import_receipt,
     parse_google_oauth_receipt,
@@ -58,6 +59,10 @@ _OPERATION_ARGUMENT_FIELDS = {
         frozenset({"account_ref"}),
     ),
     "google.accounts.list": ({}, frozenset()),
+    "google.accounts.add": (
+        {"account_ref": "token", "label": "text"},
+        frozenset(),
+    ),
     "google.projects.list": ({"account_ref": "token"}, frozenset()),
     "google.oauth.begin": (
         {
@@ -550,6 +555,7 @@ def _https_operation_route(
         "hosts.list": ("GET", "/admin/v1/hosts"),
         "openai.accounts.list": ("GET", "/admin/v1/openai/accounts"),
         "google.accounts.list": ("GET", "/admin/v1/google/accounts"),
+        "google.accounts.add": ("POST", "/admin/v1/google/accounts"),
         "google.inventory.refresh": ("POST", "/admin/v1/google/inventory-refreshes"),
         "ollama.models.list": ("GET", "/admin/v1/ollama/models"),
         "ollama.instances.list": ("GET", "/admin/v1/ollama/instances"),
@@ -766,7 +772,17 @@ def _decode_response(
             problem = parse_control_problem(payload)
             raise MasterjetClientError(problem.code, problem=problem)
         if operation == "google.accounts.list":
-            return parse_google_accounts(payload)
+            return parse_google_account_list(payload)
+        if operation == "google.accounts.add":
+            receipt = parse_google_account_add_receipt(payload)
+            if (
+                type(arguments) is not dict
+                or receipt.account_ref != arguments.get("account_ref")
+                or expected_generation is None
+                or receipt.resulting_generation != expected_generation + 1
+            ):
+                raise MasterjetClientError("control.response_invalid")
+            return receipt
         if operation == "google.oauth.begin":
             transaction = parse_google_oauth_transaction(payload)
             if type(arguments) is not dict or transaction.account_ref != arguments.get(

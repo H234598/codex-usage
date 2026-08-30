@@ -11,6 +11,7 @@ from codex_usage.masterjet_contracts import (
     ControlOperation,
     ControlProblem,
     GoogleControlAccount,
+    GoogleControlAccountList,
     GoogleControlProject,
     GoogleOAuthClientImportPlanV1,
     GoogleOAuthClientImportReceiptV1,
@@ -20,6 +21,8 @@ from codex_usage.masterjet_contracts import (
     SecretIngressSession,
     parse_control_operation,
     parse_control_problem,
+    parse_google_account_add_receipt,
+    parse_google_account_list,
     parse_google_accounts,
     parse_google_oauth_client_import_plan,
     parse_google_oauth_client_import_receipt,
@@ -67,6 +70,39 @@ def test_google_oauth_client_import_plan_and_receipt_use_exact_canonical_wire() 
         4,
         "sha256:" + "b" * 64,
     )
+
+
+def test_google_accounts_list_requires_registry_generation() -> None:
+    payload = {
+        "schema_version": 1,
+        "registry_generation": 12,
+        "accounts": [valid_google_account()],
+    }
+
+    result = parse_google_account_list(payload)
+
+    assert result == GoogleControlAccountList(
+        accounts=(GoogleControlAccount(**valid_google_account()),),
+        registry_generation=12,
+    )
+
+    without_generation = dict(payload)
+    without_generation.pop("registry_generation")
+    with pytest.raises(ControlContractError):
+        parse_google_account_list(without_generation)
+
+
+def test_google_account_add_receipt_is_ref_and_generation_only() -> None:
+    receipt = parse_google_account_add_receipt(
+        {
+            "schema_version": 1,
+            "account_ref": "google-three",
+            "resulting_generation": 13,
+        }
+    )
+
+    assert receipt.account_ref == "google-three"
+    assert receipt.resulting_generation == 13
 
 
 def valid_google_project() -> dict[str, object]:
@@ -519,7 +555,10 @@ def test_google_accounts_preserve_required_status_fields():
 def test_google_accounts_reject_count_above_local_safety_limit():
     with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
         parse_google_accounts(
-            {"schema_version": 1, "accounts": [valid_google_account()] * 257}
+            {
+                "schema_version": 1,
+                "accounts": [valid_google_account()] * 257,
+            }
         )
 
 
@@ -940,6 +979,8 @@ def test_control_problem_rejects_retry_delay_above_ui_limit():
 @pytest.mark.parametrize("value", [True, float("nan"), float("inf"), float("-inf")])
 def test_schema_and_numeric_fields_reject_boolean_and_non_finite_values(value):
     with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
-        parse_google_accounts({"schema_version": value, "accounts": []})
+        parse_google_accounts(
+            {"schema_version": value, "accounts": []}
+        )
     with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
         parse_control_operation(valid_operation() | {"completed_count": value})

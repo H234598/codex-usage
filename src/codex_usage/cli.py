@@ -198,7 +198,7 @@ Masterjet und Google:
   codex-usage masterjet connection-set --transport local|https --endpoint ENDPOINT
                                        [--timeout-seconds SECONDS] --json
   codex-usage google accounts --json
-  codex-usage google add ACCOUNT --oauth-client-json PATH --json
+  codex-usage google add ACCOUNT --label LABEL --oauth-client-json PATH --json
   codex-usage google oauth-begin ACCOUNT --browser BROWSER --json
   codex-usage google inventory-refresh ACCOUNT --json
   codex-usage google provision-plan ACCOUNT --json
@@ -537,11 +537,22 @@ def _build_parser() -> argparse.ArgumentParser:
     google_accounts = google_sub.add_parser("accounts", help="Google-Accounts anzeigen")
     google_accounts.add_argument("--json", action="store_true")
     google_accounts.set_defaults(func=_cmd_google_accounts)
-    google_add = google_sub.add_parser("add", help="OAuth-Client importieren")
+    google_add = google_sub.add_parser("add", help="Google-Account registrieren")
     google_add.add_argument("account")
+    google_add.add_argument("--label", required=True)
     google_add.add_argument("--oauth-client-json", type=Path, required=True)
     google_add.add_argument("--json", action="store_true")
     google_add.set_defaults(func=_cmd_google_add)
+    google_register = google_sub.add_parser("register", help="Google-Account registrieren")
+    google_register.add_argument("account")
+    google_register.add_argument("--label", required=True)
+    google_register.add_argument("--json", action="store_true")
+    google_register.set_defaults(func=_cmd_google_register)
+    google_import = google_sub.add_parser("oauth-client-import", help="OAuth-Client importieren")
+    google_import.add_argument("account")
+    google_import.add_argument("--oauth-client-json", type=Path, required=True)
+    google_import.add_argument("--json", action="store_true")
+    google_import.set_defaults(func=_cmd_google_oauth_client_import)
     google_oauth_begin = google_sub.add_parser("oauth-begin", help="Google-OAuth starten")
     google_oauth_begin.add_argument("account")
     google_oauth_begin.add_argument("--browser", choices=SUPPORTED_BROWSERS, required=True)
@@ -1842,7 +1853,44 @@ def _cmd_google_accounts(args: argparse.Namespace) -> int:
 def _cmd_google_add(args: argparse.Namespace) -> int:
     try:
         controller = _new_google_controller_for_args(args)
+        added = controller.register_account(args.account, args.label)
+        if added.account_ref != args.account or added.status != "succeeded":
+            raise GoogleAccountsError("control.response_invalid")
         imported = controller.import_oauth_client(args.account, args.oauth_client_json)
+    except Exception as exc:
+        return _print_google_error(exc, json_output=args.json)
+    payload: dict[str, object] = {
+        "account_ref": imported.account_ref,
+        "generation": imported.generation,
+        "status": imported.status,
+        "ok": imported.status not in {"partial", "failed", "blocked"},
+    }
+    if payload["ok"] is False:
+        payload["code"] = f"control.operation_{imported.status}"
+    _print_google_payload(payload, json_output=args.json)
+    return 0 if payload["ok"] is True else 2
+
+
+def _cmd_google_register(args: argparse.Namespace) -> int:
+    try:
+        added = _new_google_controller_for_args(args).register_account(args.account, args.label)
+    except Exception as exc:
+        return _print_google_error(exc, json_output=args.json)
+    payload = {
+        "account_ref": added.account_ref,
+        "generation": added.generation,
+        "status": added.status,
+        "ok": added.status == "succeeded",
+    }
+    _print_google_payload(payload, json_output=args.json)
+    return 0 if payload["ok"] is True else 2
+
+
+def _cmd_google_oauth_client_import(args: argparse.Namespace) -> int:
+    try:
+        imported = _new_google_controller_for_args(args).import_oauth_client(
+            args.account, args.oauth_client_json
+        )
     except Exception as exc:
         return _print_google_error(exc, json_output=args.json)
     payload: dict[str, object] = {

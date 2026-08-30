@@ -16,7 +16,9 @@ from .masterjet_client import MasterjetClientError
 from .masterjet_contracts import (
     ControlContractError,
     ControlOperation,
+    GoogleAccountAddReceiptV1,
     GoogleControlAccount,
+    GoogleControlAccountList,
     GoogleControlProject,
     GoogleControlProjectList,
     GoogleOAuthClientImportPlanV1,
@@ -39,6 +41,7 @@ _CALLBACK_CLOSE_MAX_ATTEMPTS = len(_CALLBACK_CLOSE_RETRY_DELAYS) + 1
 _T = TypeVar("_T")
 _PATH_TYPE = type(Path())
 _PLAN_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
+_ACCOUNT_REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 
 
 class AuthenticatedGoogleClient(Protocol):
@@ -129,6 +132,13 @@ class GoogleOAuthClientImportResult:
     status: str
 
 
+@dataclass(frozen=True, slots=True)
+class GoogleAccountAddResult:
+    account_ref: str
+    generation: int
+    status: str
+
+
 class GoogleAccountsController:
     __slots__ = (
         "_browser_opener",
@@ -209,6 +219,9 @@ class GoogleAccountsController:
         except Exception:
             raise GoogleAccountsError("control.transport_unavailable") from None
 
+    def register_account(self, account_ref: str, label: str) -> GoogleAccountAddResult:
+        return self._guard(lambda: self._register_account(account_ref, label))
+
     def _guard(self, action: Callable[[], _T]) -> _T:
         try:
             return action()
@@ -221,9 +234,42 @@ class GoogleAccountsController:
 
     def _list(self) -> tuple[GoogleControlAccount, ...]:
         rows = self._client.call("google.accounts.list", {})
+        if type(rows) is GoogleControlAccountList:
+            rows = rows.accounts
         if type(rows) is not tuple or any(type(row) is not GoogleControlAccount for row in rows):
             raise MasterjetClientError("control.response_invalid")
         return rows
+
+    def _fresh_account_list(self) -> GoogleControlAccountList:
+        rows = self._client.call("google.accounts.list", {})
+        if type(rows) is not GoogleControlAccountList:
+            raise MasterjetClientError("control.response_invalid")
+        return rows
+
+    def _register_account(self, account_ref: str, label: str) -> GoogleAccountAddResult:
+        self._require_mutation_allowed()
+        ref = _account_ref(account_ref)
+        visible_label = _account_label(label)
+        accounts = self._fresh_account_list()
+        if any(account.ref == ref for account in accounts.accounts):
+            raise MasterjetClientError("control.response_invalid")
+        receipt = self._client.call(
+            "google.accounts.add",
+            {"account_ref": ref, "label": visible_label},
+            expected_generation=accounts.registry_generation,
+            idempotency_key=self._idempotency_key(),
+        )
+        if (
+            type(receipt) is not GoogleAccountAddReceiptV1
+            or receipt.account_ref != ref
+            or receipt.resulting_generation != accounts.registry_generation + 1
+        ):
+            raise MasterjetClientError("control.response_invalid")
+        return GoogleAccountAddResult(
+            account_ref=ref,
+            generation=receipt.resulting_generation,
+            status="succeeded",
+        )
 
     def _account(self, account_ref: str) -> GoogleControlAccount:
         rows = self._list()
@@ -800,6 +846,21 @@ def _uuid_key() -> str:
         return str(uuid.uuid4())
     except Exception:
         raise MasterjetClientError("control.request_invalid") from None
+
+
+def _account_ref(value: object) -> str:
+    if type(value) is not str or _ACCOUNT_REF_RE.fullmatch(value) is None:
+        raise MasterjetClientError("control.request_invalid")
+    return value
+
+
+def _account_label(value: object) -> str:
+    if type(value) is not str:
+        raise MasterjetClientError("control.request_invalid")
+    label = value.strip()
+    if not label or len(label) > 128 or "\x00" in label:
+        raise MasterjetClientError("control.request_invalid")
+    return label
 
 
 def _zero_secret(secret: bytearray) -> None:

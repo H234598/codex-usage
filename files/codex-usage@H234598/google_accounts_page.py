@@ -402,10 +402,26 @@ class GoogleActions:
         self._submit(
             [
                 "google",
-                "add",
+                "oauth-client-import",
                 _text(account_ref, "account_ref"),
                 "--oauth-client-json",
                 str(source),
+                "--json",
+            ],
+            callback=callback,
+            challenge_callback=challenge_callback,
+        )
+
+    def register_account(
+        self, account_ref: str, label: str, *, callback=None, challenge_callback=None
+    ) -> None:
+        self._submit(
+            [
+                "google",
+                "register",
+                _text(account_ref, "account_ref"),
+                "--label",
+                _text(label, "label"),
                 "--json",
             ],
             callback=callback,
@@ -655,11 +671,41 @@ class GoogleAccountsPage(SettingsWidget):
     def _add_account(self, *_args) -> None:
         try:
             epoch = self._begin_request()
-            account_ref = self._prompt_account_ref(epoch)
-            if account_ref is not None:
-                self.choose_oauth_client(account_ref, epoch=epoch)
+            account = self._prompt_account(epoch)
+            if account is not None:
+                account_ref, label = account
+                self._actions.register_account(
+                    account_ref,
+                    label,
+                    callback=self._result_callback(
+                        epoch,
+                        lambda result: self._account_added(result, account_ref, epoch),
+                    ),
+                    challenge_callback=self._challenge_callback(epoch),
+                )
         except RuntimeError:
             self._status.set_text("STALE · Mutationen gesperrt")
+
+    def _account_added(
+        self, result: CommandResult, account_ref: str, epoch: int | None = None
+    ) -> bool:
+        current_epoch = self._request_epoch if epoch is None else epoch
+        if not self._accepts(current_epoch):
+            return False
+        if not result.ok:
+            self._operation_finished(result)
+            return False
+        payload = result.payload
+        if (
+            not isinstance(payload, Mapping)
+            or payload.get("account_ref") != account_ref
+            or payload.get("status") != "succeeded"
+            or type(payload.get("generation")) is not int
+        ):
+            self._status.set_text("Account-Receipt unvollständig · Import gesperrt")
+            return False
+        self.choose_oauth_client(account_ref, epoch=current_epoch)
+        return False
 
     def _plan(self, _button, account_ref: str) -> None:
         try:
@@ -777,7 +823,7 @@ class GoogleAccountsPage(SettingsWidget):
         finally:
             dialog.destroy()
 
-    def _prompt_account_ref(self, epoch: int | None = None) -> str | None:
+    def _prompt_account(self, epoch: int | None = None) -> tuple[str, str] | None:
         current_epoch = self._request_epoch if epoch is None else epoch
         if not self._accepts(current_epoch):
             return None
@@ -793,9 +839,12 @@ class GoogleAccountsPage(SettingsWidget):
             Gtk.STOCK_OK,
             Gtk.ResponseType.OK,
         )
-        entry = Gtk.Entry()
-        entry.set_placeholder_text("Account-Ref")
-        dialog.get_content_area().pack_start(entry, False, False, 8)
+        ref_entry = Gtk.Entry()
+        ref_entry.set_placeholder_text("Account-Ref")
+        label_entry = Gtk.Entry()
+        label_entry.set_placeholder_text("Sichtbares Label")
+        dialog.get_content_area().pack_start(ref_entry, False, False, 8)
+        dialog.get_content_area().pack_start(label_entry, False, False, 8)
         dialog.show_all()
         try:
             if dialog.run() != Gtk.ResponseType.OK:
@@ -803,9 +852,12 @@ class GoogleAccountsPage(SettingsWidget):
             if not self._accepts(current_epoch):
                 return None
             try:
-                return _text(entry.get_text(), "account_ref")
+                return (
+                    _text(ref_entry.get_text(), "account_ref"),
+                    _text(label_entry.get_text(), "label"),
+                )
             except ValueError:
-                self._status.set_text("Ungültiger Account-Ref")
+                self._status.set_text("Ungültiger Account")
                 return None
         finally:
             dialog.destroy()

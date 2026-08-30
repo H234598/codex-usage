@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import re
 import unicodedata
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import NoReturn
@@ -232,6 +233,39 @@ class GoogleControlAccount:
             _invalid("oauth_client_availability")
         if (availability == "available") != (self.default_oauth_client_ref is not None):
             _invalid("default_oauth_client_ref")
+
+
+@dataclass(frozen=True, slots=True)
+class GoogleControlAccountList:
+    accounts: tuple[GoogleControlAccount, ...]
+    registry_generation: int
+
+    def __post_init__(self) -> None:
+        if type(self.accounts) is not tuple or not all(
+            type(account) is GoogleControlAccount for account in self.accounts
+        ):
+            _invalid("accounts")
+        _unique_refs(self.accounts)
+        _generation(self.registry_generation, "registry_generation")
+
+    def __iter__(self) -> Iterator[GoogleControlAccount]:
+        return iter(self.accounts)
+
+    def __len__(self) -> int:
+        return len(self.accounts)
+
+    def __getitem__(self, index: int) -> GoogleControlAccount:
+        return self.accounts[index]
+
+
+@dataclass(frozen=True, slots=True)
+class GoogleAccountAddReceiptV1:
+    account_ref: str
+    resulting_generation: int
+
+    def __post_init__(self) -> None:
+        _ref(self.account_ref, "account_ref")
+        _generation(self.resulting_generation, "resulting_generation")
 
 
 @dataclass(frozen=True, slots=True)
@@ -496,6 +530,23 @@ def parse_google_accounts(payload: object) -> tuple[GoogleControlAccount, ...]:
     result = tuple(_parse_google_account(account) for account in accounts)
     _unique_refs(result)
     return result
+
+
+def parse_google_account_list(payload: object) -> GoogleControlAccountList:
+    data = _document(payload, {"schema_version", "accounts", "registry_generation"})
+    accounts = _list(data["accounts"], "accounts", _MAX_ACCOUNTS)
+    return GoogleControlAccountList(
+        accounts=tuple(_parse_google_account(account) for account in accounts),
+        registry_generation=_generation(data["registry_generation"], "registry_generation"),
+    )
+
+
+def parse_google_account_add_receipt(payload: object) -> GoogleAccountAddReceiptV1:
+    data = _document(payload, {"schema_version", "account_ref", "resulting_generation"})
+    return GoogleAccountAddReceiptV1(
+        account_ref=_ref(data["account_ref"], "account_ref"),
+        resulting_generation=_generation(data["resulting_generation"], "resulting_generation"),
+    )
 
 
 def parse_openai_accounts(payload: object) -> tuple[OpenAIControlAccount, ...]:

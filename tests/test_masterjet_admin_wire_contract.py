@@ -7,7 +7,7 @@ from codex_master_test_source import codex_master_test_source
 
 from codex_usage.masterjet_client import _encode_request
 from codex_usage.masterjet_contracts import (
-    parse_google_accounts,
+    parse_google_account_list,
     parse_google_oauth_client_import_plan,
     parse_google_oauth_client_import_receipt,
 )
@@ -235,7 +235,7 @@ def test_usage_parses_real_admin_default_oauth_client_projection() -> None:
     service, _owners = service_at()
     payload = service.query(principal("fleet.read"), "google.accounts.list", {})
 
-    accounts = parse_google_accounts({"schema_version": 1, **payload})
+    accounts = parse_google_account_list({"schema_version": 1, **payload})
 
     assert len(accounts) == 1
     assert accounts[0].default_oauth_client_ref == "oauth-client-opaque"

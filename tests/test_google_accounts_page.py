@@ -272,6 +272,12 @@ def _task9_https_control_server(
         if request["method"] == "PUT":
             operation = "secret.ingress.put"
             arguments = None
+        elif request["method"] == "GET" and request["target"] == "/admin/v1/google/accounts":
+            operation = "google.accounts.list"
+            arguments = {}
+        elif request["method"] == "GET" and request["target"] == "/admin/v1/openai/accounts":
+            operation = "openai.accounts.list"
+            arguments = {}
         else:
             envelope = json.loads(request["body"])
             operation = envelope["operation"]
@@ -304,7 +310,11 @@ def _task9_https_control_server(
             else:
                 return challenge
         if operation == "google.accounts.list":
-            return {"schema_version": 1, "accounts": _payload()["accounts"]}
+            return {
+                "schema_version": 1,
+                "registry_generation": 8,
+                "accounts": _payload()["accounts"],
+            }
         if operation == "google.inventory.refresh":
             return operation_base | {
                 "id": "inventory-1",
@@ -392,7 +402,7 @@ def _task9_https_control_server(
                         head, body = raw.split(b"\r\n\r\n", 1)
                         lines = head.decode("ascii").split("\r\n")
                         headers = dict(line.split(": ", 1) for line in lines[1:])
-                        length = int(headers["Content-Length"])
+                        length = int(headers.get("Content-Length", "0"))
                         while len(body) < length:
                             chunk = tls_socket.recv(length - len(body))
                             if not chunk:
@@ -979,7 +989,7 @@ def test_oauth_filechooser_passes_only_path_to_private_cli_opening(tmp_path) -> 
             (
                 "/opt/codex-usage",
                 "google",
-                "add",
+                "oauth-client-import",
                 "google-one",
                 "--oauth-client-json",
                 str(source),
@@ -989,6 +999,44 @@ def test_oauth_filechooser_passes_only_path_to_private_cli_opening(tmp_path) -> 
             None,
         )
     ]
+
+
+def test_account_register_passes_label_without_oauth_client_path(tmp_path) -> None:
+    source = tmp_path / "oauth-client.json"
+    calls = []
+
+    class Runner:
+        def submit(self, argv, *, stdin_data=None, callback=None):
+            calls.append((tuple(argv), stdin_data, callback))
+
+    actions = _module().GoogleActions(Runner(), executable="/opt/codex-usage")
+    actions.set_projection_ready(True)
+    actions.register_account("google-two", "Google Two")
+    actions.import_oauth_client("google-two", source)
+
+    assert calls[0] == (
+        (
+            "/opt/codex-usage",
+            "google",
+            "register",
+            "google-two",
+            "--label",
+            "Google Two",
+            "--json",
+        ),
+        None,
+        None,
+    )
+    assert str(source) not in calls[0][0]
+    assert calls[1][0] == (
+        "/opt/codex-usage",
+        "google",
+        "oauth-client-import",
+        "google-two",
+        "--oauth-client-json",
+        str(source),
+        "--json",
+    )
     assert "marker-secret" not in repr(actions)
     assert "marker-secret" not in repr(calls)
 
@@ -1442,7 +1490,7 @@ def test_https_auth_sync_challenge_resumes_running_process(
     assert submissions[1][0][1:] == (
         "--step-up-stdin",
         "google",
-        "add",
+        "oauth-client-import",
         "google-one",
         "--oauth-client-json",
         str(oauth_client_path),

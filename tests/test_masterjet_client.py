@@ -57,6 +57,7 @@ AUTHORIZATION_URL = (
 def google_accounts_payload() -> dict[str, object]:
     return {
         "schema_version": 1,
+        "registry_generation": 9,
         "accounts": [
             {
                 "ref": "google-1",
@@ -1468,6 +1469,51 @@ def test_oauth_client_import_plan_and_receipt_decode_canonical_wire(monkeypatch)
     assert plan.id == "oauth-import-one"
     assert receipt.client_ref == "client-one"
     assert receipt.inventory_generation == 4
+
+
+def test_google_account_add_uses_fixed_post_route_and_binds_receipt(monkeypatch):
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+    FakeHTTPSConnection.response = FakeHTTPResponse(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "account_ref": "google-3",
+                "resulting_generation": 10,
+            }
+        ).encode()
+    )
+
+    receipt = https_client(bearer_provider=lambda: "remote-bearer").call(
+        "google.accounts.add",
+        {"account_ref": "google-3", "label": "Google Three"},
+        expected_generation=9,
+        idempotency_key="idem-add",
+    )
+
+    assert receipt.account_ref == "google-3"
+    assert receipt.resulting_generation == 10
+    assert FakeHTTPSConnection.instances[-1].requests[-1][0] == "POST"
+    assert FakeHTTPSConnection.instances[-1].requests[-1][1] == "/admin/v1/google/accounts"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"schema_version": 1, "account_ref": "google-other", "resulting_generation": 10},
+        {"schema_version": 1, "account_ref": "google-3", "resulting_generation": 11},
+    ],
+)
+def test_google_account_add_rejects_unbound_receipt(monkeypatch, payload):
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+    FakeHTTPSConnection.response = FakeHTTPResponse(json.dumps(payload).encode())
+
+    with pytest.raises(MasterjetClientError, match=r"control\.response_invalid"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "google.accounts.add",
+            {"account_ref": "google-3", "label": "Google Three"},
+            expected_generation=9,
+            idempotency_key="idem-add",
+        )
 
 
 def test_oauth_begin_rejects_transaction_for_another_account(monkeypatch):

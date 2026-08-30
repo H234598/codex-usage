@@ -126,7 +126,7 @@ apply remain separate operations. `provision-apply` needs the complete preview
 digest plus explicit confirmation:
 
 ```bash
-codex-usage google add ACCOUNT --oauth-client-json /private/client.json --json
+codex-usage google add ACCOUNT --label "Google Account" --oauth-client-json /private/client.json --json
 codex-usage google oauth-begin ACCOUNT --browser firefox --json
 codex-usage google inventory-refresh ACCOUNT --json
 codex-usage google provision-plan ACCOUNT --json
