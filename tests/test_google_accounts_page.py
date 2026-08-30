@@ -54,7 +54,7 @@ def _payload(*, stale: bool = False):
                 "default_oauth_client_ref": "oauth-client-one",
                 "oauth_client_availability": "available",
                 "oauth_state": "ready",
-                "quota_state": "ready",
+                "quota_state": "fresh",
                 "reload_state": "ready",
             }
         ],
@@ -445,7 +445,7 @@ def test_google_widget_renders_account_cards_status_and_project_table() -> None:
     assert card.default_oauth_client_ref == "oauth-client-one"
     assert card.oauth_client_availability == "available"
     assert card.oauth_state == "ready"
-    assert card.quota_state == "ready"
+    assert card.quota_state == "fresh"
     assert card.reload_state == "ready"
     assert card.inventory_generation == 4
     assert card.oauth_enabled is True
@@ -818,7 +818,7 @@ def test_google_page_summary_shows_projected_status_fields() -> None:
     assert any(
         "Aktiv ja" in label
         and "OAuth ready" in label
-        and "Quota ready" in label
+        and "Quota fresh" in label
         and "Reload ready" in label
         for label in labels
     )
