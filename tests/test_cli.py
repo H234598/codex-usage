@@ -1429,10 +1429,14 @@ def test_google_cli_fixed_commands_forward_only_redacted_values(monkeypatch, cap
             account = SimpleNamespace(
                 ref="google-one",
                 label="Google One",
+                enabled=True,
                 subject_bound=True,
+                oauth_state="ready",
                 inventory_generation=4,
+                quota_state="fresh",
                 project_count=1,
                 billing_count=0,
+                reload_state="ready",
                 default_oauth_client_ref="oauth-client-one",
                 oauth_client_availability="available",
             )
@@ -5993,6 +5997,10 @@ def test_account_details_cli_returns_exact_live_projection_envelope(monkeypatch,
     payload = json.loads(capsys.readouterr().out)
     assert payload["stale"] is False
     assert payload["accounts"] == [cli_module._google_account_json(account)]
+    assert payload["accounts"][0]["enabled"] is True
+    assert payload["accounts"][0]["oauth_state"] == "ready"
+    assert payload["accounts"][0]["quota_state"] == "fresh"
+    assert payload["accounts"][0]["reload_state"] == "ready"
     assert payload["projects"]["google-one"][0]["project_name"] == "Amber Orchard"
     assert payload["projects"]["google-one"][0]["key_name"] == "Willow Meadow"
 

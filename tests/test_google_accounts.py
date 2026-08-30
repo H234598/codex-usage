@@ -36,10 +36,14 @@ def account(ref: str, generation: int) -> GoogleControlAccount:
     return GoogleControlAccount(
         ref=ref,
         label=ref.replace("-", " ").title(),
+        enabled=True,
         subject_bound=True,
+        oauth_state="ready",
         inventory_generation=generation,
+        quota_state="fresh",
         project_count=0,
         billing_count=0,
+        reload_state="ready",
         default_oauth_client_ref="oauth-client-1",
         oauth_client_availability="available",
     )

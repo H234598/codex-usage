@@ -58,10 +58,14 @@ def valid_snapshot() -> ControlSnapshot:
             GoogleControlAccount(
                 ref="google-one",
                 label="Google One",
+                enabled=True,
                 subject_bound=True,
+                oauth_state="ready",
                 inventory_generation=7,
+                quota_state="fresh",
                 project_count=1,
                 billing_count=0,
+                reload_state="ready",
                 default_oauth_client_ref="oauth-client-one",
                 oauth_client_availability="available",
             ),
@@ -151,6 +155,20 @@ def test_valid_contract_snapshot_round_trips_in_one_private_file(tmp_path: Path)
     assert stat.S_IMODE(cache_files[0].stat().st_mode) == 0o600
     assert cache_files[0].stat().st_uid == os.geteuid()
     assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+
+
+def test_google_account_cache_preserves_required_status_fields(tmp_path: Path) -> None:
+    snapshot = valid_snapshot()
+    cache = ControlSnapshotCache.for_test(tmp_path, clock=lambda: 1_000.0)
+
+    cache.save(snapshot, observed_at=1_000.0)
+
+    document = json.loads(cache_path(tmp_path).read_text("utf-8"))
+    account = document["snapshot"]["google_accounts"][0]
+    assert account["enabled"] is True
+    assert account["oauth_state"] == "ready"
+    assert account["quota_state"] == "fresh"
+    assert account["reload_state"] == "ready"
 
 
 def test_module_api_reads_persisted_snapshot_in_new_cache_instance(tmp_path: Path) -> None:

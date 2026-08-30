@@ -86,10 +86,14 @@ def valid_google_account() -> dict[str, object]:
     return {
         "ref": "google-1",
         "label": "Google primary",
+        "enabled": True,
         "subject_bound": True,
+        "oauth_state": "ready",
         "inventory_generation": 4,
+        "quota_state": "fresh",
         "project_count": 1,
         "billing_count": 1,
+        "reload_state": "ready",
         "default_oauth_client_ref": "oauth-client-1",
         "oauth_client_availability": "available",
     }
@@ -478,6 +482,40 @@ def test_google_accounts_reject_unknown_nested_fields():
         parse_google_accounts({"schema_version": 1, "accounts": [account]})
 
 
+@pytest.mark.parametrize(
+    "field",
+    ["enabled", "oauth_state", "quota_state", "reload_state"],
+)
+def test_google_accounts_fail_closed_without_required_status_fields(field: str):
+    account = valid_google_account()
+    del account[field]
+
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_google_accounts({"schema_version": 1, "accounts": [account]})
+
+
+def test_google_accounts_preserve_required_status_fields():
+    accounts = parse_google_accounts(
+        {
+            "schema_version": 1,
+            "accounts": [
+                valid_google_account()
+                | {
+                    "enabled": False,
+                    "oauth_state": "needs_reauth",
+                    "quota_state": "exhausted",
+                    "reload_state": "stale",
+                }
+            ],
+        }
+    )
+
+    assert accounts[0].enabled is False
+    assert accounts[0].oauth_state == "needs_reauth"
+    assert accounts[0].quota_state == "exhausted"
+    assert accounts[0].reload_state == "stale"
+
+
 def test_google_accounts_reject_count_above_local_safety_limit():
     with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
         parse_google_accounts(
@@ -811,10 +849,14 @@ def test_control_operation_constructor_rejects_mutable_reason_codes():
         lambda: GoogleControlAccount(
             ref="google-1",
             label="Google primary",
+            enabled=True,
             subject_bound=True,
+            oauth_state="ready",
             inventory_generation=4,
+            quota_state="fresh",
             project_count=True,
             billing_count=1,
+            reload_state="ready",
             default_oauth_client_ref="oauth-client-1",
             oauth_client_availability="available",
         ),

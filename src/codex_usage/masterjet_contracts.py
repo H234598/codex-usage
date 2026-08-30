@@ -197,20 +197,28 @@ class OpenAIControlAccount:
 class GoogleControlAccount:
     ref: str
     label: str
+    enabled: bool
     subject_bound: bool
+    oauth_state: str
     inventory_generation: int
+    quota_state: str
     project_count: int
     billing_count: int
+    reload_state: str
     default_oauth_client_ref: str | None
     oauth_client_availability: str
 
     def __post_init__(self) -> None:
         _ref(self.ref, "ref")
         _label(self.label, "label")
+        _bool(self.enabled, "enabled")
         _bool(self.subject_bound, "subject_bound")
+        _code(self.oauth_state, "oauth_state")
         _generation(self.inventory_generation, "inventory_generation")
+        _code(self.quota_state, "quota_state")
         _count(self.project_count, "project_count", _MAX_COUNT)
         _count(self.billing_count, "billing_count", _MAX_COUNT)
+        _code(self.reload_state, "reload_state")
         _optional_ref(self.default_oauth_client_ref, "default_oauth_client_ref")
         availability = _code(self.oauth_client_availability, "oauth_client_availability")
         if availability not in {
@@ -817,10 +825,14 @@ def _parse_google_account(payload: object) -> GoogleControlAccount:
         {
             "ref",
             "label",
+            "enabled",
             "subject_bound",
+            "oauth_state",
             "inventory_generation",
+            "quota_state",
             "project_count",
             "billing_count",
+            "reload_state",
             "default_oauth_client_ref",
             "oauth_client_availability",
         },
@@ -828,10 +840,14 @@ def _parse_google_account(payload: object) -> GoogleControlAccount:
     return GoogleControlAccount(
         ref=_ref(data["ref"], "ref"),
         label=_label(data["label"], "label"),
+        enabled=_bool(data["enabled"], "enabled"),
         subject_bound=_bool(data["subject_bound"], "subject_bound"),
+        oauth_state=_code(data["oauth_state"], "oauth_state"),
         inventory_generation=_generation(data["inventory_generation"], "inventory_generation"),
+        quota_state=_code(data["quota_state"], "quota_state"),
         project_count=_count(data["project_count"], "project_count", _MAX_COUNT),
         billing_count=_count(data["billing_count"], "billing_count", _MAX_COUNT),
+        reload_state=_code(data["reload_state"], "reload_state"),
         default_oauth_client_ref=_optional_ref(
             data["default_oauth_client_ref"], "default_oauth_client_ref"
         ),
