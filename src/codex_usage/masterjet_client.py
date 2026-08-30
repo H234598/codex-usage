@@ -116,12 +116,22 @@ _OPERATION_ARGUMENT_FIELDS = {
     ),
     "ollama.models.list": ({}, frozenset()),
     "ollama.instances.list": ({}, frozenset()),
-    "ollama.instance.plan": ({"account_ref": "token"}, frozenset()),
-    "ollama.provision.apply": (
-        {"account_ref": "token", "plan_id": "token"},
+    "ollama.instance.plan": (
+        {
+            "ref": "token",
+            "label": "text",
+            "host_ref": "token",
+            "ollama_executable": "text",
+            "models_directory": "text",
+            "selected_model_refs": "token_list",
+            "allowed_cpus": "token",
+            "cpu_quota_percent": "integer",
+            "cpu_weight": "integer",
+        },
         frozenset(),
     ),
-    "ollama.probe": ({"instance_ref": "token"}, frozenset()),
+    "ollama.instance.apply": ({"plan_id": "token"}, frozenset()),
+    "ollama.instance.probe": ({"instance_ref": "token"}, frozenset()),
     "secret.ingress.create": (
         {
             "account_ref": "token",
@@ -148,6 +158,7 @@ _DIGEST_OPERATIONS = frozenset(
         "google.oauth-client-import.apply",
         "google.provision.apply",
         "google.billing.apply",
+        "ollama.instance.apply",
     }
 )
 _SECRET_INGRESS_OPERATIONS = frozenset({"secret.ingress.put"})
@@ -542,6 +553,7 @@ def _https_operation_route(
         "google.inventory.refresh": ("POST", "/admin/v1/google/inventory-refreshes"),
         "ollama.models.list": ("GET", "/admin/v1/ollama/models"),
         "ollama.instances.list": ("GET", "/admin/v1/ollama/instances"),
+        "ollama.instance.plan": ("POST", "/admin/v1/ollama/instance-plans"),
         "secret.ingress.create": ("POST", "/admin/v1/secret-ingress-sessions"),
     }
     route = static_routes.get(operation)
@@ -552,13 +564,21 @@ def _https_operation_route(
         if type(operation_id) is not str:
             raise MasterjetClientError("control.request_invalid")
         return ("GET", f"/admin/v1/operations/{quote(operation_id, safe='')}")
-    if operation == "ollama.probe":
+    if operation == "ollama.instance.probe":
         instance_ref = arguments.get("instance_ref")
         if type(instance_ref) is not str:
             raise MasterjetClientError("control.request_invalid")
         return (
             "POST",
             f"/admin/v1/ollama/instances/{quote(instance_ref, safe='')}/probe",
+        )
+    if operation == "ollama.instance.apply":
+        plan_id = arguments.get("plan_id")
+        if type(plan_id) is not str:
+            raise MasterjetClientError("control.request_invalid")
+        return (
+            "POST",
+            f"/admin/v1/ollama/instance-plans/{quote(plan_id, safe='')}/apply",
         )
     account_ref = arguments.get("account_ref")
     if type(account_ref) is not str:
@@ -586,10 +606,6 @@ def _https_operation_route(
             "/admin/v1/google/provision-plans",
         ),
         "google.billing.plan": ("POST", "/admin/v1/google/billing-bind-plans"),
-        "ollama.instance.plan": (
-            "POST",
-            "/admin/v1/ollama/instance-plans",
-        ),
     }
     route = account_routes.get(operation)
     if route is not None:
@@ -618,7 +634,7 @@ def _https_operation_route(
         }
         return digest_routes[operation]
     plan_id = arguments.get("plan_id")
-    if operation in {"google.billing.apply", "ollama.provision.apply"}:
+    if operation == "google.billing.apply":
         if type(plan_id) is not str:
             raise MasterjetClientError("control.request_invalid")
         plan = quote(plan_id, safe="")
@@ -626,10 +642,6 @@ def _https_operation_route(
             "google.billing.apply": (
                 "POST",
                 f"/admin/v1/google/billing-bind-plans/{plan}/apply",
-            ),
-            "ollama.provision.apply": (
-                "POST",
-                f"/admin/v1/ollama/instance-plans/{plan}/apply",
             ),
         }
         return plan_routes[operation]
@@ -1514,10 +1526,17 @@ def _argument_value_valid(value: object, kind: str) -> bool:
     if kind == "token_list":
         return (
             type(value) is list
-            and 1 <= len(value) <= 256
+            and 1 <= len(value) <= 64
             and all(type(item) is str and _TOKEN_RE.fullmatch(item) is not None for item in value)
             and len(set(value)) == len(value)
         )
+    if kind == "text":
+        try:
+            return type(value) is str and bool(value) and len(value.encode("utf-8")) <= 4096
+        except UnicodeError:
+            return False
+    if kind == "integer":
+        return type(value) is int and 1 <= value <= 10000
     if kind == "redirect_uri":
         try:
             validate_google_oauth_redirect_uri(value)

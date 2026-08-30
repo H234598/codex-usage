@@ -127,6 +127,39 @@ DIGEST = "sha256:" + "a" * 64
             "idem-billing-apply",
             DIGEST,
         ),
+        ("ollama.models.list", {}, None, None, None),
+        ("ollama.instances.list", {}, None, None, None),
+        (
+            "ollama.instance.plan",
+            {
+                "ref": "instance-one",
+                "label": "Instance One",
+                "host_ref": "control-host",
+                "ollama_executable": "/usr/bin/ollama",
+                "models_directory": "/var/lib/ollama",
+                "selected_model_refs": ["model-one"],
+                "allowed_cpus": "0-1",
+                "cpu_quota_percent": 200,
+                "cpu_weight": 100,
+            },
+            4,
+            "idem-ollama-plan",
+            None,
+        ),
+        (
+            "ollama.instance.apply",
+            {"plan_id": "ollama-plan-one"},
+            4,
+            "idem-ollama-apply",
+            DIGEST,
+        ),
+        (
+            "ollama.instance.probe",
+            {"instance_ref": "instance-one"},
+            4,
+            "idem-ollama-probe",
+            None,
+        ),
     ],
 )
 def test_usage_request_is_accepted_by_real_admin_v1_parser(
@@ -146,11 +179,15 @@ def test_usage_request_is_accepted_by_real_admin_v1_parser(
 
     assert secret is None
     parsed = parse_admin_request(json.loads(encoded))
-    expected_arguments = (
-        {"operation_id": arguments["operation_id"]}
-        if operation == "operations.get"
-        else arguments
-    )
+    if operation == "operations.get":
+        expected_arguments = {"operation_id": arguments["operation_id"]}
+    elif operation == "ollama.instance.plan":
+        expected_arguments = {
+            **arguments,
+            "selected_model_refs": tuple(arguments["selected_model_refs"]),
+        }
+    else:
+        expected_arguments = arguments
     assert type(parsed) is AdminRequestV1
     assert parsed.operation == operation
     assert dict(parsed.arguments) == expected_arguments
