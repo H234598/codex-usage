@@ -424,13 +424,6 @@ def _task9_https_control_server(
         yield port, certificate, requests
     finally:
         stopped.set()
-        wake = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            wake.connect(("127.0.0.1", port))
-        except OSError:
-            pass
-        finally:
-            wake.close()
         assert finished.wait(2)
         thread.join(timeout=0)
 
