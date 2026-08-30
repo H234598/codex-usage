@@ -46,12 +46,16 @@ def _payload(*, stale: bool = False):
             {
                 "ref": "google-one",
                 "label": "Google One",
+                "enabled": True,
                 "subject_bound": True,
                 "inventory_generation": 4,
                 "project_count": 2,
                 "billing_count": 1,
                 "default_oauth_client_ref": "oauth-client-one",
                 "oauth_client_availability": "available",
+                "oauth_state": "ready",
+                "quota_state": "ready",
+                "reload_state": "ready",
             }
         ],
         "projects": {
@@ -437,8 +441,12 @@ def test_google_widget_renders_account_cards_status_and_project_table() -> None:
     page.render(_payload())
 
     card = page.card("google-one")
+    assert card.enabled is True
     assert card.default_oauth_client_ref == "oauth-client-one"
     assert card.oauth_client_availability == "available"
+    assert card.oauth_state == "ready"
+    assert card.quota_state == "ready"
+    assert card.reload_state == "ready"
     assert card.inventory_generation == 4
     assert card.oauth_enabled is True
     assert [row.project_name for row in card.projects] == [
@@ -728,6 +736,92 @@ def test_oauth_requires_fresh_available_server_projected_client_ref() -> None:
     model.render(payload)
 
     assert model.card("google-one").oauth_enabled is False
+
+
+def test_disabled_google_account_blocks_every_mutation_even_when_fresh() -> None:
+    page = _module().GoogleAccountsModel()
+    payload = _payload(stale=False)
+    payload["accounts"][0]["enabled"] = False
+
+    page.render(payload)
+
+    card = page.card("google-one")
+    assert card.add_enabled is False
+    assert card.oauth_enabled is False
+    assert card.inventory_enabled is False
+    assert card.plan_enabled is False
+    assert card.apply_enabled is False
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    ["enabled", "oauth_state", "quota_state", "reload_state"],
+)
+def test_google_account_status_fields_are_required(missing_field) -> None:
+    payload = _payload()
+    del payload["accounts"][0][missing_field]
+    model = _module().GoogleAccountsModel()
+
+    with pytest.raises(ValueError, match="Google account"):
+        model.render(payload)
+
+    assert model.cards == ()
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("enabled", "true"),
+        ("oauth_state", ""),
+        ("quota_state", "x" * 65),
+        ("reload_state", None),
+    ],
+)
+def test_google_account_status_fields_are_bounded(field, invalid_value) -> None:
+    payload = _payload()
+    payload["accounts"][0][field] = invalid_value
+    model = _module().GoogleAccountsModel()
+
+    with pytest.raises(ValueError, match=field):
+        model.render(payload)
+
+    assert model.cards == ()
+
+
+def test_invalid_google_status_projection_clears_previous_cards() -> None:
+    payload = _payload()
+    invalid = _payload()
+    invalid["accounts"][0]["reload_state"] = ""
+    model = _module().GoogleAccountsModel()
+    model.render(payload)
+
+    with pytest.raises(ValueError, match="reload_state"):
+        model.render(invalid)
+
+    assert model.stale is True
+    assert model.details_available is False
+    assert model.cards == ()
+
+
+def test_google_page_summary_shows_projected_status_fields() -> None:
+    module = _module()
+    page = module.GoogleAccountsPage(None, None, None)
+
+    page.render(_payload())
+
+    labels = [
+        child.get_label()
+        for frame in page._body.get_children()
+        for child in frame.get_child().get_children()
+        if isinstance(child, module.Gtk.Label)
+    ]
+    assert any(
+        "Aktiv ja" in label
+        and "OAuth ready" in label
+        and "Quota ready" in label
+        and "Reload ready" in label
+        for label in labels
+    )
 
 
 def test_stale_google_page_disables_every_mutation() -> None:

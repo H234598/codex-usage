@@ -19,12 +19,16 @@ _ACCOUNT_FIELDS = frozenset(
     {
         "ref",
         "label",
+        "enabled",
         "subject_bound",
         "inventory_generation",
         "project_count",
         "billing_count",
         "default_oauth_client_ref",
         "oauth_client_availability",
+        "oauth_state",
+        "quota_state",
+        "reload_state",
     }
 )
 _PROJECT_FIELDS = frozenset(
@@ -113,12 +117,16 @@ class GoogleProjectRow:
 class GoogleAccountCard:
     ref: str
     label: str
+    enabled: bool
     subject_bound: bool
     inventory_generation: int
     project_count: int
     billing_count: int
     default_oauth_client_ref: str | None
     oauth_client_availability: str
+    oauth_state: str
+    quota_state: str
+    reload_state: str
     projects: tuple[GoogleProjectRow, ...]
     add_enabled: bool
     oauth_enabled: bool
@@ -157,6 +165,13 @@ class GoogleAccountsModel:
         return matches[0]
 
     def render(self, payload: object) -> None:
+        try:
+            self._render(payload)
+        except ValueError:
+            self.fail_closed()
+            raise
+
+    def _render(self, payload: object) -> None:
         if isinstance(payload, list):
             accounts = payload
             projects: Mapping[str, object] = {}
@@ -198,10 +213,13 @@ class GoogleAccountsModel:
                 oauth_client_ref = _text(oauth_client_ref, "default_oauth_client_ref")
             if (availability == "available") != (oauth_client_ref is not None):
                 raise ValueError("invalid OAuth client projection")
+            enabled = _boolean(account["enabled"], "enabled")
+            account_mutations_enabled = mutations_enabled and enabled
             cards.append(
                 GoogleAccountCard(
                     ref=account_ref,
                     label=_text(account["label"], "label"),
+                    enabled=enabled,
                     subject_bound=_boolean(account["subject_bound"], "subject_bound"),
                     inventory_generation=_count(
                         account["inventory_generation"], "inventory_generation"
@@ -210,12 +228,15 @@ class GoogleAccountsModel:
                     billing_count=_count(account["billing_count"], "billing_count"),
                     default_oauth_client_ref=oauth_client_ref,
                     oauth_client_availability=availability,
+                    oauth_state=_text(account["oauth_state"], "oauth_state", maximum=64),
+                    quota_state=_text(account["quota_state"], "quota_state", maximum=64),
+                    reload_state=_text(account["reload_state"], "reload_state", maximum=64),
                     projects=project_rows,
-                    add_enabled=mutations_enabled,
-                    oauth_enabled=mutations_enabled and availability == "available",
-                    inventory_enabled=mutations_enabled,
-                    plan_enabled=mutations_enabled,
-                    apply_enabled=mutations_enabled,
+                    add_enabled=account_mutations_enabled,
+                    oauth_enabled=account_mutations_enabled and availability == "available",
+                    inventory_enabled=account_mutations_enabled,
+                    plan_enabled=account_mutations_enabled,
+                    apply_enabled=account_mutations_enabled,
                 )
             )
         if details_available and set(projects) != seen:
@@ -553,6 +574,9 @@ class GoogleAccountsPage(SettingsWidget):
                 label=(
                     f"{card.ref} · Subject {'gebunden' if card.subject_bound else 'offen'} · "
                     f"Inventory {card.inventory_generation} · "
+                    f"Aktiv {'ja' if card.enabled else 'nein'} · "
+                    f"OAuth {card.oauth_state} · Quota {card.quota_state} · "
+                    f"Reload {card.reload_state} · "
                     f"OAuth-Client {card.oauth_client_availability}"
                 )
             )
