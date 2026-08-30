@@ -1456,12 +1456,16 @@ def test_https_auth_sync_challenge_resumes_running_process(
         user_site = site.getusersitepackages()
         executable.write_text(
             f"#!{sys.executable}\n"
-            "import json, os, ssl, sys\n"
+            "import json, os, socket, ssl, sys\n"
             "from pathlib import Path\n"
             f"sys.path.insert(0, {user_site!r})\n"
             f"sys.path.insert(0, {str(ROOT / 'src')!r})\n"
             "import codex_usage.private_io as private_io\n"
+            "import codex_usage.masterjet_client as masterjet_client\n"
             f"private_io._private_lock_root = lambda: Path({str(private_lock_root)!r})\n"
+            "masterjet_client._resolve_host = lambda _host, port, _deadline: "
+            "[(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, '', "
+            "('127.0.0.1', port))]\n"
             "from codex_usage.cli import main\n"
             "if __name__ == '__main__':\n"
             f"    with Path({str(diagnostics)!r}).open('a', encoding='utf-8') as stream:\n"
