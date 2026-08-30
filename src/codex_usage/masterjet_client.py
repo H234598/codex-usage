@@ -55,7 +55,7 @@ _OPERATION_ARGUMENT_FIELDS = {
     "hosts.list": ({}, frozenset()),
     "operations.get": (
         {"operation_id": "token", "account_ref": "token"},
-        frozenset(),
+        frozenset({"account_ref"}),
     ),
     "google.accounts.list": ({}, frozenset()),
     "google.projects.list": ({"account_ref": "token"}, frozenset()),
@@ -114,6 +114,14 @@ _OPERATION_ARGUMENT_FIELDS = {
         {"account_ref": "token"},
         frozenset(),
     ),
+    "ollama.models.list": ({}, frozenset()),
+    "ollama.instances.list": ({}, frozenset()),
+    "ollama.instance.plan": ({"account_ref": "token"}, frozenset()),
+    "ollama.provision.apply": (
+        {"account_ref": "token", "plan_id": "token"},
+        frozenset(),
+    ),
+    "ollama.probe": ({"instance_ref": "token"}, frozenset()),
     "secret.ingress.create": (
         {
             "account_ref": "token",
@@ -126,6 +134,8 @@ _OPERATION_ARGUMENT_FIELDS = {
 _COMMAND_OPERATIONS = frozenset(_OPERATION_ARGUMENT_FIELDS) - {
     "hosts.list",
     "openai.accounts.list",
+    "ollama.models.list",
+    "ollama.instances.list",
     "google.accounts.list",
     "google.projects.list",
     "operations.get",
@@ -292,10 +302,12 @@ class MasterjetControlClient:
                 step_up_provider=self._step_up_provider,
             ).request(
                 operation,
+                arguments,
                 request,
                 secret,
                 expected_generation,
                 idempotency_key,
+                plan_digest,
                 secret_session_id,
             )
         else:
@@ -402,10 +414,12 @@ class _HttpsTransport:
     def request(
         self,
         operation: str,
+        arguments: object,
         request: bytes,
         secret: memoryview | None,
         expected_generation: int | None,
         idempotency_key: str | None,
+        plan_digest: str | None,
         secret_session_id: str | None,
     ) -> tuple[int, bytes]:
         deadline = _Deadline(_timeout(self._connection))
@@ -417,6 +431,7 @@ class _HttpsTransport:
             host, port, target = _https_endpoint(self._connection)
             deadline.remaining()
             deadline.remaining()
+            method = "POST"
             headers = {
                 "Authorization": f"Bearer {self._bearer}",
                 "Cache-Control": "no-store",
@@ -426,6 +441,7 @@ class _HttpsTransport:
             if secret is not None:
                 if secret_session_id is None:
                     raise MasterjetClientError("control.request_invalid")
+                method = "PUT"
                 body = secret.tobytes()
                 target = "/admin/v1/secret-ingress-sessions/" + quote(secret_session_id, safe="")
                 headers.update(
@@ -436,6 +452,14 @@ class _HttpsTransport:
                     )
                 )
                 headers["Content-Type"] = "application/octet-stream"
+            else:
+                route = _https_operation_route(operation, arguments, plan_digest=plan_digest)
+                if route is not None:
+                    method, target = route
+                    if method == "GET":
+                        body = b""
+                        headers.pop("Content-Type", None)
+                        headers["Content-Length"] = "0"
             context = ssl.create_default_context()
             deadline.remaining()
             if not context.check_hostname or context.verify_mode != ssl.CERT_REQUIRED:
@@ -444,7 +468,7 @@ class _HttpsTransport:
                 connection = _open_https_connection(host, port, context, deadline)
                 with _DeadlineGuard(deadline, lambda current=connection: _abort_http(current)):
                     connection.request(
-                        "PUT" if secret is not None else "POST",
+                        method,
                         target,
                         body=body,
                         headers=headers,
@@ -501,6 +525,115 @@ class _HttpsTransport:
         if result is None:  # pragma: no cover - defensive control-flow assertion
             raise MasterjetClientError("control.transport_unavailable")
         return result
+
+
+def _https_operation_route(
+    operation: str,
+    arguments: object,
+    *,
+    plan_digest: str | None,
+) -> tuple[str, str] | None:
+    if type(arguments) is not dict:
+        raise MasterjetClientError("control.request_invalid")
+    static_routes = {
+        "hosts.list": ("GET", "/admin/v1/hosts"),
+        "openai.accounts.list": ("GET", "/admin/v1/openai/accounts"),
+        "google.accounts.list": ("GET", "/admin/v1/google/accounts"),
+        "google.inventory.refresh": ("POST", "/admin/v1/google/inventory-refreshes"),
+        "ollama.models.list": ("GET", "/admin/v1/ollama/models"),
+        "ollama.instances.list": ("GET", "/admin/v1/ollama/instances"),
+        "secret.ingress.create": ("POST", "/admin/v1/secret-ingress-sessions"),
+    }
+    route = static_routes.get(operation)
+    if route is not None:
+        return route
+    if operation == "operations.get":
+        operation_id = arguments.get("operation_id")
+        if type(operation_id) is not str:
+            raise MasterjetClientError("control.request_invalid")
+        return ("GET", f"/admin/v1/operations/{quote(operation_id, safe='')}")
+    if operation == "ollama.probe":
+        instance_ref = arguments.get("instance_ref")
+        if type(instance_ref) is not str:
+            raise MasterjetClientError("control.request_invalid")
+        return (
+            "POST",
+            f"/admin/v1/ollama/instances/{quote(instance_ref, safe='')}/probe",
+        )
+    account_ref = arguments.get("account_ref")
+    if type(account_ref) is not str:
+        return None
+    account = quote(account_ref, safe="")
+    account_routes = {
+        "openai.auth.plan": (
+            "POST",
+            f"/admin/v1/openai/accounts/{account}/auth-sync-plans",
+        ),
+        "google.projects.list": ("GET", f"/admin/v1/google/accounts/{account}"),
+        "google.oauth.begin": ("POST", "/admin/v1/google/oauth-transactions"),
+        "google.oauth.complete": (
+            "POST",
+            "/admin/v1/google/oauth-transactions/"
+            + quote(str(arguments.get("transaction_id")), safe="")
+            + "/complete",
+        ),
+        "google.oauth-client-import.plan": (
+            "POST",
+            "/admin/v1/google/oauth-client-import-plans",
+        ),
+        "google.provision.plan": (
+            "POST",
+            "/admin/v1/google/provision-plans",
+        ),
+        "google.billing.plan": ("POST", "/admin/v1/google/billing-bind-plans"),
+        "ollama.instance.plan": (
+            "POST",
+            "/admin/v1/ollama/instance-plans",
+        ),
+    }
+    route = account_routes.get(operation)
+    if route is not None:
+        return route
+    if operation in {
+        "openai.auth.apply",
+        "google.oauth-client-import.apply",
+        "google.provision.apply",
+    }:
+        if type(plan_digest) is not str:
+            raise MasterjetClientError("control.request_invalid")
+        digest = quote(plan_digest, safe="")
+        digest_routes = {
+            "openai.auth.apply": (
+                "POST",
+                f"/admin/v1/openai/accounts/{account}/auth-sync-plans/{digest}/apply",
+            ),
+            "google.oauth-client-import.apply": (
+                "POST",
+                f"/admin/v1/google/oauth-client-import-plans/{digest}/apply",
+            ),
+            "google.provision.apply": (
+                "POST",
+                f"/admin/v1/google/provision-plans/{digest}/apply",
+            ),
+        }
+        return digest_routes[operation]
+    plan_id = arguments.get("plan_id")
+    if operation in {"google.billing.apply", "ollama.provision.apply"}:
+        if type(plan_id) is not str:
+            raise MasterjetClientError("control.request_invalid")
+        plan = quote(plan_id, safe="")
+        plan_routes = {
+            "google.billing.apply": (
+                "POST",
+                f"/admin/v1/google/billing-bind-plans/{plan}/apply",
+            ),
+            "ollama.provision.apply": (
+                "POST",
+                f"/admin/v1/ollama/instance-plans/{plan}/apply",
+            ),
+        }
+        return plan_routes[operation]
+    return None
 
 
 def _step_up_challenge(response: tuple[int, bytes]) -> bool:

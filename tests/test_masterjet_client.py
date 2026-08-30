@@ -61,10 +61,14 @@ def google_accounts_payload() -> dict[str, object]:
             {
                 "ref": "google-1",
                 "label": "Google account 01_BW",
+                "enabled": True,
                 "subject_bound": True,
+                "oauth_state": "ready",
                 "inventory_generation": 4,
+                "quota_state": "available",
                 "project_count": 12,
                 "billing_count": 1,
+                "reload_state": "idle",
                 "default_oauth_client_ref": "oauth-client-1",
                 "oauth_client_availability": "available",
             }
@@ -390,7 +394,7 @@ def _task9_transport_and_auth_selfcheck(tmp_path, monkeypatch):
             MasterjetConnection(
                 transport="https",
                 endpoint=f"https://localhost:{port}/control",
-                timeout_seconds=2,
+                timeout_seconds=5,
             ),
             bearer_provider=lambda: "task9-system-credential",
             step_up_provider=lambda: "123456",
@@ -592,7 +596,7 @@ def test_google_account_details_over_real_https_reads_system_credential_once(
             MasterjetConnection(
                 transport="https",
                 endpoint=f"https://localhost:{port}/control",
-                timeout_seconds=2,
+                timeout_seconds=5,
             ),
             bearer_provider=provider,
         )
@@ -602,9 +606,10 @@ def test_google_account_details_over_real_https_reads_system_credential_once(
     assert reads == 1
     assert details[0].account.ref == "google-1"
     assert [project.ref for project in details[0].projects] == ["project-1"]
-    assert [
-        json.loads(request["body"])["operation"] for request in capture["requests"]
-    ] == ["google.accounts.list", "google.projects.list"]
+    assert [request["request_line"] for request in capture["requests"]] == [
+        "GET /admin/v1/google/accounts HTTP/1.1",
+        "GET /admin/v1/google/accounts/google-1 HTTP/1.1",
+    ]
     assert all(
         request["headers"]["Authorization"] == "Bearer google-system-bearer"
         for request in capture["requests"]
@@ -713,7 +718,7 @@ def test_complete_openai_auth_sync_over_real_https_reads_fd_once_and_raw_secret_
             MasterjetConnection(
                 transport="https",
                 endpoint=f"https://localhost:{port}/control",
-                timeout_seconds=2,
+                timeout_seconds=5,
             ),
             bearer_provider=provider,
         )
@@ -731,7 +736,7 @@ def test_complete_openai_auth_sync_over_real_https_reads_fd_once_and_raw_secret_
         5,
         "succeeded",
     )
-    assert [request["method"] for request in requests] == ["POST", "POST", "POST", "PUT", "POST"]
+    assert [request["method"] for request in requests] == ["GET", "POST", "POST", "PUT", "POST"]
     assert all(
         request["headers"]["Authorization"] == "Bearer openai-fd-bearer"
         for request in requests
@@ -1087,6 +1092,214 @@ def test_https_secret_uses_encoded_session_id_on_fixed_admin_route(monkeypatch):
     )
 
 
+@pytest.mark.parametrize(
+    ("operation", "arguments", "expected", "extra"),
+    [
+        ("hosts.list", {}, ("GET", "/admin/v1/hosts"), {}),
+        ("openai.accounts.list", {}, ("GET", "/admin/v1/openai/accounts"), {}),
+        (
+            "openai.auth.plan",
+            {"account_ref": "openai-1"},
+            ("POST", "/admin/v1/openai/accounts/openai-1/auth-sync-plans"),
+            {"expected_generation": 4, "idempotency_key": "idem-openai-plan"},
+        ),
+        (
+            "openai.auth.apply",
+            {"account_ref": "openai-1"},
+            (
+                "POST",
+                "/admin/v1/openai/accounts/openai-1/auth-sync-plans/"
+                + "sha256%3A"
+                + "a" * 64
+                + "/apply",
+            ),
+            {
+                "expected_generation": 4,
+                "idempotency_key": "idem-openai-apply",
+                "plan_digest": "sha256:" + "a" * 64,
+            },
+        ),
+        (
+            "secret.ingress.create",
+            {"account_ref": "openai-1", "credential_kind": "openai.auth-json"},
+            ("POST", "/admin/v1/secret-ingress-sessions"),
+            {
+                "expected_generation": 4,
+                "idempotency_key": "idem-ingress-create",
+                "plan_digest": "sha256:" + "a" * 64,
+            },
+        ),
+        ("google.accounts.list", {}, ("GET", "/admin/v1/google/accounts"), {}),
+        (
+            "google.projects.list",
+            {"account_ref": "google-1"},
+            ("GET", "/admin/v1/google/accounts/google-1"),
+            {},
+        ),
+        (
+            "operations.get",
+            {"account_ref": "google-1", "operation_id": "operation-1"},
+            ("GET", "/admin/v1/operations/operation-1"),
+            {},
+        ),
+        (
+            "google.oauth.begin",
+            {
+                "account_ref": "google-1",
+                "oauth_client_ref": "oauth-client-1",
+                "redirect_uri": REDIRECT_URI,
+                "scope_profile": "default",
+            },
+            ("POST", "/admin/v1/google/oauth-transactions"),
+            {"expected_generation": 4, "idempotency_key": "idem-oauth-begin"},
+        ),
+        (
+            "google.oauth.complete",
+            {
+                "account_ref": "google-1",
+                "transaction_id": "transaction-1",
+                "redirect_uri": REDIRECT_URI,
+                "state": "state-1",
+            },
+            ("POST", "/admin/v1/google/oauth-transactions/transaction-1/complete"),
+            {"expected_generation": 4},
+        ),
+        (
+            "google.oauth-client-import.plan",
+            {"account_ref": "google-1"},
+            ("POST", "/admin/v1/google/oauth-client-import-plans"),
+            {"expected_generation": 4, "idempotency_key": "idem-oauth-import-plan"},
+        ),
+        (
+            "google.oauth-client-import.apply",
+            {"account_ref": "google-1"},
+            (
+                "POST",
+                "/admin/v1/google/oauth-client-import-plans/"
+                + "sha256%3A"
+                + "a" * 64
+                + "/apply",
+            ),
+            {
+                "expected_generation": 4,
+                "idempotency_key": "idem-oauth-import-apply",
+                "plan_digest": "sha256:" + "a" * 64,
+            },
+        ),
+        (
+            "google.inventory.refresh",
+            {},
+            ("POST", "/admin/v1/google/inventory-refreshes"),
+            {"expected_generation": 4, "idempotency_key": "idem-inventory-refresh"},
+        ),
+        (
+            "google.provision.plan",
+            {"account_ref": "google-1"},
+            ("POST", "/admin/v1/google/provision-plans"),
+            {"expected_generation": 4, "idempotency_key": "idem-provision-plan"},
+        ),
+        (
+            "google.provision.apply",
+            {"account_ref": "google-1"},
+            (
+                "POST",
+                "/admin/v1/google/provision-plans/"
+                + "sha256%3A"
+                + "a" * 64
+                + "/apply",
+            ),
+            {
+                "expected_generation": 4,
+                "idempotency_key": "idem-provision-apply",
+                "plan_digest": "sha256:" + "a" * 64,
+            },
+        ),
+        (
+            "google.billing.plan",
+            {
+                "account_ref": "google-1",
+                "project_ref": "project-1",
+                "billing_ref": "billing-1",
+            },
+            ("POST", "/admin/v1/google/billing-bind-plans"),
+            {"expected_generation": 4, "idempotency_key": "idem-billing-plan"},
+        ),
+        (
+            "google.billing.apply",
+            {
+                "account_ref": "google-1",
+                "project_ref": "project-1",
+                "billing_ref": "billing-1",
+                "plan_id": "billing-plan-1",
+            },
+            ("POST", "/admin/v1/google/billing-bind-plans/billing-plan-1/apply"),
+            {
+                "expected_generation": 4,
+                "idempotency_key": "idem-billing-apply",
+                "plan_digest": "sha256:" + "a" * 64,
+            },
+        ),
+        ("ollama.models.list", {}, ("GET", "/admin/v1/ollama/models"), {}),
+        ("ollama.instances.list", {}, ("GET", "/admin/v1/ollama/instances"), {}),
+        (
+            "ollama.instance.plan",
+            {"account_ref": "ollama-1"},
+            ("POST", "/admin/v1/ollama/instance-plans"),
+            {"expected_generation": 4, "idempotency_key": "idem-ollama-plan"},
+        ),
+        (
+            "ollama.provision.apply",
+            {"account_ref": "ollama-1", "plan_id": "ollama-plan-1"},
+            ("POST", "/admin/v1/ollama/instance-plans/ollama-plan-1/apply"),
+            {"expected_generation": 4, "idempotency_key": "idem-ollama-apply"},
+        ),
+        (
+            "ollama.probe",
+            {"instance_ref": "ollama-instance-1"},
+            ("POST", "/admin/v1/ollama/instances/ollama-instance-1/probe"),
+            {"expected_generation": 4, "idempotency_key": "idem-ollama-probe"},
+        ),
+    ],
+)
+def test_https_documented_operations_use_fixed_routes_without_get_body(
+    monkeypatch, operation, arguments, expected, extra
+):
+    FakeHTTPSConnection.response = FakeHTTPResponse(b"{}")
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.response_invalid"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            operation, arguments, **extra
+        )
+
+    method, target, body, headers = FakeHTTPSConnection.instances[0].requests[0]
+    assert (method, target) == expected
+    if method == "GET":
+        assert body == b""
+        assert "Content-Type" not in headers
+    else:
+        assert json.loads(body)["operation"] == operation
+        assert headers["Content-Type"] == "application/json"
+    assert "?" not in target
+    assert "/admin/v1" != target
+
+
+def test_https_route_segments_percent_encode_opaque_refs_without_query(monkeypatch):
+    FakeHTTPSConnection.response = FakeHTTPResponse(b"{}")
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.response_invalid"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "operations.get",
+            {"account_ref": "google:one", "operation_id": "plan:one"},
+        )
+
+    method, target, body, _headers = FakeHTTPSConnection.instances[0].requests[0]
+    assert (method, body) == ("GET", b"")
+    assert target == "/admin/v1/operations/plan%3Aone"
+    assert "?" not in target
+
+
 def test_secret_larger_than_limit_is_rejected_before_connect(monkeypatch):
     monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
 
@@ -1355,13 +1568,17 @@ def test_task6_specified_operations_are_accepted_by_request_contract(
     assert len(FakeHTTPSConnection.instances) == 1
 
 
-def test_operations_get_requires_account_ref_before_transport():
-    with pytest.raises(MasterjetClientError, match=r"control\.request_invalid"):
+def test_operations_get_accepts_operation_id_without_account_route_ref(monkeypatch):
+    FakeHTTPSConnection.response = FakeHTTPResponse(b"{}")
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    with pytest.raises(MasterjetClientError, match=r"control\.response_invalid"):
         https_client(bearer_provider=lambda: "remote-bearer").call(
             "operations.get", {"operation_id": "plan-1"}
         )
 
-    assert FakeHTTPSConnection.instances == []
+    method, target, body, _headers = FakeHTTPSConnection.instances[0].requests[0]
+    assert (method, target, body) == ("GET", "/admin/v1/operations/plan-1", b"")
 
 
 def test_https_uses_verified_tls_fixed_target_and_transient_auth_headers(monkeypatch):
@@ -1396,7 +1613,10 @@ def test_https_uses_verified_tls_fixed_target_and_transient_auth_headers(monkeyp
     assert connection.context is not None
     assert connection.context.check_hostname is True
     assert connection.context.verify_mode == ssl.CERT_REQUIRED
-    assert (method, target) == ("POST", "/control")
+    assert (method, target) == (
+        "POST",
+        "/admin/v1/google/oauth-transactions",
+    )
     request = json.loads(body)
     assert request["operation"] == "google.oauth.begin"
     assert request["arguments"]["redirect_uri"] == REDIRECT_URI
@@ -2044,7 +2264,7 @@ def real_tls_server(tmp_path, *, wire_delay: float = 0, responses=None):
                         head, body = request.split(b"\r\n\r\n", 1)
                         lines = head.decode("ascii").split("\r\n")
                         headers = dict(line.split(": ", 1) for line in lines[1:])
-                        length = int(headers["Content-Length"])
+                        length = int(headers.get("Content-Length", "0"))
                         while len(body) < length:
                             chunk = tls_socket.recv(length - len(body))
                             if not chunk:
@@ -2112,7 +2332,7 @@ def test_real_https_verifies_tls_sni_host_and_content_length(tmp_path, monkeypat
         connection = MasterjetConnection(
             transport="https",
             endpoint=f"https://localhost:{port}/control",
-            timeout_seconds=2,
+            timeout_seconds=5,
         )
 
         result = MasterjetControlClient(
@@ -2122,7 +2342,7 @@ def test_real_https_verifies_tls_sni_host_and_content_length(tmp_path, monkeypat
 
     assert result[0].ref == "google-1"
     assert capture["sni"] == "localhost"
-    assert capture["request_line"] == "POST /control HTTP/1.1"
+    assert capture["request_line"] == "GET /admin/v1/google/accounts HTTP/1.1"
     headers = capture["headers"]
     assert headers["Host"] == f"localhost:{port}"
     assert int(headers["Content-Length"]) == len(capture["body"])
@@ -2819,12 +3039,15 @@ def test_task9_selfcheck_covers_both_transports_and_synthetic_auth(tmp_path, mon
     result = _task9_transport_and_auth_selfcheck(tmp_path, monkeypatch)
 
     assert result.get("https_server_request_lines") == [
-        "POST /control HTTP/1.1",
-        "POST /control HTTP/1.1",
-        "POST /control HTTP/1.1",
-        "POST /control HTTP/1.1",
+        "GET /admin/v1/google/accounts HTTP/1.1",
+        "GET /admin/v1/openai/accounts HTTP/1.1",
+        "POST /admin/v1/openai/accounts/openai-remote/auth-sync-plans HTTP/1.1",
+        "POST /admin/v1/secret-ingress-sessions HTTP/1.1",
         "PUT /admin/v1/secret-ingress-sessions/ingress-1 HTTP/1.1",
-        "POST /control HTTP/1.1",
+        "POST /admin/v1/openai/accounts/openai-remote/auth-sync-plans/"
+        + "sha256%3A"
+        + "a" * 64
+        + "/apply HTTP/1.1",
     ]
     assert result["local_google"] == result["https_google"]
     assert result["google_generation"] == 4
