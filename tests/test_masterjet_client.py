@@ -2072,6 +2072,8 @@ def real_tls_server(tmp_path, *, wire_delay: float = 0, responses=None):
                                 time.sleep(wire_delay)
                         else:
                             tls_socket.sendall(wire_response)
+                        tls_socket.shutdown(socket.SHUT_RDWR)
+                        tls_socket.close()
                 except (OSError, ssl.SSLError) as exc:
                     capture["tls_error"] = type(exc).__name__
         finally:

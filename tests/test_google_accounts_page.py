@@ -104,7 +104,15 @@ def _openai_payload():
 @contextmanager
 def _task9_unix_control_server(socket_path: Path, attestation_key_fd: int):
     with codex_master_test_source(require_tests=False):
-        from codex_master.admin_socket import _server_attestation
+        try:
+            from codex_master.admin_socket import _server_attestation
+        except ModuleNotFoundError as exc:
+            if exc.name != "codex_master.admin_socket":
+                raise
+            pytest.skip(
+                "codex-master admin_socket unavailable; set CODEX_MASTER_ROOT "
+                "to a compatible checkout"
+            )
 
     ready = threading.Event()
     stopped = threading.Event()
@@ -400,6 +408,8 @@ def _task9_https_control_server(
                             + b"Connection: close\r\n\r\n"
                             + response
                         )
+                        tls_socket.shutdown(socket.SHUT_RDWR)
+                        tls_socket.close()
         finally:
             listener.close()
             finished.set()
@@ -410,6 +420,13 @@ def _task9_https_control_server(
         yield port, certificate, requests
     finally:
         stopped.set()
+        wake = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            wake.connect(("127.0.0.1", port))
+        except OSError:
+            pass
+        finally:
+            wake.close()
         assert finished.wait(2)
         thread.join(timeout=0)
 
