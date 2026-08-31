@@ -23,7 +23,6 @@ from .config import MasterjetConnection
 from .masterjet_contracts import (
     ControlContractError,
     ControlProblem,
-    parse_operation_status,
     parse_control_operation,
     parse_control_problem,
     parse_google_account_add_receipt,
@@ -37,6 +36,7 @@ from .masterjet_contracts import (
     parse_google_projects,
     parse_google_provision_plan,
     parse_openai_accounts,
+    parse_operation_status,
     parse_secret_ingress_receipt,
     parse_secret_ingress_session,
     validate_google_oauth_redirect_uri,
@@ -855,26 +855,6 @@ def _decode_response(
             if type(arguments) is not dict or receipt.session_id != arguments.get("session_id"):
                 raise MasterjetClientError("control.response_invalid")
             return receipt
-        if (
-            operation == "operations.get"
-            and type(payload) is dict
-            and payload.get("kind") == "google.provision.plan"
-            and "projects" in payload
-        ):
-            plan = parse_google_provision_plan(payload)
-            expected_account_ref = (
-                arguments.get("account_ref") if type(arguments) is dict else None
-            )
-            if (
-                type(arguments) is not dict
-                or plan.id != arguments.get("operation_id")
-                or (
-                    expected_account_ref is not None
-                    and plan.account_ref != expected_account_ref
-                )
-            ):
-                raise MasterjetClientError("control.response_invalid")
-            return plan
         if operation == "operations.get":
             result = parse_operation_status(payload)
             if type(arguments) is not dict or result.operation.id != arguments.get(

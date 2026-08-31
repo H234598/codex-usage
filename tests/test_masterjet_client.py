@@ -40,11 +40,11 @@ from codex_usage.masterjet_client import (
     MasterjetClientError,
     MasterjetControlClient,
 )
+from codex_usage.masterjet_contracts import ControlOperationStatusV1
 from codex_usage.masterjet_credentials import (
     bearer_provider_from_fd,
     bearer_provider_from_systemd_credentials,
 )
-from codex_usage.masterjet_contracts import ControlOperationStatusV1
 from codex_usage.models import Account
 
 REDIRECT_URI = "http://127.0.0.1:8765/oauth/callback"
@@ -1674,7 +1674,9 @@ def test_operations_get_accepts_operation_id_without_account_route_ref(monkeypat
     assert (method, target, body) == ("GET", "/admin/v1/operations/plan-1", b"")
 
 
-def test_operations_get_without_account_ref_accepts_matching_provision_plan(monkeypatch):
+def test_operations_get_rejects_legacy_provision_plan_without_result_envelope(
+    monkeypatch,
+):
     payload = {
         "schema_version": 1,
         "id": "plan-1",
@@ -1696,12 +1698,11 @@ def test_operations_get_without_account_ref_accepts_matching_provision_plan(monk
     FakeHTTPSConnection.response = FakeHTTPResponse(json.dumps(payload).encode())
     monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
 
-    result = https_client(bearer_provider=lambda: "remote-bearer").call(
-        "operations.get", {"operation_id": "plan-1"}
-    )
+    with pytest.raises(MasterjetClientError, match=r"control\.response_invalid"):
+        https_client(bearer_provider=lambda: "remote-bearer").call(
+            "operations.get", {"operation_id": "plan-1"}
+        )
 
-    assert result.id == "plan-1"
-    assert result.account_ref == "google-1"
     method, target, body, _headers = FakeHTTPSConnection.instances[0].requests[0]
     assert (method, target, body) == ("GET", "/admin/v1/operations/plan-1", b"")
 

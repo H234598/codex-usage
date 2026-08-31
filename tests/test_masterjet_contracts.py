@@ -23,7 +23,6 @@ from codex_usage.masterjet_contracts import (
     SecretIngressReceipt,
     SecretIngressSession,
     parse_control_operation,
-    parse_operation_status,
     parse_control_problem,
     parse_google_account_add_receipt,
     parse_google_account_list,
@@ -35,6 +34,7 @@ from codex_usage.masterjet_contracts import (
     parse_google_oauth_transaction,
     parse_google_project,
     parse_openai_accounts,
+    parse_operation_status,
     parse_secret_ingress_receipt,
     parse_secret_ingress_session,
 )
@@ -178,7 +178,7 @@ def valid_operation() -> dict[str, object]:
     }
 
 
-def host_probe_result() -> dict[str, object]:
+def host_probe_result(**overrides: object) -> dict[str, object]:
     evidence = {
         "kernel_class": "linux",
         "architecture_class": "x86_64",
@@ -191,7 +191,7 @@ def host_probe_result() -> dict[str, object]:
         "ollama_capability": True,
         "observed_at": "2026-08-28T10:00:00Z",
         "agent_generation": 1,
-    }
+    } | overrides
     import hashlib
     import json
 
@@ -890,6 +890,27 @@ def test_operation_status_has_null_until_terminal_and_a_typed_host_probe_result(
 def test_operation_status_rejects_unknown_types_codes_and_private_fields(payload):
     with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
         parse_operation_status(payload)
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"observed_at": "2026-99-99T99:99:99Z"},
+        {"agent_generation": 0},
+    ],
+)
+def test_operation_status_rejects_noncanonical_host_probe_boundaries(override):
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_operation_status(
+            valid_operation()
+            | {
+                "kind": "hosts.probe",
+                "state": "succeeded",
+                "reason_codes": [],
+                "result_kind": "host.probe",
+                "result": host_probe_result(**override),
+            }
+        )
 
 
 def test_control_operation_accepts_complete_spec_v1_fixture():

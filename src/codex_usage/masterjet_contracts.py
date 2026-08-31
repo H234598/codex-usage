@@ -588,7 +588,11 @@ class HostProbeResultV1:
         if self.pressure_class not in {"none", "low", "elevated"}:
             _invalid("pressure_class")
         _timestamp_value(self.observed_at, "observed_at")
-        _generation(self.agent_generation, "agent_generation")
+        if (
+            type(self.agent_generation) is not int
+            or not 1 <= self.agent_generation <= _MAX_GENERATION
+        ):
+            _invalid("agent_generation")
         _plan_digest(self.evidence_digest)
 
 
