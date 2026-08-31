@@ -1247,6 +1247,57 @@ def test_06536_bytecode_validation_rejects_source_inode_swap_after_tree_scan(
     assert source_path.stat().st_ino != original_inode
 
 
+def test_06536_bytecode_validator_binds_pyc_to_held_original_source_fd(
+    tmp_path,
+):
+    from codex_usage import integration_attestation
+
+    package_path = tmp_path / "codex_usage"
+    package_path.mkdir(mode=0o700)
+    source_name = "integration_entrypoint.py"
+    canonical_source = package_path / source_name
+    canonical_source.write_bytes(b"VALUE = 'replacement'\n")
+    canonical_source.chmod(0o600)
+    held_source = tmp_path / "held-original.py"
+    held_source.write_bytes(b"VALUE = 'original'\n")
+    held_source.chmod(0o600)
+    cache_path = Path(importlib.util.cache_from_source(str(canonical_source)))
+    py_compile.compile(
+        str(canonical_source),
+        cfile=str(cache_path),
+        dfile=str(canonical_source),
+        doraise=True,
+        invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH,
+    )
+    cache_path.parent.chmod(0o755)
+    cache_path.chmod(0o600)
+    source_fd = os.open(held_source, os.O_RDONLY | os.O_NOFOLLOW)
+    cache_fd = os.open(
+        cache_path.parent,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+    )
+    try:
+        source_item = os.fstat(source_fd)
+        cache_item = os.fstat(cache_fd)
+
+        with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
+            integration_attestation._validate_expected_runtime_bytecode(
+                package_entries=((source_name, source_fd, source_item),),
+                cache_fd=cache_fd,
+                cache_item=cache_item,
+                python_directory=(
+                    f"python{sys.version_info.major}.{sys.version_info.minor}"
+                ),
+                package_path=package_path,
+            )
+
+        assert os.read(source_fd, source_item.st_size) == held_source.read_bytes()
+        assert canonical_source.read_bytes() != held_source.read_bytes()
+    finally:
+        os.close(cache_fd)
+        os.close(source_fd)
+
+
 def test_06536_cutover_retires_binding_v1_namespace_before_first_v2_publish(
     tmp_path,
 ):
