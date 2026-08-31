@@ -128,6 +128,17 @@ def test_positive_source_projection_and_decision_are_canonical_and_closed():
     ) == (2, 2, "0.6.537")
 
 
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    (
+        (datetime(2026, 8, 31, 11, 59, 59, 999999, tzinfo=UTC), False),
+        (datetime(2026, 8, 31, 12, 0, tzinfo=UTC), True),
+    ),
+)
+def test_authority_is_valid_only_at_or_after_issued_at(now, expected):
+    assert _evaluate(_projection_bytes(), now=now) is expected
+
+
 @pytest.mark.parametrize("quality", ("partial", "unknown", "error", "stale"))
 def test_mixed_account_quality_publishes_fresh_authority_and_closes_only_bad_account(
     quality,

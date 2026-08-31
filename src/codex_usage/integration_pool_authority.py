@@ -430,8 +430,10 @@ def evaluate_pool_authority(
             != _digest(expected_usage_binding_sha256)
         ):
             return False
+        _issued_text, issued = _timestamp(projection["issued_at"])
         _expires_text, expires = _timestamp(projection["expires_at"])
-        if now.astimezone(UTC) >= expires:
+        evaluated_at = now.astimezone(UTC)
+        if evaluated_at < issued or evaluated_at >= expires:
             return False
         matches = [
             item
