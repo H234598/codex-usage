@@ -325,8 +325,11 @@ zugeordnet sein. Flags und alle 16 Headerbytes müssen nach PEP 552 exakt zur
 no-follow gelesenen Quelle passen; der Marshal-Payload muss ihrer
 deterministischen Kompilierung entsprechen. Die PYC-Bytes werden nicht in den
 historischen Baumhash aufgenommen, weil dies dessen vorhandene Digestbindung
-brechen würde. Der Installer führt diese Dateien weder aus noch löscht oder
-übernimmt er sie; unbekannte Cache-Namen, Cacheorte und sonstige Zusätze
+brechen würde. Quelle und PYC werden ausschließlich über den bereits vom
+ursprünglichen Baumscan geöffneten, identitätsrevalidierten Source-FD gebunden;
+ein zweiter Paket-Namensscan ist unzulässig. Der Installer führt diese Dateien
+weder aus noch löscht oder übernimmt er sie; unbekannte Cache-Namen, Cacheorte
+und sonstige Zusätze
 bleiben fail-closed. Die `0.6.537`-Runtime- und Releasebaumprüfung besitzt
 diese einmalige Cutover-Ausnahme nicht. Unter denselben Release→Current-EX-Locks
 klassifiziert er den vorhandenen Evidencebestand ausschließlich für dessen

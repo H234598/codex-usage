@@ -126,6 +126,10 @@ def _before_release_namespace_recheck(_release_fd: int) -> None:
     return None
 
 
+def _before_expected_runtime_bytecode_validation(_package_path: Path) -> None:
+    return None
+
+
 def _unavailable() -> IntegrationAttestationUnavailable:
     return IntegrationAttestationUnavailable()
 
@@ -245,81 +249,64 @@ def _contained(path: Path, root: Path) -> None:
 
 def _validate_expected_runtime_bytecode(
     *,
-    package_fd: int,
+    package_entries: tuple[tuple[str, int, os.stat_result], ...],
     cache_fd: int,
     cache_item: os.stat_result,
     python_directory: str,
     package_path: Path,
 ) -> int:
+    _before_expected_runtime_bytecode_validation(package_path)
     cache_tag = "cpython-" + python_directory.removeprefix("python").replace(".", "")
     expected_sources: dict[str, tuple[bytes, os.stat_result, Path]] = {}
-    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    directory_flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     file_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
-    source_scan_fd = os.open(".", directory_flags, dir_fd=package_fd)
-    try:
-        with os.scandir(source_scan_fd) as entries:
-            for entry in entries:
-                item = entry.stat(follow_symlinks=False)
-                if (
-                    stat.S_ISREG(item.st_mode)
-                    and entry.name.endswith(".py")
-                    and item.st_uid == os.getuid()
-                    and item.st_nlink == 1
-                    and stat.S_IMODE(item.st_mode) == 0o600
-                ):
-                    source_fd = -1
-                    try:
-                        source_fd = os.open(
-                            entry.name,
-                            file_flags,
-                            dir_fd=source_scan_fd,
-                        )
-                        opened = os.fstat(source_fd)
-                        source_payload = bytearray()
-                        while len(source_payload) <= MAX_ATTESTATION_FILE_BYTES:
-                            chunk = os.read(
-                                source_fd,
-                                min(
-                                    65_536,
-                                    MAX_ATTESTATION_FILE_BYTES + 1 - len(source_payload),
-                                ),
-                            )
-                            if not chunk:
-                                break
-                            source_payload.extend(chunk)
-                        final = os.fstat(source_fd)
-                        if (
-                            opened.st_dev != item.st_dev
-                            or opened.st_ino != item.st_ino
-                            or opened.st_mode != item.st_mode
-                            or opened.st_uid != item.st_uid
-                            or opened.st_nlink != item.st_nlink
-                            or opened.st_size != item.st_size
-                            or opened.st_mtime_ns != item.st_mtime_ns
-                            or opened.st_ctime_ns != item.st_ctime_ns
-                            or final.st_dev != opened.st_dev
-                            or final.st_ino != opened.st_ino
-                            or final.st_mode != opened.st_mode
-                            or final.st_uid != opened.st_uid
-                            or final.st_nlink != opened.st_nlink
-                            or final.st_size != opened.st_size
-                            or final.st_mtime_ns != opened.st_mtime_ns
-                            or final.st_ctime_ns != opened.st_ctime_ns
-                            or len(source_payload) > MAX_ATTESTATION_FILE_BYTES
-                        ):
-                            raise _unavailable()
-                        expected_sources[f"{entry.name[:-3]}.{cache_tag}.pyc"] = (
-                            bytes(source_payload),
-                            opened,
-                            package_path / entry.name,
-                        )
-                    finally:
-                        if source_fd >= 0:
-                            os.close(source_fd)
-    finally:
-        os.close(source_scan_fd)
+    for name, source_fd, item in package_entries:
+        if not (stat.S_ISREG(item.st_mode) and name.endswith(".py")):
+            continue
+        opened = os.fstat(source_fd)
+        source_payload = bytearray()
+        os.lseek(source_fd, 0, os.SEEK_SET)
+        while len(source_payload) <= MAX_ATTESTATION_FILE_BYTES:
+            chunk = os.read(
+                source_fd,
+                min(
+                    65_536,
+                    MAX_ATTESTATION_FILE_BYTES + 1 - len(source_payload),
+                ),
+            )
+            if not chunk:
+                break
+            source_payload.extend(chunk)
+        final = os.fstat(source_fd)
+        os.lseek(source_fd, 0, os.SEEK_SET)
+        if (
+            item.st_uid != os.getuid()
+            or item.st_nlink != 1
+            or stat.S_IMODE(item.st_mode) != 0o600
+            or opened.st_dev != item.st_dev
+            or opened.st_ino != item.st_ino
+            or opened.st_mode != item.st_mode
+            or opened.st_uid != item.st_uid
+            or opened.st_nlink != item.st_nlink
+            or opened.st_size != item.st_size
+            or opened.st_mtime_ns != item.st_mtime_ns
+            or opened.st_ctime_ns != item.st_ctime_ns
+            or final.st_dev != opened.st_dev
+            or final.st_ino != opened.st_ino
+            or final.st_mode != opened.st_mode
+            or final.st_uid != opened.st_uid
+            or final.st_nlink != opened.st_nlink
+            or final.st_size != opened.st_size
+            or final.st_mtime_ns != opened.st_mtime_ns
+            or final.st_ctime_ns != opened.st_ctime_ns
+            or len(source_payload) > MAX_ATTESTATION_FILE_BYTES
+        ):
+            raise _unavailable()
+        expected_sources[f"{name[:-3]}.{cache_tag}.pyc"] = (
+            bytes(source_payload),
+            opened,
+            package_path / name,
+        )
     if (
         cache_item.st_uid != os.getuid()
         or stat.S_IMODE(cache_item.st_mode) & 0o022
@@ -466,6 +453,8 @@ def _release_tree_rows(
                 if stat.S_ISDIR(item.st_mode):
                     rows.append(f"D {relative}\0{mode:04o}\n".encode())
                     children: list[tuple[str, int, os.stat_result]] = []
+                    expected_cache_fd = -1
+                    expected_cache_item: os.stat_result | None = None
                     try:
                         with os.scandir(directory_fd) as entries:
                             for entry in entries:
@@ -522,21 +511,10 @@ def _release_tree_rows(
                                     ):
                                         raise _unavailable()
                                     if is_expected_cache:
-                                        entries_seen += _validate_expected_runtime_bytecode(
-                                            package_fd=directory_fd,
-                                            cache_fd=child_fd,
-                                            cache_item=opened_item,
-                                            python_directory=Path(
-                                                expected_runtime_bytecode_root
-                                            ).parts[2],
-                                            package_path=release_dir
-                                            / expected_runtime_bytecode_root.removeprefix(
-                                                "./"
-                                            ),
-                                        )
-                                        if entries_seen > MAX_RELEASE_TREE_ENTRIES:
+                                        if expected_cache_fd >= 0:
                                             raise _unavailable()
-                                        os.close(child_fd)
+                                        expected_cache_fd = child_fd
+                                        expected_cache_item = opened_item
                                         child_fd = -1
                                         continue
                                     children.append((name, child_fd, opened_item))
@@ -544,6 +522,35 @@ def _release_tree_rows(
                                 finally:
                                     if child_fd >= 0:
                                         os.close(child_fd)
+                        if expected_cache_fd >= 0:
+                            if expected_cache_item is None:
+                                raise _unavailable()
+                            entries_seen += _validate_expected_runtime_bytecode(
+                                package_entries=tuple(children),
+                                cache_fd=expected_cache_fd,
+                                cache_item=expected_cache_item,
+                                python_directory=Path(
+                                    expected_runtime_bytecode_root
+                                ).parts[2],
+                                package_path=release_dir
+                                / expected_runtime_bytecode_root.removeprefix("./"),
+                            )
+                            if entries_seen > MAX_RELEASE_TREE_ENTRIES:
+                                raise _unavailable()
+                            final_directory = os.fstat(directory_fd)
+                            if (
+                                final_directory.st_dev != item.st_dev
+                                or final_directory.st_ino != item.st_ino
+                                or final_directory.st_mode != item.st_mode
+                                or final_directory.st_uid != item.st_uid
+                                or final_directory.st_nlink != item.st_nlink
+                                or final_directory.st_size != item.st_size
+                                or final_directory.st_mtime_ns != item.st_mtime_ns
+                                or final_directory.st_ctime_ns != item.st_ctime_ns
+                            ):
+                                raise _unavailable()
+                            os.close(expected_cache_fd)
+                            expected_cache_fd = -1
                         children.sort(key=lambda child: child[0], reverse=True)
                         stack.extend(
                             (
@@ -555,6 +562,8 @@ def _release_tree_rows(
                         )
                         children.clear()
                     finally:
+                        if expected_cache_fd >= 0:
+                            os.close(expected_cache_fd)
                         for _, child_fd, _ in children:
                             os.close(child_fd)
                     continue

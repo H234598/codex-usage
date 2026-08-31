@@ -1160,6 +1160,93 @@ def test_install_cutover_rejects_unexpected_addition_beside_06536_runtime_byteco
     assert not (integration / "previous.json").exists()
 
 
+def test_06536_bytecode_validation_rejects_source_inode_swap_after_tree_scan(
+    tmp_path,
+    monkeypatch,
+):
+    from codex_usage import integration_attestation, integration_installer
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    source_root = _temporary_source_copy(tmp_path)
+    with pytest.MonkeyPatch.context() as context:
+        _patch_release_identity(context, "0.6.536")
+        previous = integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    cache_path = _write_runtime_bytecode(previous.release_dir)
+    source_path = cache_path.parent.parent / "integration_entrypoint.py"
+    staged = tmp_path / "staged-race"
+    staged.mkdir(mode=0o700)
+    malicious_source = staged / source_path.name
+    malicious_source.write_bytes(source_path.read_bytes() + b"\n# raced source\n")
+    malicious_source.chmod(0o600)
+    malicious_cache = staged / cache_path.name
+    py_compile.compile(
+        str(malicious_source),
+        cfile=str(malicious_cache),
+        dfile=str(source_path),
+        doraise=True,
+    )
+    malicious_cache.chmod(0o600)
+    held_original_source = staged / "held-original.py"
+    original_inode = source_path.stat().st_ino
+    raced = False
+    original_scandir = integration_attestation.os.scandir
+
+    class OrderedPackageScan:
+        def __init__(self, candidate):
+            self._candidate = candidate
+            self._scan = None
+
+        def __enter__(self):
+            self._scan = original_scandir(self._candidate)
+            entries = list(self._scan.__enter__())
+            try:
+                scanned_path = Path(os.readlink(f"/proc/self/fd/{self._candidate}"))
+            except (OSError, TypeError):
+                scanned_path = None
+            if scanned_path == source_path.parent:
+                entries.sort(key=lambda entry: entry.name == "__pycache__")
+            return iter(entries)
+
+        def __exit__(self, *args):
+            assert self._scan is not None
+            return self._scan.__exit__(*args)
+
+    monkeypatch.setattr(integration_attestation.os, "scandir", OrderedPackageScan)
+
+    def replace_source_and_bytecode(package_path):
+        nonlocal raced
+        assert package_path == source_path.parent
+        if raced:
+            return
+        raced = True
+        os.replace(source_path, held_original_source)
+        os.replace(malicious_source, source_path)
+        os.replace(malicious_cache, cache_path)
+
+    monkeypatch.setattr(
+        integration_attestation,
+        "_before_expected_runtime_bytecode_validation",
+        replace_source_and_bytecode,
+    )
+    with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
+        integration_attestation._release_tree_sha256(
+            release_dir=previous.release_dir,
+            expected_runtime_bytecode_root=(
+                "./venv/lib/"
+                f"{source_path.parents[2].name}/site-packages/codex_usage"
+            ),
+        )
+
+    assert raced
+    assert source_path.stat().st_ino != original_inode
+
+
 def test_06536_cutover_retires_binding_v1_namespace_before_first_v2_publish(
     tmp_path,
 ):
