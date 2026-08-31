@@ -4,6 +4,7 @@ import base64
 import binascii
 import csv
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -241,7 +242,122 @@ def _contained(path: Path, root: Path) -> None:
         raise _unavailable()
 
 
-def _release_tree_rows(*, release_dir: Path) -> list[bytes]:
+def _validate_expected_runtime_bytecode(
+    *,
+    package_fd: int,
+    cache_fd: int,
+    cache_item: os.stat_result,
+    python_directory: str,
+) -> int:
+    cache_tag = "cpython-" + python_directory.removeprefix("python").replace(".", "")
+    expected_names: set[str] = set()
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    source_scan_fd = os.open(".", directory_flags, dir_fd=package_fd)
+    try:
+        with os.scandir(source_scan_fd) as entries:
+            for entry in entries:
+                item = entry.stat(follow_symlinks=False)
+                if (
+                    stat.S_ISREG(item.st_mode)
+                    and entry.name.endswith(".py")
+                    and item.st_uid == os.getuid()
+                    and item.st_nlink == 1
+                    and stat.S_IMODE(item.st_mode) == 0o600
+                ):
+                    expected_names.add(f"{entry.name[:-3]}.{cache_tag}.pyc")
+    finally:
+        os.close(source_scan_fd)
+    if (
+        cache_item.st_uid != os.getuid()
+        or stat.S_IMODE(cache_item.st_mode) & 0o022
+    ):
+        raise _unavailable()
+    initial_cache = os.fstat(cache_fd)
+    if (
+        initial_cache.st_dev != cache_item.st_dev
+        or initial_cache.st_ino != cache_item.st_ino
+        or initial_cache.st_mode != cache_item.st_mode
+        or initial_cache.st_uid != cache_item.st_uid
+    ):
+        raise _unavailable()
+    count = 0
+    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    file_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    with os.scandir(cache_fd) as entries:
+        for entry in entries:
+            count += 1
+            if count > len(expected_names) or entry.name not in expected_names:
+                raise _unavailable()
+            initial = entry.stat(follow_symlinks=False)
+            if (
+                not stat.S_ISREG(initial.st_mode)
+                or initial.st_uid != os.getuid()
+                or initial.st_nlink != 1
+                or stat.S_IMODE(initial.st_mode) != 0o600
+                or initial.st_size < 16
+                or initial.st_size > MAX_ATTESTATION_FILE_BYTES
+            ):
+                raise _unavailable()
+            fd = -1
+            try:
+                fd = os.open(entry.name, file_flags, dir_fd=cache_fd)
+                opened = os.fstat(fd)
+                payload = bytearray()
+                while len(payload) <= MAX_ATTESTATION_FILE_BYTES:
+                    chunk = os.read(
+                        fd,
+                        min(
+                            65_536,
+                            MAX_ATTESTATION_FILE_BYTES + 1 - len(payload),
+                        ),
+                    )
+                    if not chunk:
+                        break
+                    payload.extend(chunk)
+                final = os.fstat(fd)
+                if (
+                    opened.st_dev != initial.st_dev
+                    or opened.st_ino != initial.st_ino
+                    or opened.st_mode != initial.st_mode
+                    or opened.st_uid != initial.st_uid
+                    or opened.st_nlink != initial.st_nlink
+                    or opened.st_size != initial.st_size
+                    or opened.st_mtime_ns != initial.st_mtime_ns
+                    or opened.st_ctime_ns != initial.st_ctime_ns
+                    or final.st_dev != opened.st_dev
+                    or final.st_ino != opened.st_ino
+                    or final.st_mode != opened.st_mode
+                    or final.st_uid != opened.st_uid
+                    or final.st_nlink != opened.st_nlink
+                    or final.st_size != opened.st_size
+                    or final.st_mtime_ns != opened.st_mtime_ns
+                    or final.st_ctime_ns != opened.st_ctime_ns
+                    or len(payload) > MAX_ATTESTATION_FILE_BYTES
+                    or not payload.startswith(importlib.util.MAGIC_NUMBER)
+                ):
+                    raise _unavailable()
+            finally:
+                if fd >= 0:
+                    os.close(fd)
+    final_cache = os.fstat(cache_fd)
+    if (
+        final_cache.st_dev != initial_cache.st_dev
+        or final_cache.st_ino != initial_cache.st_ino
+        or final_cache.st_mode != initial_cache.st_mode
+        or final_cache.st_uid != initial_cache.st_uid
+        or final_cache.st_mtime_ns != initial_cache.st_mtime_ns
+        or final_cache.st_ctime_ns != initial_cache.st_ctime_ns
+    ):
+        raise _unavailable()
+    return count
+
+
+def _release_tree_rows(
+    *,
+    release_dir: Path,
+    expected_runtime_bytecode_root: str | None = None,
+) -> list[bytes]:
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     directory_flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
@@ -284,6 +400,12 @@ def _release_tree_rows(*, release_dir: Path) -> list[bytes]:
                                 entries_seen += 1
                                 name = entry.name
                                 child_item = entry.stat(follow_symlinks=False)
+                                is_expected_cache = (
+                                    expected_runtime_bytecode_root is not None
+                                    and relative == expected_runtime_bytecode_root
+                                    and stat.S_ISDIR(child_item.st_mode)
+                                    and name == "__pycache__"
+                                )
                                 if (
                                     not name
                                     or name in {".", ".."}
@@ -291,6 +413,7 @@ def _release_tree_rows(*, release_dir: Path) -> list[bytes]:
                                     or (
                                         stat.S_ISDIR(child_item.st_mode)
                                         and name == "__pycache__"
+                                        and not is_expected_cache
                                     )
                                     or (
                                         stat.S_ISREG(child_item.st_mode)
@@ -324,6 +447,20 @@ def _release_tree_rows(*, release_dir: Path) -> list[bytes]:
                                         or opened_item.st_uid != os.getuid()
                                     ):
                                         raise _unavailable()
+                                    if is_expected_cache:
+                                        entries_seen += _validate_expected_runtime_bytecode(
+                                            package_fd=directory_fd,
+                                            cache_fd=child_fd,
+                                            cache_item=opened_item,
+                                            python_directory=Path(
+                                                expected_runtime_bytecode_root
+                                            ).parts[2],
+                                        )
+                                        if entries_seen > MAX_RELEASE_TREE_ENTRIES:
+                                            raise _unavailable()
+                                        os.close(child_fd)
+                                        child_fd = -1
+                                        continue
                                     children.append((name, child_fd, opened_item))
                                     child_fd = -1
                                 finally:
@@ -799,9 +936,20 @@ def _read_nofollow_bytes(
             os.close(parent_fd)
 
 
-def _release_tree_sha256(*, release_dir: Path) -> str:
+def _release_tree_sha256(
+    *,
+    release_dir: Path,
+    expected_runtime_bytecode_root: str | None = None,
+) -> str:
     try:
-        rows = _release_tree_rows(release_dir=release_dir)
+        rows = (
+            _release_tree_rows(release_dir=release_dir)
+            if expected_runtime_bytecode_root is None
+            else _release_tree_rows(
+                release_dir=release_dir,
+                expected_runtime_bytecode_root=expected_runtime_bytecode_root,
+            )
+        )
         return hashlib.sha256(b"".join(rows)).hexdigest()
     except IntegrationAttestationUnavailable:
         raise
@@ -951,6 +1099,7 @@ def _verify_manifest_contract(
     expected_dist_info_prefix: str,
     expected_fields: frozenset[str],
     require_bytecode_environment: bool = True,
+    allow_expected_runtime_bytecode: bool = False,
     manifest_payload: bytes | None = None,
 ) -> ActiveRelease:
     manifest = _require_manifest_fields(
@@ -1069,7 +1218,18 @@ def _verify_manifest_contract(
         or f"Name: {_EXPECTED_DISTRIBUTION}\n" not in metadata
     ):
         raise _unavailable()
-    if _release_tree_sha256(release_dir=release_dir) != tree_hash:
+    expected_runtime_bytecode_root = (
+        f"./venv/lib/{python_directory}/site-packages/codex_usage"
+        if allow_expected_runtime_bytecode
+        else None
+    )
+    if (
+        _release_tree_sha256(
+            release_dir=release_dir,
+            expected_runtime_bytecode_root=expected_runtime_bytecode_root,
+        )
+        != tree_hash
+    ):
         raise _unavailable()
     return ActiveRelease(
         version=expected_version,
@@ -1122,6 +1282,7 @@ def _verify_previous_schema2_manifest_for_upgrade(
         expected_dist_info_prefix=_PREVIOUS_SCHEMA2_DIST_INFO_PREFIX,
         expected_fields=_PREVIOUS_SCHEMA2_MANIFEST_FIELDS,
         require_bytecode_environment=False,
+        allow_expected_runtime_bytecode=True,
         manifest_payload=manifest_payload,
     )
 

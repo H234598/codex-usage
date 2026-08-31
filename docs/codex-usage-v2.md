@@ -316,7 +316,15 @@ Races, zusätzliche oder fehlende Einträge schlagen fehl.
 Runtimeattestierung und Rollback akzeptieren nur `0.6.537`/Schema 2.
 Ausschließlich der Installer darf beim atomaren Cutover vollständig
 hash-/RECORD-/Baum-attestierte `0.6.536`/Schema-2-Generationen als exakt
-enumerierte Upgradequelle lesen. Unter denselben Release→Current-EX-Locks
+enumerierte Upgradequelle lesen. Bei dieser Vorgängerprüfung wird allein ein
+producer-eigenes `codex_usage/__pycache__` außerhalb des attestierten
+Baumhashs zugelassen: jedes enthaltene Bytecodefile muss privat, regulär,
+einfach verlinkt, größenbegrenzt, zur laufenden CPython-Version passend und
+über seinen exakten Namen einer vorhandenen attestierten `.py`-Quelldatei
+zugeordnet sein. Der Installer führt diese Dateien weder aus noch löscht oder
+übernimmt er sie; unbekannte Cache-Namen, Cacheorte und sonstige Zusätze
+bleiben fail-closed. Die `0.6.537`-Runtime- und Releasebaumprüfung besitzt
+diese einmalige Cutover-Ausnahme nicht. Unter denselben Release→Current-EX-Locks
 klassifiziert er den vorhandenen Evidencebestand ausschließlich für dessen
 Pensionierung: kanonischer Pointer-Schema-1-Record, exakt gebundene
 Binding-Schema-1-/Usage-Zwei-Dateien-Generationen, private Metadaten sowie

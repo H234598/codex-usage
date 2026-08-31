@@ -10,6 +10,7 @@ import marshal
 import math
 import multiprocessing
 import os
+import py_compile
 import shutil
 import stat
 import struct
@@ -1012,6 +1013,107 @@ def test_runtime_rejects_compromised_06535_but_installer_upgrades_verified_06536
     assert install_verified_06536_source(tmp_path / "verified-06536").version == "0.6.537"
     with pytest.raises(IntegrationAttestationUnavailable):
         verify_compromised_06535_runtime(tmp_path / "compromised-06535")
+
+
+def _write_runtime_bytecode(release_dir: Path) -> Path:
+    source = next(
+        release_dir.glob(
+            "venv/lib/python*/site-packages/codex_usage/integration_entrypoint.py"
+        )
+    )
+    cache_path = Path(importlib.util.cache_from_source(str(source)))
+    py_compile.compile(str(source), cfile=str(cache_path), doraise=True)
+    cache_path.parent.chmod(0o755)
+    cache_path.chmod(0o600)
+    return cache_path
+
+
+def test_install_cutover_accepts_expected_runtime_bytecode_in_06536_release(
+    tmp_path,
+):
+    from codex_usage import integration_attestation, integration_installer
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    source_root = _temporary_source_copy(tmp_path)
+    with pytest.MonkeyPatch.context() as context:
+        _patch_release_identity(context, "0.6.536")
+        previous = integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    cache_path = _write_runtime_bytecode(previous.release_dir)
+
+    installed = integration_installer.install_release(
+        source_root=source_root,
+        state_home=state_home,
+        data_home=data_home,
+        python_executable=Path(sys.executable),
+        temporary_root=temporary_root,
+    )
+
+    assert installed.version == "0.6.537"
+    assert cache_path.is_file()
+    current_cache = _write_runtime_bytecode(installed.release_dir)
+    with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
+        integration_attestation.verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=installed.entrypoint_path,
+        )
+    assert current_cache.is_file()
+
+
+@pytest.mark.parametrize(
+    "addition",
+    ("unknown-cache-name", "foreign-release-file", "attested-source-tampering"),
+)
+def test_install_cutover_rejects_unexpected_addition_beside_06536_runtime_bytecode(
+    tmp_path,
+    addition,
+):
+    from codex_usage import integration_installer
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    source_root = _temporary_source_copy(tmp_path)
+    with pytest.MonkeyPatch.context() as context:
+        _patch_release_identity(context, "0.6.536")
+        previous = integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    cache_path = _write_runtime_bytecode(previous.release_dir)
+    if addition == "unknown-cache-name":
+        unexpected = cache_path.with_name("foreign.cpython-999.pyc")
+        unexpected.write_bytes(cache_path.read_bytes())
+    elif addition == "foreign-release-file":
+        unexpected = previous.release_dir / "foreign-runtime-artifact"
+        unexpected.write_bytes(b"foreign")
+    else:
+        unexpected = cache_path.parent.parent / "integration_entrypoint.py"
+        unexpected.write_bytes(unexpected.read_bytes() + b"\n")
+    unexpected.chmod(0o600)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    active_before = active_path.read_bytes()
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+
+    assert active_path.read_bytes() == active_before
+    assert unexpected.is_file()
+    assert not (integration / "previous.json").exists()
 
 
 def test_06536_cutover_retires_binding_v1_namespace_before_first_v2_publish(
