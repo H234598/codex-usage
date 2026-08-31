@@ -1077,6 +1077,45 @@ def test_06536_cutover_retires_binding_v1_namespace_before_first_v2_publish(
     }
 
 
+def test_06536_cutover_open_failure_before_mutation_preserves_original_error(
+    tmp_path,
+    monkeypatch,
+):
+    from codex_usage import integration_installer
+
+    (
+        _previous,
+        _source_root,
+        _data_home,
+        state_home,
+        _temporary_root,
+        _pointer_bytes,
+        _binding_bytes,
+    ) = _verified_06536_with_legacy_evidence(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    integration_identity = integration_installer._directory_identity(integration)
+    active_payload = (integration / "active.json").read_bytes()
+    tree_before = _foreign_tree_digest(root=integration)
+    original_error = integration_installer.IntegrationInstallError()
+
+    def fail_open(*_args, **_kwargs):
+        raise original_error
+
+    def reject_invalid_fsync(_fd):
+        pytest.fail("pre-mutation failure attempted recovery fsync")
+
+    monkeypatch.setattr(integration_installer, "_open_bound_parent_fd", fail_open)
+    monkeypatch.setattr(integration_installer.os, "fsync", reject_invalid_fsync)
+    with pytest.raises(integration_installer.IntegrationInstallError) as error:
+        integration_installer._begin_legacy_evidence_v1_cutover(
+            integration=integration,
+            integration_identity=integration_identity,
+            active_payload=active_payload,
+        )
+    assert error.value is original_error
+    assert _foreign_tree_digest(root=integration) == tree_before
+
+
 def test_06536_cutover_restores_binding_v1_namespace_if_active_swap_fails(
     tmp_path,
     monkeypatch,
@@ -1094,6 +1133,7 @@ def test_06536_cutover_restores_binding_v1_namespace_if_active_swap_fails(
     ) = _verified_06536_with_legacy_evidence(tmp_path)
     integration = state_home / "codex-usage" / "integration"
     active_before = (integration / "active.json").read_bytes()
+    generations_before = _foreign_tree_digest(root=integration / "generations")
 
     def fail_active_swap(**_kwargs):
         raise integration_installer.IntegrationInstallError()
@@ -1124,6 +1164,10 @@ def test_06536_cutover_restores_binding_v1_namespace_if_active_swap_fails(
         for entry in integration.iterdir()
         if entry.name.startswith(".evidence-v1-cutover-")
     ]
+    assert (
+        _foreign_tree_digest(root=integration / "generations")
+        == generations_before
+    )
 
 
 def test_06536_cutover_rejects_noncanonical_binding_v1_without_reset(tmp_path):

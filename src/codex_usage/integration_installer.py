@@ -1216,6 +1216,12 @@ def _begin_legacy_evidence_v1_cutover(
             fresh_generations_identity=fresh_generations_identity,
         )
     except Exception as cutover_error:
+        if not (
+            current_renamed
+            or generations_renamed
+            or fresh_generations_identity is not None
+        ):
+            raise
         recovery_ok = True
         try:
             if fresh_generations_identity is not None:
