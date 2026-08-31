@@ -96,6 +96,7 @@ from .masterjet_credentials import (
     unavailable_step_up_provider,
 )
 from .models import AccountStatus, AccountUsage
+from .ollama_fleet import OllamaFleetConsumer, OllamaFleetMutationBlocked
 from .private_io import (
     assert_no_symlink_ancestors,
     read_private_text,
@@ -516,6 +517,38 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     masterjet_openai.add_argument("--json", action="store_true")
     masterjet_openai.set_defaults(func=_cmd_masterjet_openai_accounts)
+    ollama = masterjet_sub.add_parser(
+        "ollama", help="Asynchrone Ollama-Flottenoperation ausführen"
+    )
+    ollama_sub = ollama.add_subparsers(dest="ollama_command", required=True)
+    ollama_plan = ollama_sub.add_parser("plan", help="Ollama-Instanz planen")
+    ollama_plan.add_argument("--ref", required=True)
+    ollama_plan.add_argument("--label", required=True)
+    ollama_plan.add_argument("--host-ref", required=True)
+    ollama_plan.add_argument("--ollama-executable", required=True)
+    ollama_plan.add_argument("--models-directory", required=True)
+    ollama_plan.add_argument("--selected-model-ref", action="append", required=True)
+    ollama_plan.add_argument("--allowed-cpus", required=True)
+    ollama_plan.add_argument("--cpu-quota-percent", type=int, required=True)
+    ollama_plan.add_argument("--cpu-weight", type=int, required=True)
+    ollama_plan.add_argument("--expected-generation", type=int, required=True)
+    ollama_plan.add_argument("--idempotency-key", required=True)
+    ollama_plan.set_defaults(func=_cmd_masterjet_ollama, action="plan")
+    ollama_poll = ollama_sub.add_parser("poll", help="Eine Ollama-Operation pollen")
+    _add_ollama_resume_arguments(ollama_poll)
+    ollama_poll.set_defaults(func=_cmd_masterjet_ollama, action="poll")
+    for action, help_text in (
+        ("apply", "Terminalen Ollama-Plan anwenden"),
+        ("probe", "Eine Ollama-Instanz prüfen"),
+        ("stop", "Eine Ollama-Instanz stoppen"),
+    ):
+        command = ollama_sub.add_parser(action, help=help_text)
+        _add_ollama_resume_arguments(command)
+        command.add_argument("--expected-generation", type=int, required=True)
+        command.add_argument("--idempotency-key", required=True)
+        if action in {"probe", "stop"}:
+            command.add_argument("--instance-ref", required=True)
+        command.set_defaults(func=_cmd_masterjet_ollama, action=action)
     connection_show = masterjet_sub.add_parser(
         "connection-show", help="Kanonische Verbindung anzeigen"
     )
@@ -1601,6 +1634,77 @@ def _new_google_controller_for_args(args: argparse.Namespace) -> GoogleAccountsC
     if bool(getattr(args, "step_up_stdin", False)):
         return _new_google_controller(args.config, step_up_stdin=True)
     return _new_google_controller(args.config)
+
+
+def _add_ollama_resume_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the bounded applet render projection needed for one fresh CLI call."""
+
+    parser.add_argument("--operation-id", required=True)
+    parser.add_argument("--plan-id", required=True)
+    parser.add_argument("--plan-digest", required=True)
+
+
+def _cmd_masterjet_ollama(args: argparse.Namespace) -> int:
+    """Use the canonical fleet consumer from the applet's Masterjet entry."""
+
+    try:
+        config = load_config(args.config)
+        consumer = OllamaFleetConsumer(
+            _new_masterjet_client(
+                config.masterjet,
+                step_up_stdin=bool(getattr(args, "step_up_stdin", False)),
+            )
+        )
+        if args.action == "plan":
+            consumer.plan(
+                {
+                    "ref": args.ref,
+                    "label": args.label,
+                    "host_ref": args.host_ref,
+                    "ollama_executable": args.ollama_executable,
+                    "models_directory": args.models_directory,
+                    "selected_model_refs": list(args.selected_model_ref),
+                    "allowed_cpus": args.allowed_cpus,
+                    "cpu_quota_percent": args.cpu_quota_percent,
+                    "cpu_weight": args.cpu_weight,
+                },
+                expected_generation=args.expected_generation,
+                idempotency_key=args.idempotency_key,
+            )
+        else:
+            consumer.resume_remote_operation(
+                args.operation_id,
+                plan_id=args.plan_id,
+                plan_digest=args.plan_digest,
+            )
+            consumer.poll()
+            if args.action == "apply":
+                consumer.apply(
+                    expected_generation=args.expected_generation,
+                    idempotency_key=args.idempotency_key,
+                )
+            elif args.action == "probe":
+                consumer.probe(
+                    args.instance_ref,
+                    expected_generation=args.expected_generation,
+                    idempotency_key=args.idempotency_key,
+                )
+            elif args.action == "stop":
+                consumer.stop(
+                    args.instance_ref,
+                    expected_generation=args.expected_generation,
+                    idempotency_key=args.idempotency_key,
+                )
+            elif args.action != "poll":
+                raise OllamaFleetMutationBlocked("control.response_invalid")
+        print(json.dumps(consumer.render(), ensure_ascii=False, allow_nan=False))
+        return 0
+    except (OllamaFleetMutationBlocked, MasterjetClientError) as error:
+        print(json.dumps({"ok": False, "code": error.code}, ensure_ascii=False))
+        return 2
+    except Exception:
+        print(json.dumps({"ok": False, "code": "control.transport_unavailable"}))
+        return 2
 
 
 def _new_google_oauth_controller(

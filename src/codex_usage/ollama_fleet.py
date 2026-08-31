@@ -64,6 +64,35 @@ class OllamaFleetConsumer:
     def view(self) -> OllamaFleetViewV1 | None:
         return self._view
 
+    def resume_remote_operation(
+        self,
+        operation_id: str,
+        *,
+        plan_id: str,
+        plan_digest: str,
+    ) -> OllamaFleetViewV1:
+        """Restore one applet-rendered remote operation for a fresh CLI call.
+
+        The applet owns only this bounded render projection.  It is never an
+        offline queue: the first operation on a resumed view is always the
+        canonical ``operations.get`` poll.
+        """
+
+        if not all(
+            type(value) is str and value
+            for value in (operation_id, plan_id, plan_digest)
+        ):
+            raise OllamaFleetMutationBlocked("control.response_invalid")
+        self._view = OllamaFleetViewV1(
+            operation_id,
+            plan_id,
+            plan_digest,
+            "queued",
+            False,
+            True,
+        )
+        return self._view
+
     def plan(
         self,
         arguments: Mapping[str, object],
