@@ -241,7 +241,9 @@ Projektion werden erst nach Endlichkeits- und Bereichsprüfung veröffentlicht.
   und erneut vor dem Publish geprüft. Ein einzelnes `insufficient`-Sample
   behält seine eigene Semantik unabhängig vom Alter. Der aktuelle Producer
   erzeugt `partial` für automatische Trends nicht. Automatische
-  Consumeraktionen sind ausschließlich bei `complete` zulässig.
+  verbrauchs-/trendbasierte Consumeraktionen sind ausschließlich bei
+  `complete` zulässig. Accountlokale PoolAuthority folgt zusätzlich der unten
+  beschriebenen restriktiven Projektion.
 - `captured_at` stammt aus `values_captured_at`, sofern vorhanden, sonst aus
   dem echten Usage-Capture. `fresh_until = captured_at + 900 Sekunden`.
   `stale` ist wahr, wenn die Quelle stale meldet oder `generated_at` nach
@@ -313,12 +315,31 @@ Races, zusätzliche oder fehlende Einträge schlagen fehl.
 Runtimeattestierung und Rollback akzeptieren nur `0.6.537`/Schema 2.
 Ausschließlich der Installer darf beim atomaren Cutover vollständig
 hash-/RECORD-/Baum-attestierte `0.6.536`/Schema-2-Generationen als exakt
-enumerierte Upgradequelle lesen. Ältere Generationen
-werden als `previous.json` erhalten, sind aber weder runtime-verifizierbar noch
-durch Rollback reaktivierbar. Es gibt keinen generischen Altversionsfallback.
-Fehler vor dem finalen atomaren Swap lassen `active.json` bytegenau
-unverändert. Ein ungültiges oder nicht exakt als `0.6.536` attestierbares
-Active wird nicht aus `previous.json`, Cache oder anderen Altpfaden repariert.
+enumerierte Upgradequelle lesen. Unter denselben Release→Current-EX-Locks
+klassifiziert er den vorhandenen Evidencebestand ausschließlich für dessen
+Pensionierung: kanonischer Pointer-Schema-1-Record, exakt gebundene
+Binding-Schema-1-/Usage-Zwei-Dateien-Generationen, private Metadaten sowie
+Manifest-, Release-, Source-, Payload- und Binding-Digests müssen zum
+attestierten `0.6.536`-Active passen. Erst danach werden `current.json` und der
+gesamte alte `generations/`-Baum in eine gebundene Cutover-Transaktionslage
+verschoben und durch einen leeren privaten `generations/`-Baum ersetzt.
+
+Der anschließende atomare Active-Swap ist der Cutover-Commitpunkt. Jeder
+normale Fehler davor oder währenddessen stellt Active, Current und den alten
+Generationsbaum byte- beziehungsweise inodegebunden wieder her. Nach Erfolg
+werden die pensionierten Artefakte entfernt; `current.json` bleibt bis zum
+ersten dreiteiligen `0.6.537`-Publish absichtlich abwesend. Ein Hard-Crashrest
+mit dem reservierten Präfix `.evidence-v1-cutover-` stoppt jeden weiteren
+Installerlauf fail-closed. Dieser einmalige destruktive Installerpfad ist kein
+Runtime-Reader-Compatpfad: Reader und Publisher akzeptieren weiterhin
+ausschließlich Binding-Schema 2 und dreiteilige Generationen.
+
+Ältere Releases werden als `previous.json` erhalten, sind aber weder
+runtime-verifizierbar noch durch Rollback reaktivierbar. Es gibt keinen
+generischen Altversionsfallback. Ein ungültiges oder nicht exakt als
+`0.6.536` attestierbares Active oder ein abweichender Binding-V1-Bestand wird
+nicht aus `previous.json`, Cache oder anderen Altpfaden repariert oder
+gelöscht.
 
 ## V2-Evidence-Consumervertrag
 
@@ -408,6 +429,11 @@ streng an das neue `VerifiedActiveManifest` gebunden. Rollback darf eine unter
 Release A erzeugte Previous-Generation unter aktivem Release B nicht
 promotieren.
 
+Diese Retentionregel gilt für dreiteilige Binding-Schema-2-Generationen nach
+dem Cutover. Der einmalige, oben beschriebene `0.6.536`→`0.6.537`-Übergang
+pensioniert den Zwei-Dateien-/Binding-Schema-1-Bestand vollständig, damit er
+die geschlossene V2-Namespaceprüfung nicht blockieren kann.
+
 Jede fehlende, zusätzliche, nichtkanonische oder abweichende Bindung ist
 `invalid`, niemals Fallback.
 
@@ -426,16 +452,32 @@ Kontostand, Trends, Label noch Accountname in Eligibility übersetzt. Secrets,
 Credentials, freie Erweiterungsfelder und Provider-/Pool-Mappings sind nicht
 zulässig. Die Quelldatei selbst wird nie in den Generationordner kopiert.
 
+Die Source-Accountmenge und die Usage-Accountmenge bleiben immer exakt gleich
+und damit gemeinsam digestgebunden. Ein Account mit `status != ok`,
+`stale=true`, abgelaufener Freshness oder widersprüchlicher Zeitbeziehung
+verhindert jedoch nicht den Publish frischer anderer Accounts. Für jeden
+betroffenen Account übernimmt der Producer keine positive Usage-Ableitung,
+sondern klemmt ausschließlich restriktiv `hive_available`,
+`persistent_leadership_eligible` und `long_running_leadership_eligible` auf
+`false`. Seine Einträge bleiben zur Accountmengenbindung vorhanden, aber jede
+Authority-Auswertung schlägt fail-closed fehl. Nur frische `ok`-Accounts
+begrenzen `expires_at`; ohne einen solchen Account existiert eine frische,
+vollständig geschlossene Projektion ohne positive Authority.
+
 Consumer lesen keine Einzelfile und implementieren keine zweite Kette. Der
 Producer-API-Einstieg `read_current_generation_bundle(...)` liefert Usage,
 PoolAuthority und Binding nur aus demselben vollständig validierten
-Generationbundle plus Status. Zulässig für Leitung ist ausschließlich
-`status == "complete"`; `busy`, `unavailable`, `invalid`, `stale`, `partial`
-und jeder unbekannte Status verweigern Authority. Anschließend prüft
-`evaluate_pool_authority(...)` exakt Account, Pool, Provider, Modellfamilie,
-Reasoning-Grenzen, Lifecycle, Hive-Verfügbarkeit, beide Leitungseignungen,
-Release, Generation, beide Usage-Digests und Ablaufzeit. Es gibt keinen V1-,
-Compat-, Cache-, Mapping- oder Fallbackpfad.
+Generationbundle plus aggregiertem Usage-Status. `busy`, `unavailable`,
+`invalid` oder jeder unbekannte Transportstatus liefern kein auswertbares
+Bundle. `stale` oder `partial` können dagegen von einem anderen Account
+stammen und sperren deshalb nicht pauschal einen frischen Account. Der
+Consumer prüft die angeforderte Identität ausschließlich über
+`evaluate_pool_authority(...)`; diese Funktion prüft exakt Account, Pool,
+Provider, Modellfamilie, Reasoning-Grenzen, Lifecycle, Hive-Verfügbarkeit,
+beide Leitungseignungen, Release, Generation, beide Usage-Digests und
+Ablaufzeit. Der oben geschlossene Eintrag garantiert dabei für jeden
+betroffenen stale/partial/unknown/nicht-`ok`-Account `false`. Es gibt keinen
+V1-, Compat-, Cache-, Mapping- oder Fallbackpfad.
 
 Die repo-eigenen, ausschließlich synthetischen Vertragsartefakte liegen unter
 `tests/fixtures/pool_authority_v2/`: kanonische Source-, Usage- und positive

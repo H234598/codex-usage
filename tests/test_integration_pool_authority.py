@@ -69,6 +69,24 @@ def _evaluate(payload: bytes, request=None, **overrides) -> bool:
     return evaluate_pool_authority(payload, request or _request(), **values)
 
 
+def _mixed_source_and_usage(quality: str):
+    source = json.loads(_source_bytes())
+    second_authority = dict(source["authorities"][0])
+    second_authority["account_id"] = "synthetic-beta"
+    source["authorities"].append(second_authority)
+    usage = _usage_document()
+    second_account = json.loads(json.dumps(usage["accounts"][0]))
+    second_account["account_id"] = "synthetic-beta"
+    if quality in {"partial", "unknown", "error"}:
+        second_account["status"] = quality
+    elif quality == "stale":
+        second_account["freshness"]["stale"] = True
+    else:  # pragma: no cover - closed test helper input
+        raise AssertionError(quality)
+    usage["accounts"].append(second_account)
+    return source, usage
+
+
 def test_negative_vector_artifact_is_versioned_and_has_unique_case_ids():
     artifact = json.loads(
         (FIXTURES / "negative-vectors-v2.json").read_text(encoding="utf-8")
@@ -110,6 +128,39 @@ def test_positive_source_projection_and_decision_are_canonical_and_closed():
     ) == (2, 2, "0.6.537")
 
 
+@pytest.mark.parametrize("quality", ("partial", "unknown", "error", "stale"))
+def test_mixed_account_quality_publishes_fresh_authority_and_closes_only_bad_account(
+    quality,
+):
+    from codex_usage.integration_pool_authority import (
+        build_pool_authority_projection,
+        serialize_pool_authority_projection,
+    )
+
+    source, usage = _mixed_source_and_usage(quality)
+    projection = build_pool_authority_projection(
+        source=source,
+        usage_document=usage,
+        generation_id=GENERATION_ID,
+        release_id=RELEASE_ID,
+        usage_payload_sha256=PAYLOAD_DIGEST,
+        usage_binding_sha256=BINDING_DIGEST,
+    )
+    payload = serialize_pool_authority_projection(projection)
+    authorities = {
+        authority["account_id"]: authority
+        for authority in projection["authorities"]
+    }
+    assert set(authorities) == {"synthetic-alpha", "synthetic-beta"}
+    assert projection["expires_at"] == "2026-08-31T12:15:00Z"
+    assert _evaluate(payload) is True
+    bad_request = replace(_request(), account_id="synthetic-beta")
+    assert _evaluate(payload, request=bad_request) is False
+    assert authorities["synthetic-beta"]["hive_available"] is False
+    assert authorities["synthetic-beta"]["persistent_leadership_eligible"] is False
+    assert authorities["synthetic-beta"]["long_running_leadership_eligible"] is False
+
+
 @pytest.mark.parametrize(
     "case",
     json.loads((FIXTURES / "negative-vectors-v2.json").read_text(encoding="utf-8"))[
@@ -119,7 +170,6 @@ def test_positive_source_projection_and_decision_are_canonical_and_closed():
 )
 def test_versioned_negative_vectors_fail_closed(case):
     from codex_usage.integration_pool_authority import (
-        PoolAuthorityInvalid,
         parse_pool_authority_projection,
         serialize_pool_authority_projection,
     )
@@ -151,15 +201,16 @@ def test_versioned_negative_vectors_fail_closed(case):
             parse_pool_authority_source,
         )
 
-        with pytest.raises(PoolAuthorityInvalid):
-            build_pool_authority_projection(
-                source=parse_pool_authority_source(_source_bytes()),
-                usage_document=usage,
-                generation_id=GENERATION_ID,
-                release_id=RELEASE_ID,
-                usage_payload_sha256=PAYLOAD_DIGEST,
-                usage_binding_sha256=BINDING_DIGEST,
-            )
+        document = build_pool_authority_projection(
+            source=parse_pool_authority_source(_source_bytes()),
+            usage_document=usage,
+            generation_id=GENERATION_ID,
+            release_id=RELEASE_ID,
+            usage_payload_sha256=PAYLOAD_DIGEST,
+            usage_binding_sha256=BINDING_DIGEST,
+        )
+        payload = serialize_pool_authority_projection(document)
+        assert _evaluate(payload) is False
         return
     else:  # pragma: no cover - vector kind is a closed artifact contract
         raise AssertionError(kind)

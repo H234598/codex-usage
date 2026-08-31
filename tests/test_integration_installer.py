@@ -498,6 +498,85 @@ def install_verified_06536_source(tmp_path: Path):
     )
 
 
+def _write_legacy_binding_v1_generation(state_home: Path) -> tuple[bytes, bytes]:
+    from codex_usage import integration_evidence
+
+    integration = state_home / "codex-usage" / "integration"
+    active_bytes = (integration / "active.json").read_bytes()
+    active = json.loads(active_bytes)
+    generation_id = "a" * 32
+    published_at = "2026-08-31T10:00:00Z"
+    payload = integration_evidence.serialize_schema2_document(
+        {
+            "accounts": [],
+            "generated_at": published_at,
+            "schema_version": 2,
+        }
+    )
+    binding = {
+        "active_manifest_sha256": hashlib.sha256(active_bytes).hexdigest(),
+        "binding_schema_version": 1,
+        "generation_id": generation_id,
+        "payload_filename": "account-usage-v2.json",
+        "payload_sha256": hashlib.sha256(payload).hexdigest(),
+        "payload_size_bytes": len(payload),
+        "producer_version": "0.6.536",
+        "published_at": published_at,
+        "release_id": active["release_id"],
+        "source_manifest_sha256": active["source_manifest_sha256"],
+    }
+    binding_bytes = json.dumps(
+        binding,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    generation = integration / "generations" / generation_id
+    generation.mkdir(mode=0o700)
+    (generation / "account-usage-v2.json").write_bytes(payload)
+    (generation / "account-usage-v2.json").chmod(0o600)
+    (generation / "account-usage-v2.binding.json").write_bytes(binding_bytes)
+    (generation / "account-usage-v2.binding.json").chmod(0o600)
+    pointer_bytes = integration_evidence.serialize_pointer(
+        integration_evidence.EvidencePointer(
+            current_generation_id=generation_id,
+            current_binding_sha256=hashlib.sha256(binding_bytes).hexdigest(),
+            pointer_schema_version=1,
+            previous_generation_id=None,
+            previous_binding_sha256=None,
+        )
+    )
+    current = integration / "current.json"
+    current.write_bytes(pointer_bytes)
+    current.chmod(0o600)
+    return pointer_bytes, binding_bytes
+
+
+def _verified_06536_with_legacy_evidence(tmp_path: Path):
+    from codex_usage import integration_installer
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    source_root = _temporary_source_copy(tmp_path)
+    with pytest.MonkeyPatch.context() as context:
+        _patch_release_identity(context, "0.6.536")
+        previous = integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    pointer_bytes, binding_bytes = _write_legacy_binding_v1_generation(state_home)
+    return (
+        previous,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+        pointer_bytes,
+        binding_bytes,
+    )
+
+
 def verify_compromised_06535_runtime(tmp_path: Path):
     from codex_usage import integration_attestation, integration_installer
 
@@ -933,6 +1012,159 @@ def test_runtime_rejects_compromised_06535_but_installer_upgrades_verified_06536
     assert install_verified_06536_source(tmp_path / "verified-06536").version == "0.6.537"
     with pytest.raises(IntegrationAttestationUnavailable):
         verify_compromised_06535_runtime(tmp_path / "compromised-06535")
+
+
+def test_06536_cutover_retires_binding_v1_namespace_before_first_v2_publish(
+    tmp_path,
+):
+    from codex_usage import integration_evidence, integration_installer
+    from codex_usage.integration_attestation import verify_active_manifest_at
+
+    (
+        _previous,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+        _pointer_bytes,
+        _binding_bytes,
+    ) = _verified_06536_with_legacy_evidence(tmp_path)
+    installed = integration_installer.install_release(
+        source_root=source_root,
+        state_home=state_home,
+        data_home=data_home,
+        python_executable=Path(sys.executable),
+        temporary_root=temporary_root,
+    )
+    integration = state_home / "codex-usage" / "integration"
+    assert installed.version == "0.6.537"
+    assert not (integration / "current.json").exists()
+    assert list((integration / "generations").iterdir()) == []
+    assert not [
+        entry.name
+        for entry in integration.iterdir()
+        if entry.name.startswith(".evidence-v1-cutover-")
+    ]
+
+    authority_source = integration / "pool-authority-source-v2.json"
+    authority_source.write_bytes(
+        b'{"authorities":[],"pool_authority_source_schema_version":2}\n'
+    )
+    authority_source.chmod(0o600)
+    verified = verify_active_manifest_at(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=installed.entrypoint_path,
+    )
+    payload = integration_evidence.serialize_schema2_document(
+        {
+            "accounts": [],
+            "generated_at": "2026-08-31T10:01:00Z",
+            "schema_version": 2,
+        }
+    )
+    pointer = integration_evidence.publish_evidence_generation(
+        payload,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified,
+    )
+    generation = integration / "generations" / pointer.current_generation_id
+    assert {entry.name for entry in generation.iterdir()} == {
+        "account-usage-v2.binding.json",
+        "account-usage-v2.json",
+        "pool-authority-v2.json",
+    }
+
+
+def test_06536_cutover_restores_binding_v1_namespace_if_active_swap_fails(
+    tmp_path,
+    monkeypatch,
+):
+    from codex_usage import integration_installer
+
+    (
+        _previous,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+        pointer_bytes,
+        binding_bytes,
+    ) = _verified_06536_with_legacy_evidence(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_before = (integration / "active.json").read_bytes()
+
+    def fail_active_swap(**_kwargs):
+        raise integration_installer.IntegrationInstallError()
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_begin_active_publish",
+        fail_active_swap,
+    )
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    generation = integration / "generations" / ("a" * 32)
+    assert (integration / "active.json").read_bytes() == active_before
+    assert (integration / "current.json").read_bytes() == pointer_bytes
+    assert (generation / "account-usage-v2.binding.json").read_bytes() == binding_bytes
+    assert {entry.name for entry in generation.iterdir()} == {
+        "account-usage-v2.binding.json",
+        "account-usage-v2.json",
+    }
+    assert not [
+        entry.name
+        for entry in integration.iterdir()
+        if entry.name.startswith(".evidence-v1-cutover-")
+    ]
+
+
+def test_06536_cutover_rejects_noncanonical_binding_v1_without_reset(tmp_path):
+    from codex_usage import integration_installer
+
+    (
+        _previous,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+        pointer_bytes,
+        binding_bytes,
+    ) = _verified_06536_with_legacy_evidence(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_before = (integration / "active.json").read_bytes()
+    binding_path = (
+        integration
+        / "generations"
+        / ("a" * 32)
+        / "account-usage-v2.binding.json"
+    )
+    binding_path.write_bytes(binding_bytes + b" ")
+    binding_path.chmod(0o600)
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    assert (integration / "active.json").read_bytes() == active_before
+    assert (integration / "current.json").read_bytes() == pointer_bytes
+    assert binding_path.read_bytes() == binding_bytes + b" "
+    assert not [
+        entry.name
+        for entry in integration.iterdir()
+        if entry.name.startswith(".evidence-v1-cutover-")
+    ]
 
 
 def _compromised_06535_with_previous_06534(tmp_path: Path):

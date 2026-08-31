@@ -347,21 +347,33 @@ def build_pool_authority_projection(
     if source_accounts != account_ids:
         _invalid()
     expirations = [issued + POOL_AUTHORITY_TTL]
+    account_usable: dict[str, bool] = {}
     for account in usage_accounts:
         freshness = cast(dict[str, object], account["freshness"])
         _captured_text, captured = _timestamp(freshness["captured_at"])
         _fresh_text, fresh_until = _timestamp(freshness["fresh_until"])
-        if (
+        usable = not (
             account["status"] != "ok"
             or freshness["stale"] is not False
             or captured > issued
             or fresh_until <= issued
-        ):
-            _invalid()
-        expirations.append(fresh_until)
+        )
+        account_usable[cast(str, account["account_id"])] = usable
+        if usable:
+            expirations.append(fresh_until)
     expires = min(expirations)
+    authorities = []
+    for source_authority in cast(
+        list[dict[str, object]], source_document["authorities"]
+    ):
+        authority = dict(source_authority)
+        if not account_usable[cast(str, authority["account_id"])]:
+            authority["hive_available"] = False
+            authority["persistent_leadership_eligible"] = False
+            authority["long_running_leadership_eligible"] = False
+        authorities.append(authority)
     projection = {
-        "authorities": source_document["authorities"],
+        "authorities": authorities,
         "expires_at": expires.isoformat().replace("+00:00", "Z"),
         "generation_id": _generation_id(generation_id),
         "issued_at": issued_at,

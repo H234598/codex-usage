@@ -2601,6 +2601,118 @@ def _complete_reader_account() -> dict[str, object]:
     }
 
 
+def test_atomic_publish_keeps_fresh_account_authority_when_peer_is_partial(
+    staged_evidence_layout,
+):
+    from codex_usage import integration_evidence
+    from codex_usage.integration_pool_authority import (
+        PoolAuthorityRequest,
+        evaluate_pool_authority,
+    )
+
+    state_home, data_home, entrypoint, _payload, verified = staged_evidence_layout
+    healthy = _complete_reader_account()
+    partial = json.loads(json.dumps(healthy))
+    partial["account_id"] = "account-2"
+    partial["status"] = "partial"
+    payload = integration_evidence.serialize_schema2_document(
+        {
+            "accounts": [healthy, partial],
+            "generated_at": "2026-08-25T10:00:00Z",
+            "schema_version": 2,
+        }
+    )
+    authorities = []
+    for account_id in ("account-1", "account-2"):
+        authorities.append(
+            {
+                "account_id": account_id,
+                "allowed_lifecycles": ["persistent"],
+                "allowed_model_families": ["sol"],
+                "hive_available": True,
+                "long_running_leadership_eligible": True,
+                "persistent_leadership_eligible": True,
+                "pool_id": "synthetic-primary",
+                "provider": "openai",
+                "reasoning_maximum": "max",
+                "reasoning_minimum": "medium",
+            }
+        )
+    authority_source = (
+        state_home
+        / "codex-usage"
+        / "integration"
+        / "pool-authority-source-v2.json"
+    )
+    authority_source.write_bytes(
+        (
+            json.dumps(
+                {
+                    "authorities": authorities,
+                    "pool_authority_source_schema_version": 2,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode()
+    )
+    authority_source.chmod(0o600)
+    pointer = integration_evidence.publish_evidence_generation(
+        payload,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified,
+    )
+    bundle, status = integration_evidence.read_current_generation_bundle(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=entrypoint,
+        now=datetime(2026, 8, 25, 10, 5, tzinfo=UTC),
+    )
+    assert status == "partial"
+    assert bundle is not None
+    assert pointer.current_generation_id == bundle.binding.generation_id
+    assert {
+        account["account_id"] for account in bundle.usage["accounts"]
+    } == {
+        authority["account_id"]
+        for authority in bundle.pool_authority["authorities"]
+    } == {"account-1", "account-2"}
+    decision_arguments = {
+        "now": datetime(2026, 8, 25, 10, 5, tzinfo=UTC),
+        "expected_release_id": bundle.binding.release_id,
+        "expected_generation_id": bundle.binding.generation_id,
+        "expected_usage_payload_sha256": bundle.binding.payload_sha256,
+        "expected_usage_binding_sha256": hashlib.sha256(
+            integration_evidence.serialize_usage_binding(bundle.binding)
+        ).hexdigest(),
+    }
+    request = PoolAuthorityRequest(
+        account_id="account-1",
+        pool_id="synthetic-primary",
+        provider="openai",
+        model_family="sol",
+        reasoning="max",
+        lifecycle="persistent",
+        require_persistent_leadership=True,
+        require_long_running_leadership=True,
+    )
+    authority_bytes = integration_evidence.serialize_pool_authority_projection(
+        bundle.pool_authority
+    )
+    assert evaluate_pool_authority(
+        authority_bytes,
+        request,
+        **decision_arguments,
+    )
+    assert not evaluate_pool_authority(
+        authority_bytes,
+        replace(request, account_id="account-2"),
+        **decision_arguments,
+    )
+
+
 def _rewrite_reader_file(parent: Path, name: str, payload: bytes) -> None:
     fd = os.open(parent / name, os.O_WRONLY | os.O_TRUNC)
     try:
