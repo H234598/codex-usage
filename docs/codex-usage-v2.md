@@ -329,10 +329,15 @@ Der anschließende atomare Active-Swap ist der Cutover-Commitpunkt. Jeder
 normale Fehler davor oder währenddessen stellt Active, Current und den alten
 Generationsbaum byte- beziehungsweise inodegebunden wieder her. Nach Erfolg
 werden die pensionierten Artefakte entfernt; `current.json` bleibt bis zum
-ersten dreiteiligen `0.6.537`-Publish absichtlich abwesend. Ein Hard-Crashrest
-mit dem reservierten Präfix `.evidence-v1-cutover-` stoppt jeden weiteren
-Installerlauf fail-closed. Dieser einmalige destruktive Installerpfad ist kein
-Runtime-Reader-Compatpfad: Reader und Publisher akzeptieren weiterhin
+ersten dreiteiligen `0.6.537`-Publish absichtlich abwesend. Nach einem Hard
+Crash stellt ausschließlich der nächste Installerlauf vor einem erneut strikt
+attestierten `0.6.536`→`0.6.537`-Cutover einen exakt korrelierten, privaten und
+vollständig V1-validierten
+`.evidence-v1-cutover-{current,generations}-<32hex>`-Zustand wieder her. Dabei
+wird höchstens der nachweislich zugehörige leere neue `generations/`-Baum
+entfernt; unbekannte, unvollständige, widersprüchliche oder fremde Artefakte
+stoppen ohne Mutation fail-closed. Dieser einmalige destruktive Installerpfad
+ist kein Runtime-Reader-Compatpfad: Reader und Publisher akzeptieren weiterhin
 ausschließlich Binding-Schema 2 und dreiteilige Generationen.
 
 Ältere Releases werden als `previous.json` erhalten, sind aber weder

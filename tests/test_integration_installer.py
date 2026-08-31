@@ -1211,6 +1211,154 @@ def test_06536_cutover_rejects_noncanonical_binding_v1_without_reset(tmp_path):
     ]
 
 
+@pytest.mark.parametrize(
+    "crash_point",
+    ("current_renamed", "generations_renamed", "fresh_generations_created"),
+)
+def test_06536_cutover_recovers_exact_owned_crash_state_before_retry(
+    tmp_path,
+    crash_point,
+):
+    from codex_usage import integration_installer
+
+    (
+        _previous,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+        pointer_bytes,
+        _binding_bytes,
+    ) = _verified_06536_with_legacy_evidence(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    integration_identity = integration_installer._directory_identity(integration)
+    active_payload = (integration / "active.json").read_bytes()
+    generations_before = _foreign_tree_digest(root=integration / "generations")
+
+    class SyntheticHardCrash(BaseException):
+        pass
+
+    original_rename = integration_installer._rename_noreplace
+    original_create = integration_installer._create_private_directory
+
+    def crash_after_rename(source_name, target_name, parent_fd):
+        original_rename(source_name, target_name, parent_fd)
+        if (
+            crash_point == "current_renamed"
+            and source_name == "current.json"
+        ) or (
+            crash_point == "generations_renamed"
+            and source_name == "generations"
+        ):
+            raise SyntheticHardCrash()
+
+    def crash_after_fresh_generations(path, parent_identity):
+        identity = original_create(path, parent_identity)
+        if crash_point == "fresh_generations_created" and path == integration / "generations":
+            raise SyntheticHardCrash()
+        return identity
+
+    with pytest.MonkeyPatch.context() as context:
+        context.setattr(integration_installer, "_rename_noreplace", crash_after_rename)
+        context.setattr(
+            integration_installer,
+            "_create_private_directory",
+            crash_after_fresh_generations,
+        )
+        with pytest.raises(SyntheticHardCrash):
+            integration_installer._begin_legacy_evidence_v1_cutover(
+                integration=integration,
+                integration_identity=integration_identity,
+                active_payload=active_payload,
+            )
+
+    artifact_names = {
+        entry.name
+        for entry in integration.iterdir()
+        if entry.name.startswith(".evidence-v1-cutover-")
+    }
+    expected_kinds = (
+        {"current"}
+        if crash_point == "current_renamed"
+        else {"current", "generations"}
+    )
+    assert {
+        name.removeprefix(".evidence-v1-cutover-").split("-", 1)[0]
+        for name in artifact_names
+    } == expected_kinds
+    assert len({name.rsplit("-", 1)[1] for name in artifact_names}) == 1
+    if crash_point == "current_renamed":
+        assert (integration / "generations").is_dir()
+    elif crash_point == "generations_renamed":
+        assert not (integration / "generations").exists()
+    else:
+        assert list((integration / "generations").iterdir()) == []
+
+    original_begin = integration_installer._begin_legacy_evidence_v1_cutover
+    recovery_observed = False
+
+    def begin_after_recovery(**kwargs):
+        nonlocal recovery_observed
+        assert (integration / "active.json").read_bytes() == active_payload
+        assert (integration / "current.json").read_bytes() == pointer_bytes
+        assert (
+            _foreign_tree_digest(root=integration / "generations")
+            == generations_before
+        )
+        assert not [
+            entry.name
+            for entry in integration.iterdir()
+            if entry.name.startswith(".evidence-v1-cutover-")
+        ]
+        recovery_observed = True
+        return original_begin(**kwargs)
+
+    with pytest.MonkeyPatch.context() as context:
+        context.setattr(
+            integration_installer,
+            "_begin_legacy_evidence_v1_cutover",
+            begin_after_recovery,
+        )
+        installed = integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    assert recovery_observed
+    assert installed.version == "0.6.537"
+
+
+def test_06536_cutover_recovery_rejects_foreign_artifact_without_mutation(tmp_path):
+    from codex_usage import integration_installer
+
+    (
+        _previous,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+        pointer_bytes,
+        _binding_bytes,
+    ) = _verified_06536_with_legacy_evidence(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    artifact = integration / (".evidence-v1-cutover-current-" + "f" * 32)
+    artifact.write_bytes(pointer_bytes)
+    artifact.chmod(0o644)
+    tree_before = _foreign_tree_digest(root=integration)
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    assert _foreign_tree_digest(root=integration) == tree_before
+
+
 def _compromised_06535_with_previous_06534(tmp_path: Path):
     from codex_usage import integration_installer
 
