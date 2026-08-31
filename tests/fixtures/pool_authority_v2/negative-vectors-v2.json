@@ -16,6 +16,7 @@
     {"id": "generation_mismatch", "kind": "projection", "field": "generation_id", "value": "dddddddddddddddddddddddddddddddd"},
     {"id": "tampering", "kind": "projection", "field": "usage_payload_sha256", "value": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
     {"id": "usage_binding_tampering", "kind": "projection", "field": "usage_binding_sha256", "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"},
+    {"id": "usage_binding_published_at_mismatch", "kind": "binding_published_at", "value": "2026-08-31T12:00:01Z"},
     {"id": "partial_account_status", "kind": "usage", "field": "status", "value": "partial"}
   ]
 }

@@ -404,9 +404,13 @@ Recovery behalten die referenzierten Ordner.
    `expires_at`, `usage_payload_sha256`, `usage_binding_sha256`,
    `authorities`. `usage_payload_sha256` bindet die exakten Usage-Bytes;
    `usage_binding_sha256` bindet die kanonischen Bytes des gesamten
-   zehnfeldrigen `usage_binding`. Release, Generation und `issued_at` müssen
-   zusätzlich identisch zum Usage-Binding sein. Die Gültigkeit endet exklusiv
-   bei `expires_at` und spätestens 15 Minuten nach `issued_at`.
+   zehnfeldrigen `usage_binding`. Bereits der Producer-Builder verlangt
+   kanonische Textgleichheit von Usage-`generated_at` und
+   Usage-Binding-`published_at` und übernimmt ausschließlich dieses gebundene
+   `published_at` als Authority-`issued_at`. Release, Generation und
+   `issued_at` müssen beim Reader zusätzlich identisch zum Usage-Binding sein.
+   Die Gültigkeit endet exklusiv bei `expires_at` und spätestens 15 Minuten
+   nach `issued_at`.
 7. Jeder Authority-Eintrag hat exakt `account_id`, `pool_id`, `provider`,
    `hive_available`, `allowed_model_families`, `reasoning_minimum`,
    `reasoning_maximum`, `allowed_lifecycles`,
@@ -484,8 +488,8 @@ Die repo-eigenen, ausschließlich synthetischen Vertragsartefakte liegen unter
 Authority-Bytes sowie `negative-vectors-v2.json`. Die Negativmatrix bindet
 stale, Replay, Provider, Pool, Hive, Modell, Reasoning, Lifecycle, beide
 Leitungseignungen, Release, Generation, Usage-Payload-Digest,
-Usage-Binding-Digest und partiellen Accountstatus. Sie enthält keine realen
-Accountdaten oder Secrets.
+Usage-Binding-Digest, abweichendes Binding-`published_at` und partiellen
+Accountstatus. Sie enthält keine realen Accountdaten oder Secrets.
 
 ### Synchronisation und sichere I/O
 

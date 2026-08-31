@@ -32,6 +32,7 @@ def _projection_bytes() -> bytes:
     projection = build_pool_authority_projection(
         source=parse_pool_authority_source(_source_bytes()),
         usage_document=_usage_document(),
+        usage_binding_published_at="2026-08-31T12:00:00Z",
         generation_id=GENERATION_ID,
         release_id=RELEASE_ID,
         usage_payload_sha256=PAYLOAD_DIGEST,
@@ -152,6 +153,7 @@ def test_mixed_account_quality_publishes_fresh_authority_and_closes_only_bad_acc
     projection = build_pool_authority_projection(
         source=source,
         usage_document=usage,
+        usage_binding_published_at="2026-08-31T12:00:00Z",
         generation_id=GENERATION_ID,
         release_id=RELEASE_ID,
         usage_payload_sha256=PAYLOAD_DIGEST,
@@ -215,6 +217,7 @@ def test_versioned_negative_vectors_fail_closed(case):
         document = build_pool_authority_projection(
             source=parse_pool_authority_source(_source_bytes()),
             usage_document=usage,
+            usage_binding_published_at="2026-08-31T12:00:00Z",
             generation_id=GENERATION_ID,
             release_id=RELEASE_ID,
             usage_payload_sha256=PAYLOAD_DIGEST,
@@ -222,6 +225,24 @@ def test_versioned_negative_vectors_fail_closed(case):
         )
         payload = serialize_pool_authority_projection(document)
         assert _evaluate(payload) is False
+        return
+    elif kind == "binding_published_at":
+        from codex_usage.integration_pool_authority import (
+            PoolAuthorityInvalid,
+            build_pool_authority_projection,
+            parse_pool_authority_source,
+        )
+
+        with pytest.raises(PoolAuthorityInvalid):
+            build_pool_authority_projection(
+                source=parse_pool_authority_source(_source_bytes()),
+                usage_document=_usage_document(),
+                usage_binding_published_at=case["value"],
+                generation_id=GENERATION_ID,
+                release_id=RELEASE_ID,
+                usage_payload_sha256=PAYLOAD_DIGEST,
+                usage_binding_sha256=BINDING_DIGEST,
+            )
         return
     else:  # pragma: no cover - vector kind is a closed artifact contract
         raise AssertionError(kind)
@@ -256,6 +277,7 @@ def test_source_missing_partial_unknown_or_secret_shaped_content_is_rejected(mut
             build_pool_authority_projection(
                 source=parsed,
                 usage_document=_usage_document(),
+                usage_binding_published_at="2026-08-31T12:00:00Z",
                 generation_id=GENERATION_ID,
                 release_id=RELEASE_ID,
                 usage_payload_sha256=PAYLOAD_DIGEST,

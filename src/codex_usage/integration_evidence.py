@@ -2641,6 +2641,7 @@ def _publish_evidence_generation_locked(
         pool_authority = build_pool_authority_projection(
             source=authority_source,
             usage_document=document,
+            usage_binding_published_at=binding.published_at,
             generation_id=generation_id,
             release_id=verified.release_id,
             usage_payload_sha256=payload_digest,

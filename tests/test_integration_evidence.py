@@ -254,6 +254,7 @@ def _create_complete_generations(
                             "pool_authority_source_schema_version": 2,
                         },
                         usage_document=json.loads(payload),
+                        usage_binding_published_at=binding.published_at,
                         generation_id=generation_id,
                         release_id=verified_active_manifest.release_id,
                         usage_payload_sha256=hashlib.sha256(payload).hexdigest(),

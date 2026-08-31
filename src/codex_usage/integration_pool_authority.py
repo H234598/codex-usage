@@ -327,6 +327,7 @@ def build_pool_authority_projection(
     *,
     source: object,
     usage_document: object,
+    usage_binding_published_at: str,
     generation_id: str,
     release_id: str,
     usage_payload_sha256: str,
@@ -337,7 +338,9 @@ def build_pool_authority_projection(
         usage = _canonical_document_v2(usage_document)
     except IntegrationInvalidSource as exc:
         raise PoolAuthorityInvalid() from exc
-    issued_at, issued = _timestamp(usage["generated_at"])
+    issued_at, issued = _timestamp(usage_binding_published_at)
+    if usage_binding_published_at != issued_at or usage["generated_at"] != issued_at:
+        _invalid()
     usage_accounts = cast(list[dict[str, object]], usage["accounts"])
     account_ids = {cast(str, item["account_id"]) for item in usage_accounts}
     source_accounts = {
