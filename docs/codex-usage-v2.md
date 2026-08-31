@@ -16,8 +16,8 @@ integration-snapshot --schema 2 --format json
 
 Andere Argumente, PATH-Auflösung, ein allgemeiner `codex-usage`-CLI-Aufruf,
 Schema-1-Fallback und erneutes Lesen alter Snapshotquellen sind unzulässig.
-Einzige Consumerquelle ist die unten definierte immutable
-V2-Generation mit `account-usage-v2.json`, Binding und `current.json`.
+Einzige Consumerquelle ist die unten definierte immutable V2-Generation mit
+`account-usage-v2.json`, `pool-authority-v2.json`, Binding und `current.json`.
 Der frühere feste V1-Cachepfad ist nach dem Cutover keine Consumerquelle;
 es gibt weder Legacy-Read noch Dual-Write.
 
@@ -272,10 +272,10 @@ Rohfehlerausgaben. Tokens enden mit genau einem Newline. Exceptions,
 Terminalausgaben, Providerantworten, Credentials und lokale Pfade werden nicht
 ausgegeben.
 
-## Release 0.6.536 und Attestierung
+## Release 0.6.537 und Attestierung
 
 Projekt, Producer-Wheel, Dist-Info, Manifest und Runtime-Attestierung tragen
-gemeinsam Version `0.6.536`. Das aktive Manifest hat exakt Integer-Schema `2`.
+gemeinsam Version `0.6.537`. Das aktive Manifest hat exakt Integer-Schema `2`.
 Es bindet Release-ID und Source-Manifest-SHA-256 sowie die SHA-256-Werte von
 Entry Point, Wheel, RECORD, Launcher und gesamtem Releasebaum.
 
@@ -299,33 +299,26 @@ Kanonische Pfade innerhalb des privaten Releasebaums sind fest:
 producer.whl
 venv/bin/codex-usage
 venv/lib/python*/site-packages/codex_usage/integration_entrypoint.py
-venv/lib/python*/site-packages/codex_usage_integration_producer-0.6.536.dist-info/RECORD
+venv/lib/python*/site-packages/codex_usage_integration_producer-0.6.537.dist-info/RECORD
 ```
 
 Launcher, Wheel oder Dist-Info unter alternativen Pfaden werden auch bei
 passenden Einzelhashes abgelehnt. RECORD bindet jedes Wheelmitglied; Metadata
-bindet Distribution `codex-usage-integration-producer` und Version `0.6.536`.
+bindet Distribution `codex-usage-integration-producer` und Version `0.6.537`.
 Der Releasebaumhash umfasst sortiert jeden no-follow Verzeichnis-/Dateieintrag
 mit Typ, relativem Pfad, Modus, Dateigröße und Datei-SHA-256. Symlinks,
 Hardlinks, fremde Owner, falsche Modi, Sonderdateien, Device-/Inodewechsel,
 Races, zusätzliche oder fehlende Einträge schlagen fehl.
 
-Runtimeattestierung und Rollback akzeptieren nur `0.6.536`/Schema 2.
+Runtimeattestierung und Rollback akzeptieren nur `0.6.537`/Schema 2.
 Ausschließlich der Installer darf beim atomaren Cutover vollständig
-hash-/RECORD-/Baum-attestierte `0.6.534`/Schema-2-Generationen als enumerierte
-Upgradequelle lesen. Der bei Bytecode-Drift verworfene Release `0.6.535` bleibt
-inert und wird weder repariert noch reaktiviert. Ältere Generationen
+hash-/RECORD-/Baum-attestierte `0.6.536`/Schema-2-Generationen als exakt
+enumerierte Upgradequelle lesen. Ältere Generationen
 werden als `previous.json` erhalten, sind aber weder runtime-verifizierbar noch
 durch Rollback reaktivierbar. Es gibt keinen generischen Altversionsfallback.
 Fehler vor dem finalen atomaren Swap lassen `active.json` bytegenau
-unverändert.
-
-Falls `active.json` den bekannten bytecode-korrumpierten `0.6.535`-Marker
-trägt, prüft Installer trotzdem dessen vollständige Manifestform, kanonische
-Pfadtopologie und alle Digestformate. Erst dann liest er separat FD-gebunden
-und vollständig attestiert `previous.json` als exakt `0.6.534`/Schema 2. Der
-0.6.535-Releaseinhalt wird nie als Herkunft vertraut; ungültiger Active- oder
-Previous-Marker lässt beide Dateien unverändert und bricht ab.
+unverändert. Ein ungültiges oder nicht exakt als `0.6.536` attestierbares
+Active wird nicht aus `previous.json`, Cache oder anderen Altpfaden repariert.
 
 ## V2-Evidence-Consumervertrag
 
@@ -338,11 +331,13 @@ codex-usage/integration/generations/<generation_id>/account-usage-v2.json
 ```
 
 `<generation_id>` ist exakt 32 Kleinbuchstaben-HEX-Zeichen. Derselbe immutable
-Generationsordner enthält exakt diese zwei regulären Dateien:
+Generationsordner ist das einzige Generationbundle und enthält exakt diese
+drei regulären Dateien:
 
 ```text
 account-usage-v2.json
 account-usage-v2.binding.json
+pool-authority-v2.json
 ```
 
 Der atomare Pointer liegt ausschließlich unter
@@ -354,7 +349,7 @@ Recovery behalten die referenzierten Ordner.
 ### Maschinenprüfbare Kette
 
 1. Reader attestiert zuerst `active.json` vollständig gegen erwarteten
-   Entry-Point: Schema 2, Version `0.6.536`, Release-ID, Source-Manifest,
+   Entry-Point: Schema 2, Version `0.6.537`, Release-ID, Source-Manifest,
    kanonische Pfade, Entry-Point, Wheel, RECORD, Launcher und Releasebaum.
    Das Ergebnis ist `VerifiedActiveManifest`, einschließlich
    `active_manifest_sha256`.
@@ -366,17 +361,38 @@ Recovery behalten die referenzierten Ordner.
 3. Der aktuelle Ordnername muss `current_generation_id` entsprechen.
    SHA-256 der kanonischen Binding-Bytes muss `current_binding_sha256`
    entsprechen.
-4. Binding ist kanonisches JSON, höchstens 32_768 Byte, mit exakt zehn
-   Feldern: `binding_schema_version=1`, `active_manifest_sha256`,
+4. Das äußere Binding ist kanonisches JSON, höchstens 32_768 Byte, mit exakt
+   fünf Feldern: `binding_schema_version=2`, `pool_authority_filename`,
+   `pool_authority_sha256`, `pool_authority_size_bytes`, `usage_binding`.
+   `pool_authority_filename` ist exakt `pool-authority-v2.json`.
+   `usage_binding` hat exakt zehn Felder:
+   `usage_binding_schema_version=2`, `active_manifest_sha256`,
    `generation_id`, `payload_filename`, `payload_sha256`,
    `payload_size_bytes`, `published_at`, `producer_version`, `release_id`,
    `source_manifest_sha256`. `payload_filename` ist exakt
-   `account-usage-v2.json`; `producer_version` ist `0.6.536`.
-5. Binding-`generation_id`, `active_manifest_sha256`, `release_id` und
+   `account-usage-v2.json`; `producer_version` ist `0.6.537`.
+5. Usage-Binding-`generation_id`, `active_manifest_sha256`, `release_id` und
    `source_manifest_sha256` müssen exakt zu Ordner und
    `VerifiedActiveManifest` passen. Payloadgröße und SHA-256 müssen dem
-   Binding entsprechen; danach wird das strikte Schema-2-Dokument erneut
-   kanonisch validiert. Der optional referenzierte previous Binding wird
+   Usage-Binding entsprechen; danach wird das strikte Schema-2-Dokument erneut
+   kanonisch validiert.
+6. Danach liest der Reader `pool-authority-v2.json` bounded/no-follow. Größe
+   und SHA-256 müssen dem äußeren Binding entsprechen. Die Projektion hat
+   exakt neun Felder: `pool_authority_schema_version=2`,
+   `producer_version=0.6.537`, `release_id`, `generation_id`, `issued_at`,
+   `expires_at`, `usage_payload_sha256`, `usage_binding_sha256`,
+   `authorities`. `usage_payload_sha256` bindet die exakten Usage-Bytes;
+   `usage_binding_sha256` bindet die kanonischen Bytes des gesamten
+   zehnfeldrigen `usage_binding`. Release, Generation und `issued_at` müssen
+   zusätzlich identisch zum Usage-Binding sein. Die Gültigkeit endet exklusiv
+   bei `expires_at` und spätestens 15 Minuten nach `issued_at`.
+7. Jeder Authority-Eintrag hat exakt `account_id`, `pool_id`, `provider`,
+   `hive_available`, `allowed_model_families`, `reasoning_minimum`,
+   `reasoning_maximum`, `allowed_lifecycles`,
+   `persistent_leadership_eligible` und
+   `long_running_leadership_eligible`. Einträge und Listen sind eindeutig und
+   sortiert; Accountmenge und Usage-Accountmenge müssen exakt übereinstimmen.
+   Der optional referenzierte previous Binding wird
    beim normalen Reader mindestens mit Pointer/Generation/Binding-Digest
    validiert. Rollback verlangt für die zu promotende Generation zusätzlich
    vollständige Bindung an das aktuell attestierte Release.
@@ -384,7 +400,8 @@ Recovery behalten die referenzierten Ordner.
 Nach einer gültigen Active-Release-Rotation bleiben ältere Generationen
 Audit- und Retentionmaterial. Publisher und GC prüfen solche Current-,
 Previous- und ungeschützten Generationen vollständig auf kanonischen Pointer,
-Binding, Payload, Größe, Hash und `published_at`, verlangen aber keine
+Binding, Usage, Authority, Größe, Hash, Cross-Bindung und `published_at`,
+verlangen aber keine
 Übereinstimmung ihrer historischen Manifest-/Release-/Source-Digests mit dem
 neuen Active. Neu publizierte Generation und normal gelesener Current bleiben
 streng an das neue `VerifiedActiveManifest` gebunden. Rollback darf eine unter
@@ -393,6 +410,40 @@ promotieren.
 
 Jede fehlende, zusätzliche, nichtkanonische oder abweichende Bindung ist
 `invalid`, niemals Fallback.
+
+### Producer-owned Authority-Quelle und Consumer-Handoff
+
+Authority wird ausschließlich aus der privaten Datei
+`state_home/codex-usage/integration/pool-authority-source-v2.json`
+übernommen. Der Installer erzeugt diese Datei absichtlich nicht. Vor dem
+ersten Publish muss der zuständige Producer sie als owner-eigene reguläre
+`0600`-Datei bereitstellen. Fehlen, Race, falscher Modus, mehr als 131_072
+Byte, nichtkanonische Bytes oder unvollständige Accountabdeckung brechen den
+Publish vor dem Pointercommit ab. Die Quelle hat exakt
+`pool_authority_source_schema_version=2` und `authorities`; ihre Einträge sind
+dieselben geschlossenen zehn Felder wie oben. Es werden weder `pool=main`,
+Kontostand, Trends, Label noch Accountname in Eligibility übersetzt. Secrets,
+Credentials, freie Erweiterungsfelder und Provider-/Pool-Mappings sind nicht
+zulässig. Die Quelldatei selbst wird nie in den Generationordner kopiert.
+
+Consumer lesen keine Einzelfile und implementieren keine zweite Kette. Der
+Producer-API-Einstieg `read_current_generation_bundle(...)` liefert Usage,
+PoolAuthority und Binding nur aus demselben vollständig validierten
+Generationbundle plus Status. Zulässig für Leitung ist ausschließlich
+`status == "complete"`; `busy`, `unavailable`, `invalid`, `stale`, `partial`
+und jeder unbekannte Status verweigern Authority. Anschließend prüft
+`evaluate_pool_authority(...)` exakt Account, Pool, Provider, Modellfamilie,
+Reasoning-Grenzen, Lifecycle, Hive-Verfügbarkeit, beide Leitungseignungen,
+Release, Generation, beide Usage-Digests und Ablaufzeit. Es gibt keinen V1-,
+Compat-, Cache-, Mapping- oder Fallbackpfad.
+
+Die repo-eigenen, ausschließlich synthetischen Vertragsartefakte liegen unter
+`tests/fixtures/pool_authority_v2/`: kanonische Source-, Usage- und positive
+Authority-Bytes sowie `negative-vectors-v2.json`. Die Negativmatrix bindet
+stale, Replay, Provider, Pool, Hive, Modell, Reasoning, Lifecycle, beide
+Leitungseignungen, Release, Generation, Usage-Payload-Digest,
+Usage-Binding-Digest und partiellen Accountstatus. Sie enthält keine realen
+Accountdaten oder Secrets.
 
 ### Synchronisation und sichere I/O
 
@@ -456,12 +507,14 @@ ausgeschlossen.
 
 `state_home`, `codex-usage`, `integration`, `generations` und jeder
 Generationordner müssen reale UID-eigene `0700`-Verzeichnisse sein. Pointer,
-Binding und Payload müssen reguläre, nicht verlinkte UID-eigene `0600`-Dateien
-mit Linkcount 1 sein. Pointer ist 1..4096 Byte, Binding 1..32_768 Byte,
-Payload 1..2_097_152 Byte. Symlinks, Sonderdateien, falscher Owner/Modus,
-Hardlinks, Größenüberschreitungen oder Namespace-/Identitätsdrift sind
-fail-closed. Keine Home-, Profil- oder Vaultdaten werden kopiert oder
-gesnapshottet; Payload ist nur begrenztes sanitisiertes JSON.
+Binding, Usage-Payload, Authority-Projektion und producer-owned Authority-
+Quelle müssen reguläre, nicht verlinkte UID-eigene `0600`-Dateien mit
+Linkcount 1 sein. Pointer ist 1..4096 Byte, Binding 1..32_768 Byte,
+Usage-Payload 1..2_097_152 Byte, Authority-Projektion 1..262_144 Byte und
+Authority-Quelle 1..131_072 Byte. Symlinks, Sonderdateien, falscher
+Owner/Modus, Hardlinks, Größenüberschreitungen oder Namespace-/Identitätsdrift
+sind fail-closed. Keine Home-, Profil- oder Vaultdaten werden kopiert oder
+gesnapshottet; die Projektionen enthalten nur begrenztes sanitisiertes JSON.
 
 ### Datenqualität, Retention und Status
 
@@ -484,8 +537,9 @@ einen gültigen 257-Zustand auf 256 reduzieren; ein vorhandener 258-Zustand ist
 vor jeder Löschung fail-closed. Jede Löschung prüft Pointer und Identität
 erneut, benennt den Kandidaten FD-gebunden in Staging um und fsync't Parents.
 Historische Manifest-/Release-Digests ändern diese Löschreihenfolge nicht;
-malformed Binding, Payload-Hash-/Größendrift oder ungültiges `published_at`
-bleiben auch bei ungeschützten Generationen fail-closed.
+malformed Binding, Usage- oder Authority-Hash-/Größendrift, abweichende
+Cross-Bindung oder ungültiges `published_at` bleiben auch bei ungeschützten
+Generationen fail-closed.
 
 ## Kanonisches verifiziertes Installationsverfahren
 
@@ -506,7 +560,7 @@ attestiert ihn erneut und ersetzt erst dann atomar `active.json`. Manuelles
 Kopieren eines Releasebaums oder Editieren von `active.json` ist verboten.
 
 Verifizierter Nachweis liest anschließend `active.json` nur bounded/no-follow
-und prüft: Schema `2`, Version `0.6.536`, Release-ID, kanonische vier Pfade,
+und prüft: Schema `2`, Version `0.6.537`, Release-ID, kanonische vier Pfade,
 Manifest-/Launcher-/Wheel-/RECORD-/Entry-Point-/Releasebaumhashes, Owner, Modi,
 Linkcount sowie Device/Inode-Identität. Berichtsfähig sind nur Version, Schema,
 Release-ID und Digests; absolute lokale Pfade bleiben ausschließlich im lokalen

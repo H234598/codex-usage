@@ -27,11 +27,11 @@ _MANIFEST_MAX_BYTES = 128 * 1024
 MAX_ATTESTATION_FILE_BYTES = 4 * 1024 * 1024
 MAX_RELEASE_TREE_ENTRIES = 4096
 MAX_RELEASE_TREE_BYTES = 128 * 1024 * 1024
-_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.536.dist-info"
-_EXPECTED_VERSION = "0.6.536"
+_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.537.dist-info"
+_EXPECTED_VERSION = "0.6.537"
 _EXPECTED_DISTRIBUTION = "codex-usage-integration-producer"
-_PREVIOUS_SCHEMA2_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.534.dist-info"
-_PREVIOUS_SCHEMA2_VERSION = "0.6.534"
+_PREVIOUS_SCHEMA2_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.536.dist-info"
+_PREVIOUS_SCHEMA2_VERSION = "0.6.536"
 _CURRENT_SCHEMA2_MANIFEST_FIELDS = frozenset(
     {
         "data_home",

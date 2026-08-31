@@ -1,0 +1,1 @@
+{"accounts":[{"account_id":"synthetic-alpha","freshness":{"captured_at":"2026-08-31T12:00:00Z","fresh_until":"2026-08-31T12:15:00Z","stale":false},"limits":[],"status":"ok","tracker_evidence":[]}],"generated_at":"2026-08-31T12:00:00Z","schema_version":2}

@@ -30,12 +30,9 @@ from .integration_attestation import (
     MAX_RELEASE_TREE_ENTRIES,
     ActiveRelease,
     IntegrationAttestationUnavailable,
-    _absolute_path,
-    _manifest_from_canonical_bytes,
     _read_manifest,
     _release_tree_sha256,
     _require_manifest_fields,
-    _valid_hash,
     _verify_manifest,
     _verify_previous_schema2_manifest_for_upgrade,
 )
@@ -52,7 +49,7 @@ from .private_io import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RELEASE_VERSION = "0.6.536"
+RELEASE_VERSION = "0.6.537"
 PRODUCER_DISTRIBUTION = "codex_usage_integration_producer"
 SOURCE_MODULES = (
     "__init__.py",
@@ -63,6 +60,7 @@ SOURCE_MODULES = (
     "integration_attestation.py",
     "integration_evidence.py",
     "integration_entrypoint.py",
+    "integration_pool_authority.py",
     "integration_snapshot.py",
     "json_utils.py",
     "models.py",
@@ -78,9 +76,9 @@ SOURCE_MANIFEST_FILES = (
 )
 ACTIVE_NAME = "active.json"
 PREVIOUS_NAME = "previous.json"
-DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.536.dist-info"
+DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.537.dist-info"
 DIST_INFO_FILES = frozenset({"METADATA", "WHEEL", "RECORD", "top_level.txt"})
-EXPECTED_WHEEL_NAME = "codex_usage_integration_producer-0.6.536-py3-none-any.whl"
+EXPECTED_WHEEL_NAME = "codex_usage_integration_producer-0.6.537-py3-none-any.whl"
 BUILDER_PREFLIGHT_TIMEOUT_SECONDS = 30
 BUILDER_PREFLIGHT_MAX_OUTPUT_BYTES = 64 * 1024
 BUILDER_WHEEL_TIMEOUT_SECONDS = 120
@@ -121,7 +119,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codex-usage-integration-producer"
-version = "0.6.536"
+version = "0.6.537"
 requires-python = ">=3.11"
 dependencies = []
 
@@ -921,109 +919,6 @@ def _read_bound_integration_manifest(
     return payload, _FileIdentity(identity.device, identity.inode, identity.mode)
 
 
-def _require_compromised_06535_active_marker(
-    *,
-    payload: bytes,
-    state_home: Path,
-    data_home: Path,
-) -> None:
-    try:
-        manifest = _require_manifest_fields(
-            _manifest_from_canonical_bytes(payload),
-            expected_fields=_CURRENT_SCHEMA2_MANIFEST_FIELDS,
-        )
-        schema_version = manifest.get("schema_version")
-        source_digest = _valid_hash(manifest.get("source_manifest_sha256"))
-        if (
-            type(schema_version) is not int
-            or schema_version != 2
-            or manifest.get("version") != "0.6.535"
-        ):
-            raise IntegrationAttestationUnavailable
-        manifest_state = _absolute_path(manifest.get("state_home"))
-        manifest_data = _absolute_path(manifest.get("data_home"))
-        if manifest_state != state_home or manifest_data != data_home:
-            raise IntegrationAttestationUnavailable
-
-        release_id = f"0.6.535-{source_digest[:16]}"
-        release_dir = _absolute_path(manifest.get("release_dir"))
-        expected_release_dir = (
-            state_home / "codex-usage" / "integration" / "releases" / release_id
-        )
-        if (
-            manifest.get("release_id") != release_id
-            or release_dir != expected_release_dir
-        ):
-            raise IntegrationAttestationUnavailable
-
-        launcher_path = _absolute_path(manifest.get("launcher_path"))
-        entrypoint_path = _absolute_path(manifest.get("entrypoint_path"))
-        wheel_path = _absolute_path(manifest.get("wheel_path"))
-        record_path = _absolute_path(manifest.get("record_path"))
-        site_packages = record_path.parent.parent
-        try:
-            site_packages_parts = site_packages.relative_to(release_dir).parts
-        except ValueError:
-            raise IntegrationAttestationUnavailable from None
-        python_directory = (
-            site_packages_parts[2] if len(site_packages_parts) == 4 else ""
-        )
-        if (
-            len(site_packages_parts) != 4
-            or site_packages_parts[:2] != ("venv", "lib")
-            or site_packages_parts[3] != "site-packages"
-            or not python_directory.startswith("python3.")
-            or not python_directory.removeprefix("python3.").isdecimal()
-            or launcher_path != release_dir / "venv" / "bin" / "codex-usage"
-            or wheel_path != release_dir / "producer.whl"
-            or record_path
-            != site_packages
-            / "codex_usage_integration_producer-0.6.535.dist-info"
-            / "RECORD"
-            or entrypoint_path
-            != site_packages / "codex_usage" / "integration_entrypoint.py"
-        ):
-            raise IntegrationAttestationUnavailable
-        for field in (
-            "entrypoint_sha256",
-            "wheel_sha256",
-            "record_sha256",
-            "launcher_sha256",
-            "release_tree_sha256",
-        ):
-            _valid_hash(manifest.get(field))
-    except IntegrationAttestationUnavailable:
-        _fail()
-
-
-def _verify_bound_previous_upgrade_manifest(
-    *,
-    integration: Path,
-    integration_identity: _DirectoryIdentity,
-    state_home: Path,
-    data_home: Path,
-) -> tuple[bytes, _FileIdentity]:
-    payload, identity = _read_bound_integration_manifest(
-        integration=integration,
-        integration_identity=integration_identity,
-        name=PREVIOUS_NAME,
-    )
-    _verify_previous_schema2_manifest_for_upgrade(
-        manifest_path=integration / PREVIOUS_NAME,
-        state_home=state_home,
-        data_home=data_home,
-        manifest_payload=payload,
-    )
-    repeated_payload, repeated_identity = _read_bound_integration_manifest(
-        integration=integration,
-        integration_identity=integration_identity,
-        name=PREVIOUS_NAME,
-    )
-    if repeated_payload != payload or repeated_identity != identity:
-        _fail()
-    return payload, identity
-
-
 def _prepare_install_provenance(
     *,
     integration: Path,
@@ -1056,25 +951,7 @@ def _prepare_install_provenance(
                 manifest_payload=active_payload,
             )
         except IntegrationAttestationUnavailable:
-            _require_compromised_06535_active_marker(
-                payload=active_payload,
-                state_home=state_home,
-                data_home=data_home,
-            )
-            previous_payload, previous_identity = (
-                _verify_bound_previous_upgrade_manifest(
-                    integration=integration,
-                    integration_identity=integration_identity,
-                    state_home=state_home,
-                    data_home=data_home,
-                )
-            )
-            return _InstallProvenance(
-                active_payload,
-                active_identity,
-                previous_payload,
-                previous_identity,
-            )
+            _fail()
     return _InstallProvenance(active_payload, active_identity, None, None)
 
 
@@ -3102,7 +2979,7 @@ def _install_release(
     temporary_identity = _require_private_dir(temporary_root, None, False)
     pyproject = _read_nofollow(source_root / "pyproject.toml").decode("utf-8")
     init_text = _read_nofollow(source_root / "src/codex_usage/__init__.py").decode("utf-8")
-    if 'version = "0.6.536"' not in pyproject or '__version__ = "0.6.536"' not in init_text:
+    if 'version = "0.6.537"' not in pyproject or '__version__ = "0.6.537"' not in init_text:
         _fail()
     source_manifest = _rehash_source_manifest(source_root)
     source_manifest_digest = _source_digest(source_manifest)

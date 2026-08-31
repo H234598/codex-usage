@@ -1,0 +1,21 @@
+{
+  "artifact_schema_version": 2,
+  "cases": [
+    {"id": "stale", "kind": "clock", "now": "2026-08-31T12:16:00Z"},
+    {"id": "replay", "kind": "expected_generation", "value": "cccccccccccccccccccccccccccccccc"},
+    {"id": "wrong_provider", "kind": "request", "field": "provider", "value": "synthetic-other"},
+    {"id": "wrong_pool", "kind": "request", "field": "pool_id", "value": "synthetic-other"},
+    {"id": "hive_unavailable", "kind": "authority", "field": "hive_available", "value": false},
+    {"id": "model_family", "kind": "request", "field": "model_family", "value": "luna"},
+    {"id": "reasoning_below_minimum", "kind": "request", "field": "reasoning", "value": "low"},
+    {"id": "reasoning_above_maximum", "kind": "request", "field": "reasoning", "value": "ultra"},
+    {"id": "lifecycle", "kind": "request", "field": "lifecycle", "value": "ephemeral"},
+    {"id": "persistent_leadership", "kind": "authority", "field": "persistent_leadership_eligible", "value": false},
+    {"id": "long_running_leadership", "kind": "authority", "field": "long_running_leadership_eligible", "value": false},
+    {"id": "release_mismatch", "kind": "expected_release", "value": "0.6.537-dddddddddddddddd"},
+    {"id": "generation_mismatch", "kind": "projection", "field": "generation_id", "value": "dddddddddddddddddddddddddddddddd"},
+    {"id": "tampering", "kind": "projection", "field": "usage_payload_sha256", "value": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
+    {"id": "usage_binding_tampering", "kind": "projection", "field": "usage_binding_sha256", "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"},
+    {"id": "partial_account_status", "kind": "usage", "field": "status", "value": "partial"}
+  ]
+}

@@ -9,7 +9,7 @@ import stat
 import sys
 import threading
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -24,6 +24,7 @@ _SOURCE_FILES = (
     "src/codex_usage/integration_attestation.py",
     "src/codex_usage/integration_evidence.py",
     "src/codex_usage/integration_entrypoint.py",
+    "src/codex_usage/integration_pool_authority.py",
     "src/codex_usage/integration_snapshot.py",
     "src/codex_usage/json_utils.py",
     "src/codex_usage/models.py",
@@ -80,6 +81,16 @@ def evidence_layout(tmp_path):
         data_home=data_home,
         expected_entrypoint_path=release.entrypoint_path,
     )
+    authority_source = (
+        state_home
+        / "codex-usage"
+        / "integration"
+        / "pool-authority-source-v2.json"
+    )
+    authority_source.write_bytes(
+        b'{"authorities":[],"pool_authority_source_schema_version":2}\n'
+    )
+    authority_source.chmod(0o600)
     payload = serialize_schema2_document(
         {
             "accounts": [],
@@ -215,17 +226,48 @@ def _create_complete_generations(
                     active_manifest_sha256=(
                         verified_active_manifest.active_manifest_sha256
                     ),
-                    binding_schema_version=1,
+                    binding_schema_version=2,
                     generation_id=generation_id,
                     payload_filename="account-usage-v2.json",
                     payload_sha256=hashlib.sha256(payload).hexdigest(),
                     payload_size_bytes=len(payload),
                     published_at=published_at,
-                    producer_version="0.6.536",
+                    producer_version="0.6.537",
                     release_id=verified_active_manifest.release_id,
                     source_manifest_sha256=(
                         verified_active_manifest.source_manifest_sha256
                     ),
+                    usage_binding_schema_version=2,
+                    pool_authority_filename="pool-authority-v2.json",
+                    pool_authority_sha256="0" * 64,
+                    pool_authority_size_bytes=1,
+                )
+                from codex_usage.integration_pool_authority import (
+                    build_pool_authority_projection,
+                    serialize_pool_authority_projection,
+                )
+
+                pool_authority_bytes = serialize_pool_authority_projection(
+                    build_pool_authority_projection(
+                        source={
+                            "authorities": [],
+                            "pool_authority_source_schema_version": 2,
+                        },
+                        usage_document=json.loads(payload),
+                        generation_id=generation_id,
+                        release_id=verified_active_manifest.release_id,
+                        usage_payload_sha256=hashlib.sha256(payload).hexdigest(),
+                        usage_binding_sha256=hashlib.sha256(
+                            integration_evidence.serialize_usage_binding(binding)
+                        ).hexdigest(),
+                    )
+                )
+                binding = replace(
+                    binding,
+                    pool_authority_sha256=hashlib.sha256(
+                        pool_authority_bytes
+                    ).hexdigest(),
+                    pool_authority_size_bytes=len(pool_authority_bytes),
                 )
                 binding_bytes = integration_evidence.serialize_binding(binding)
                 assert integration_evidence.parse_binding(binding_bytes) == binding
@@ -233,6 +275,12 @@ def _create_complete_generations(
                     generation_fd,
                     "account-usage-v2.json",
                     payload,
+                    mode=0o600,
+                )
+                private_io.write_private_bytes_at(
+                    generation_fd,
+                    "pool-authority-v2.json",
+                    pool_authority_bytes,
                     mode=0o600,
                 )
                 private_io.write_private_bytes_at(
@@ -404,9 +452,33 @@ def _rewrite_complete_generation(
         binding = replace(
             binding,
             active_manifest_sha256="c" * 64,
-            release_id="0.6.536-" + "d" * 16,
+            release_id="0.6.537-" + "d" * 16,
             source_manifest_sha256="e" * 64,
         )
+    from codex_usage.integration_pool_authority import (
+        parse_pool_authority_projection,
+        serialize_pool_authority_projection,
+    )
+
+    authority_path = generation / "pool-authority-v2.json"
+    authority = parse_pool_authority_projection(authority_path.read_bytes())
+    authority["issued_at"] = binding.published_at
+    authority["expires_at"] = (
+        datetime.fromisoformat(binding.published_at.replace("Z", "+00:00"))
+        + timedelta(minutes=15)
+    ).isoformat().replace("+00:00", "Z")
+    authority["release_id"] = binding.release_id
+    authority["usage_payload_sha256"] = binding.payload_sha256
+    authority["usage_binding_sha256"] = hashlib.sha256(
+        integration_evidence.serialize_usage_binding(binding)
+    ).hexdigest()
+    authority_bytes = serialize_pool_authority_projection(authority)
+    _rewrite_reader_file(generation, "pool-authority-v2.json", authority_bytes)
+    binding = replace(
+        binding,
+        pool_authority_sha256=hashlib.sha256(authority_bytes).hexdigest(),
+        pool_authority_size_bytes=len(authority_bytes),
+    )
     _rewrite_reader_file(
         generation,
         "account-usage-v2.binding.json",
@@ -1647,6 +1719,7 @@ def _recover_and_read_after_crash(
         } == {
             "account-usage-v2.json",
             "account-usage-v2.binding.json",
+            "pool-authority-v2.json",
         }
     integration = state_home / "codex-usage/integration"
     pointer_debris = [
@@ -1784,11 +1857,64 @@ def test_publish_creates_immutable_generation_then_one_current_pointer(
         / pointer.current_generation_id
     )
     assert generation.is_dir()
+    assert {path.name for path in generation.iterdir()} == {
+        "account-usage-v2.json",
+        "account-usage-v2.binding.json",
+        "pool-authority-v2.json",
+    }
     assert (generation / "account-usage-v2.json").read_bytes() == payload_bytes
+    binding_bytes = (generation / "account-usage-v2.binding.json").read_bytes()
+    binding = integration_evidence.parse_binding(binding_bytes)
+    from codex_usage.integration_pool_authority import parse_pool_authority_projection
+
+    authority_bytes = (generation / "pool-authority-v2.json").read_bytes()
+    authority = parse_pool_authority_projection(authority_bytes)
+    assert authority["generation_id"] == pointer.current_generation_id
+    assert authority["release_id"] == verified.release_id
+    assert authority["usage_payload_sha256"] == hashlib.sha256(payload_bytes).hexdigest()
+    assert authority["usage_binding_sha256"] == hashlib.sha256(
+        integration_evidence.serialize_usage_binding(binding)
+    ).hexdigest()
+    assert binding.pool_authority_sha256 == hashlib.sha256(authority_bytes).hexdigest()
+    assert pointer.current_binding_sha256 == hashlib.sha256(binding_bytes).hexdigest()
     assert pointer.previous_generation_id is None
     assert integration_evidence.parse_pointer(
         (state_home / "codex-usage/integration/current.json").read_bytes()
     ) == pointer
+
+
+def test_publish_missing_or_partial_authority_source_never_commits_current(
+    staged_evidence_layout,
+):
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceError
+
+    state_home, data_home, _entrypoint, payload_bytes, verified = staged_evidence_layout
+    integration = state_home / "codex-usage/integration"
+    source = integration / "pool-authority-source-v2.json"
+    source.unlink()
+    with pytest.raises(IntegrationEvidenceError):
+        integration_evidence.publish_evidence_generation(
+            payload_bytes,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+    assert not (integration / "current.json").exists()
+
+    source.write_bytes(
+        b'{"authorities":[{"account_id":"unknown"}],'
+        b'"pool_authority_source_schema_version":2}\n'
+    )
+    source.chmod(0o600)
+    with pytest.raises(IntegrationEvidenceError):
+        integration_evidence.publish_evidence_generation(
+            payload_bytes,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+    assert not (integration / "current.json").exists()
 
 
 def test_publish_does_not_swap_current_when_second_active_digest_changes(
@@ -1967,6 +2093,7 @@ def test_publish_rejects_generation_directory_swap(
     [
         ("_before_publish_payload_recheck", "account-usage-v2.json"),
         ("_before_publish_binding_recheck", "account-usage-v2.binding.json"),
+        ("_before_publish_pool_authority_recheck", "pool-authority-v2.json"),
     ],
 )
 def test_publish_rejects_staged_file_inode_swap(
@@ -2317,7 +2444,7 @@ def test_verify_active_manifest_at_hashes_exact_active_bytes(evidence_layout):
     assert verified.active_manifest_sha256 == hashlib.sha256(active.read_bytes()).hexdigest()
 
 
-def test_binding_requires_exact_ten_fields_and_32kib_limit():
+def test_binding_requires_exact_nested_fields_and_32kib_limit():
     """Would fail if binding parser accepted missing, extra, or oversized bytes."""
     from codex_usage import integration_evidence
     from codex_usage.integration_evidence import EvidenceBinding
@@ -2325,20 +2452,46 @@ def test_binding_requires_exact_ten_fields_and_32kib_limit():
 
     binding = EvidenceBinding(
         active_manifest_sha256="a" * 64,
-        binding_schema_version=1,
+        binding_schema_version=2,
         generation_id="b" * 32,
         payload_filename="account-usage-v2.json",
         payload_sha256="c" * 64,
         payload_size_bytes=64,
         published_at="2026-08-25T10:00:00Z",
-        producer_version="0.6.536",
-        release_id="0.6.536-" + "d" * 16,
+        producer_version="0.6.537",
+        release_id="0.6.537-" + "d" * 16,
         source_manifest_sha256="e" * 64,
+        usage_binding_schema_version=2,
+        pool_authority_filename="pool-authority-v2.json",
+        pool_authority_sha256="f" * 64,
+        pool_authority_size_bytes=64,
     )
 
-    assert integration_evidence.parse_binding(
-        integration_evidence.serialize_binding(binding)
-    ) == binding
+    binding_bytes = integration_evidence.serialize_binding(binding)
+    assert integration_evidence.parse_binding(binding_bytes) == binding
+    canonical = json.loads(binding_bytes)
+    variants = []
+    extra_outer = json.loads(binding_bytes)
+    extra_outer["future"] = True
+    variants.append(extra_outer)
+    missing_outer = json.loads(binding_bytes)
+    del missing_outer["pool_authority_sha256"]
+    variants.append(missing_outer)
+    extra_usage = json.loads(binding_bytes)
+    extra_usage["usage_binding"]["future"] = True
+    variants.append(extra_usage)
+    missing_usage = json.loads(binding_bytes)
+    del missing_usage["usage_binding"]["payload_sha256"]
+    variants.append(missing_usage)
+    legacy_outer = dict(canonical["usage_binding"])
+    legacy_outer["binding_schema_version"] = 1
+    del legacy_outer["usage_binding_schema_version"]
+    variants.append(legacy_outer)
+    for value in variants:
+        with pytest.raises(IntegrationEvidenceInvalid):
+            integration_evidence.parse_binding(
+                json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+            )
     with pytest.raises(IntegrationEvidenceInvalid):
         integration_evidence.parse_binding(b"{" + b"x" * 32768 + b"}")
 
@@ -2501,6 +2654,38 @@ def mutate_evidence_layout(state_home: Path, mutation: str) -> None:
             payload_sha256=hashlib.sha256(payload).hexdigest(),
             payload_size_bytes=len(payload),
         )
+        from codex_usage.integration_pool_authority import (
+            parse_pool_authority_projection,
+            serialize_pool_authority_projection,
+        )
+
+        authority_path = generation / "pool-authority-v2.json"
+        authority = parse_pool_authority_projection(authority_path.read_bytes())
+        authority["authorities"] = [
+            {
+                "account_id": "account-1",
+                "allowed_lifecycles": ["persistent"],
+                "allowed_model_families": ["sol"],
+                "hive_available": True,
+                "long_running_leadership_eligible": True,
+                "persistent_leadership_eligible": True,
+                "pool_id": "synthetic-primary",
+                "provider": "openai",
+                "reasoning_maximum": "max",
+                "reasoning_minimum": "medium",
+            }
+        ]
+        authority["usage_payload_sha256"] = binding.payload_sha256
+        authority["usage_binding_sha256"] = hashlib.sha256(
+            integration_evidence.serialize_usage_binding(binding)
+        ).hexdigest()
+        authority_bytes = serialize_pool_authority_projection(authority)
+        _rewrite_reader_file(generation, authority_path.name, authority_bytes)
+        binding = replace(
+            binding,
+            pool_authority_sha256=hashlib.sha256(authority_bytes).hexdigest(),
+            pool_authority_size_bytes=len(authority_bytes),
+        )
     binding_bytes = integration_evidence.serialize_binding(binding)
     _rewrite_reader_file(generation, "account-usage-v2.binding.json", binding_bytes)
     pointer = replace(
@@ -2531,6 +2716,89 @@ def test_reader_requires_active_binding_payload_and_pointer_hash_chain(
     )
     assert status == "complete"
     assert document["schema_version"] == 2
+    bundle, bundle_status = integration_evidence.read_current_generation_bundle(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=entrypoint,
+        now=datetime(2026, 8, 25, tzinfo=UTC),
+    )
+    assert bundle_status == "complete"
+    assert bundle is not None
+    assert bundle.usage == document
+    assert bundle.pool_authority["pool_authority_schema_version"] == 2
+    assert bundle.binding.binding_schema_version == 2
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "missing_authority",
+        "authority_release_mismatch",
+        "authority_generation_mismatch",
+        "authority_usage_digest_tamper",
+        "authority_usage_binding_tamper",
+    ),
+)
+def test_reader_fails_closed_on_pool_authority_bundle_tampering(
+    published_evidence_layout,
+    mutation,
+):
+    from codex_usage import integration_evidence
+    from codex_usage.integration_pool_authority import (
+        parse_pool_authority_projection,
+        serialize_pool_authority_projection,
+    )
+
+    state_home, data_home, entrypoint, _payload, _verified, _current_bytes = (
+        published_evidence_layout
+    )
+    integration = state_home / "codex-usage/integration"
+    pointer_path = integration / "current.json"
+    pointer = integration_evidence.parse_pointer(pointer_path.read_bytes())
+    generation = integration / "generations" / pointer.current_generation_id
+    authority_path = generation / "pool-authority-v2.json"
+    if mutation == "missing_authority":
+        authority_path.unlink()
+        expected_status = "unavailable"
+    else:
+        authority = parse_pool_authority_projection(authority_path.read_bytes())
+        if mutation == "authority_release_mismatch":
+            authority["release_id"] = "0.6.537-" + "d" * 16
+        elif mutation == "authority_generation_mismatch":
+            authority["generation_id"] = "e" * 32
+        elif mutation == "authority_usage_digest_tamper":
+            authority["usage_payload_sha256"] = "f" * 64
+        else:
+            authority["usage_binding_sha256"] = "f" * 64
+        authority_bytes = serialize_pool_authority_projection(authority)
+        _rewrite_reader_file(generation, "pool-authority-v2.json", authority_bytes)
+        binding_path = generation / "account-usage-v2.binding.json"
+        binding = replace(
+            integration_evidence.parse_binding(binding_path.read_bytes()),
+            pool_authority_sha256=hashlib.sha256(authority_bytes).hexdigest(),
+            pool_authority_size_bytes=len(authority_bytes),
+        )
+        binding_bytes = integration_evidence.serialize_binding(binding)
+        _rewrite_reader_file(generation, binding_path.name, binding_bytes)
+        _rewrite_reader_file(
+            integration,
+            "current.json",
+            integration_evidence.serialize_pointer(
+                replace(
+                    pointer,
+                    current_binding_sha256=hashlib.sha256(binding_bytes).hexdigest(),
+                )
+            ),
+        )
+        expected_status = "invalid"
+    bundle, status = integration_evidence.read_current_generation_bundle(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=entrypoint,
+        now=datetime(2026, 8, 25, tzinfo=UTC),
+    )
+    assert bundle is None
+    assert status == expected_status
 
 
 @pytest.mark.parametrize(
@@ -2723,6 +2991,16 @@ def test_reader_rejects_binding_inode_swap(published_evidence_layout, monkeypatc
     )
 
 
+def test_reader_rejects_pool_authority_inode_swap(
+    published_evidence_layout, monkeypatch
+):
+    _assert_reader_rejects_file_inode_swap(
+        published_evidence_layout,
+        monkeypatch,
+        "_before_reader_pool_authority_recheck",
+    )
+
+
 def _late_reader_file_swap(generations_fd: int, generation_id: str, name: str) -> None:
     fd = os.open(
         generation_id,
@@ -2799,6 +3077,16 @@ def test_reader_rejects_late_binding_inode_swap(
         published_evidence_layout,
         monkeypatch,
         "account-usage-v2.binding.json",
+    )
+
+
+def test_reader_rejects_late_pool_authority_inode_swap(
+    published_evidence_layout, monkeypatch
+):
+    _assert_reader_rejects_late_file_swap(
+        published_evidence_layout,
+        monkeypatch,
+        "pool-authority-v2.json",
     )
 
 
@@ -2879,13 +3167,30 @@ def test_reader_fresh_until_expiration_is_stale_after_deadline(
     _rewrite_reader_file(generation, "account-usage-v2.json", payload)
     binding_path = generation / "account-usage-v2.binding.json"
     binding = integration_evidence.parse_binding(binding_path.read_bytes())
-    binding_bytes = integration_evidence.serialize_binding(
-        replace(
-            binding,
-            payload_sha256=hashlib.sha256(payload).hexdigest(),
-            payload_size_bytes=len(payload),
-        )
+    binding = replace(
+        binding,
+        payload_sha256=hashlib.sha256(payload).hexdigest(),
+        payload_size_bytes=len(payload),
     )
+    from codex_usage.integration_pool_authority import (
+        parse_pool_authority_projection,
+        serialize_pool_authority_projection,
+    )
+
+    authority_path = generation / "pool-authority-v2.json"
+    authority = parse_pool_authority_projection(authority_path.read_bytes())
+    authority["usage_payload_sha256"] = binding.payload_sha256
+    authority["usage_binding_sha256"] = hashlib.sha256(
+        integration_evidence.serialize_usage_binding(binding)
+    ).hexdigest()
+    authority_bytes = serialize_pool_authority_projection(authority)
+    _rewrite_reader_file(generation, authority_path.name, authority_bytes)
+    binding = replace(
+        binding,
+        pool_authority_sha256=hashlib.sha256(authority_bytes).hexdigest(),
+        pool_authority_size_bytes=len(authority_bytes),
+    )
+    binding_bytes = integration_evidence.serialize_binding(binding)
     _rewrite_reader_file(generation, "account-usage-v2.binding.json", binding_bytes)
     _rewrite_reader_file(
         state_home / "codex-usage/integration",

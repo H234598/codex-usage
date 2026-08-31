@@ -71,6 +71,16 @@ def _environment(tmp_path: Path) -> dict[str, str]:
         state_home / "codex-usage/integration",
     ):
         path.chmod(0o700)
+    authority_source = (
+        state_home
+        / "codex-usage"
+        / "integration"
+        / "pool-authority-source-v2.json"
+    )
+    authority_source.write_bytes(
+        b'{"authorities":[],"pool_authority_source_schema_version":2}\n'
+    )
+    authority_source.chmod(0o600)
     return {"XDG_DATA_HOME": str(data_home), "XDG_STATE_HOME": str(state_home)}
 
 
@@ -97,16 +107,16 @@ def _expected_entrypoint(tmp_path: Path) -> Path:
 
 
 def _verified_manifest(tmp_path: Path, entrypoint: Path | None = None):
-    """Task-3-only staged 0.6.536 manifest; real cutover belongs to Task 6."""
+    """Synthetic attested 0.6.537 manifest for entrypoint isolation tests."""
     from codex_usage.integration_attestation import ActiveRelease, VerifiedActiveManifest
     from codex_usage.private_io import FileIdentity
 
     entrypoint = entrypoint or _expected_entrypoint(tmp_path)
-    active_bytes = b'{"release_id":"0.6.536-aaaaaaaaaaaaaaaa","version":"0.6.536"}'
+    active_bytes = b'{"release_id":"0.6.537-aaaaaaaaaaaaaaaa","version":"0.6.537"}'
     identity = FileIdentity(1, 2, 0o700)
     return VerifiedActiveManifest(
         active_release=ActiveRelease(
-            version="0.6.536",
+            version="0.6.537",
             release_dir=entrypoint.parents[3],
             launcher_path=entrypoint.parents[3] / "bin/codex-usage-integration",
             entrypoint_path=entrypoint,
@@ -116,7 +126,7 @@ def _verified_manifest(tmp_path: Path, entrypoint: Path | None = None):
             launcher_sha256="e" * 64,
             release_tree_sha256="f" * 64,
         ),
-        release_id="0.6.536-aaaaaaaaaaaaaaaa",
+        release_id="0.6.537-aaaaaaaaaaaaaaaa",
         source_manifest_sha256="1" * 64,
         active_manifest_bytes=active_bytes,
         active_manifest_sha256=hashlib.sha256(active_bytes).hexdigest(),

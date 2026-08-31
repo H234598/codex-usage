@@ -38,6 +38,7 @@ TEST_SOURCE_MANIFEST_FILES = (
     "src/codex_usage/integration_attestation.py",
     "src/codex_usage/integration_evidence.py",
     "src/codex_usage/integration_entrypoint.py",
+    "src/codex_usage/integration_pool_authority.py",
     "src/codex_usage/integration_snapshot.py",
     "src/codex_usage/json_utils.py",
     "src/codex_usage/models.py",
@@ -472,14 +473,14 @@ def captured_python_argv(tmp_path: Path) -> tuple[str, ...]:
     return tuple(capture.read_text(encoding="utf-8").splitlines())
 
 
-def install_verified_06534_source(tmp_path: Path):
+def install_verified_06536_source(tmp_path: Path):
     from codex_usage import integration_installer
 
     tmp_path.mkdir(mode=0o700)
     data_home, state_home, temporary_root = _roots(tmp_path)
     source_root = _temporary_source_copy(tmp_path)
     with pytest.MonkeyPatch.context() as context:
-        _patch_release_identity(context, "0.6.534")
+        _patch_release_identity(context, "0.6.536")
         previous = integration_installer.install_release(
             source_root=source_root,
             state_home=state_home,
@@ -487,32 +488,7 @@ def install_verified_06534_source(tmp_path: Path):
             python_executable=Path(sys.executable),
             temporary_root=temporary_root,
         )
-    assert previous.version == "0.6.534"
-    from codex_usage.integration_attestation import _release_tree_sha256
-    from codex_usage.private_io import write_private_text
-
-    previous.launcher_path.write_text(
-        previous.launcher_path.read_text(encoding="utf-8").replace(
-            " PYTHONDONTWRITEBYTECODE=1",
-            "",
-        ),
-        encoding="utf-8",
-    )
-    previous.launcher_path.chmod(0o700)
-    active_path = state_home / "codex-usage" / "integration" / "active.json"
-    active = json.loads(active_path.read_text(encoding="utf-8"))
-    active["launcher_sha256"] = hashlib.sha256(
-        previous.launcher_path.read_bytes()
-    ).hexdigest()
-    active["release_tree_sha256"] = _release_tree_sha256(
-        release_dir=previous.release_dir
-    )
-    write_private_text(
-        active_path,
-        json.dumps(active, sort_keys=True, separators=(",", ":")) + "\n",
-        label="historical 0.6.534 active manifest",
-        mode=0o600,
-    )
+    assert previous.version == "0.6.536"
     return integration_installer.install_release(
         source_root=source_root,
         state_home=state_home,
@@ -530,6 +506,18 @@ def verify_compromised_06535_runtime(tmp_path: Path):
     source_root = _temporary_source_copy(tmp_path)
     with pytest.MonkeyPatch.context() as context:
         _patch_release_identity(context, "0.6.535")
+        from codex_usage import integration_attestation
+
+        context.setattr(
+            integration_attestation,
+            "_PREVIOUS_SCHEMA2_VERSION",
+            "0.6.534",
+        )
+        context.setattr(
+            integration_attestation,
+            "_PREVIOUS_SCHEMA2_DIST_INFO_PREFIX",
+            "codex_usage_integration_producer-0.6.534.dist-info",
+        )
         compromised = integration_installer.install_release(
             source_root=source_root,
             state_home=state_home,
@@ -920,7 +908,7 @@ def test_foreign_tree_digest_detects_same_size_bytes_and_symlink_target(tmp_path
     assert _foreign_tree_digest(root=root) != linked_first
 
 
-def test_release_version_is_06536_across_project_surfaces():
+def test_release_version_is_06537_across_project_surfaces():
     from codex_usage import __version__, integration_installer
 
     project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
@@ -930,19 +918,19 @@ def test_release_version_is_06536_across_project_surfaces():
         )
     )
 
-    assert integration_installer.RELEASE_VERSION == "0.6.536"
-    assert project["project"]["version"] == "0.6.536"
-    assert __version__ == "0.6.536"
-    assert applet["version"] == "0.6.536"
-    assert applet["comments"] == "Version: 0.6.536"
+    assert integration_installer.RELEASE_VERSION == "0.6.537"
+    assert project["project"]["version"] == "0.6.537"
+    assert __version__ == "0.6.537"
+    assert applet["version"] == "0.6.537"
+    assert applet["comments"] == "Version: 0.6.537"
 
 
-def test_runtime_rejects_compromised_06535_but_installer_upgrades_verified_06534(
+def test_runtime_rejects_compromised_06535_but_installer_upgrades_verified_06536(
     tmp_path,
 ):
     from codex_usage.integration_attestation import IntegrationAttestationUnavailable
 
-    assert install_verified_06534_source(tmp_path / "verified-06534").version == "0.6.536"
+    assert install_verified_06536_source(tmp_path / "verified-06536").version == "0.6.537"
     with pytest.raises(IntegrationAttestationUnavailable):
         verify_compromised_06535_runtime(tmp_path / "compromised-06535")
 
@@ -963,6 +951,18 @@ def _compromised_06535_with_previous_06534(tmp_path: Path):
         )
     with pytest.MonkeyPatch.context() as context:
         _patch_release_identity(context, "0.6.535")
+        from codex_usage import integration_attestation
+
+        context.setattr(
+            integration_attestation,
+            "_PREVIOUS_SCHEMA2_VERSION",
+            "0.6.534",
+        )
+        context.setattr(
+            integration_attestation,
+            "_PREVIOUS_SCHEMA2_DIST_INFO_PREFIX",
+            "codex_usage_integration_producer-0.6.534.dist-info",
+        )
         compromised = integration_installer.install_release(
             source_root=source_root,
             state_home=state_home,
@@ -985,7 +985,7 @@ def _compromised_06535_with_previous_06534(tmp_path: Path):
     )
 
 
-def test_installer_recovers_compromised_06535_only_from_attested_previous_06534(
+def test_installer_never_recovers_compromised_06535_from_previous_release(
     tmp_path,
 ):
     from codex_usage import integration_attestation, integration_installer
@@ -1009,23 +1009,20 @@ def test_installer_recovers_compromised_06535_only_from_attested_previous_06534(
             expected_entrypoint_path=None,
         )
 
-    installed = integration_installer.install_release(
-        source_root=source_root,
-        state_home=state_home,
-        data_home=data_home,
-        python_executable=Path(sys.executable),
-        temporary_root=temporary_root,
-    )
+    active_before = (integration / "active.json").read_bytes()
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
 
-    assert installed.version == "0.6.536"
+    assert (integration / "active.json").read_bytes() == active_before
     assert previous_path.read_bytes() == previous_before
     assert json.loads(previous_before)["release_id"] == previous.release_dir.name
     assert json.loads(previous_before)["release_id"] != compromised.release_dir.name
-    assert integration_attestation.verify_active_release(
-        state_home=state_home,
-        data_home=data_home,
-        expected_entrypoint_path=installed.entrypoint_path,
-    ) == installed
 
 
 _COMPROMISED_06535_MARKER_MUTATIONS = (
@@ -1368,8 +1365,8 @@ def test_install_creates_attested_private_active_release(tmp_path):
     release, data_home, state_home = _install(tmp_path)
     from codex_usage.integration_attestation import verify_active_release
 
-    assert release.version == "0.6.536"
-    assert release.release_dir.name.startswith("0.6.536-")
+    assert release.version == "0.6.537"
+    assert release.release_dir.name.startswith("0.6.537-")
     assert release.launcher_path.name == "codex-usage"
     assert stat.S_IMODE(release.launcher_path.lstat().st_mode) == 0o700
     verified = verify_active_release(
@@ -1384,10 +1381,10 @@ def test_install_creates_attested_private_active_release(tmp_path):
         )
     )
     assert active["schema_version"] == 2
-    assert active["version"] == "0.6.536"
+    assert active["version"] == "0.6.537"
     assert active["release_id"] == release.release_dir.name
     assert Path(active["record_path"]).parent.name == (
-        "codex_usage_integration_producer-0.6.536.dist-info"
+        "codex_usage_integration_producer-0.6.537.dist-info"
     )
     assert active["launcher_sha256"] == release.launcher_sha256
     assert active["release_tree_sha256"] == release.release_tree_sha256
@@ -2564,7 +2561,7 @@ def test_commit_cleanup_failure_returns_success_with_bounded_evidence(
     )
     result = prepared.run()
 
-    assert result.version == "0.6.536"
+    assert result.version == "0.6.537"
     assert cleanup_failed
     assert prepared.active_path.is_file()
     if operation == "install":
@@ -2861,7 +2858,7 @@ def test_failed_publish_to_initially_absent_active_keeps_active_present(
         state_home=state_home,
         data_home=data_home,
         expected_entrypoint_path=None,
-    ).version == "0.6.536"
+    ).version == "0.6.537"
     if operation == "install":
         assert not previous_path.exists()
 
@@ -3187,7 +3184,7 @@ def test_launcher_rejects_schema1_active_manifest_without_repair(tmp_path):
     from codex_usage.private_io import write_private_text
 
     release, data_home, state_home = _install(tmp_path)
-    _write_launcher_state(data_home)
+    _write_launcher_state(data_home, state_home)
     active_path = state_home / "codex-usage" / "integration" / "active.json"
     manifest = json.loads(active_path.read_text(encoding="utf-8"))
     assert manifest["schema_version"] == 2
@@ -3738,14 +3735,60 @@ def test_builder_preflight_rejects_oversized_output_before_process_finishes(tmp_
     assert not marker.exists()
 
 
-def _write_launcher_state(data_home: Path) -> None:
-    from codex_usage.models import AccountUsage
+def _write_pool_authority_source(state_home: Path, account_ids) -> None:
+    from codex_usage.private_io import write_private_text
+
+    authorities = [
+        {
+            "account_id": account_id,
+            "allowed_lifecycles": ["persistent"],
+            "allowed_model_families": ["sol"],
+            "hive_available": True,
+            "long_running_leadership_eligible": True,
+            "persistent_leadership_eligible": True,
+            "pool_id": "synthetic-primary",
+            "provider": "openai",
+            "reasoning_maximum": "max",
+            "reasoning_minimum": "medium",
+        }
+        for account_id in sorted(account_ids)
+    ]
+    write_private_text(
+        state_home / "codex-usage/integration/pool-authority-source-v2.json",
+        json.dumps(
+            {
+                "authorities": authorities,
+                "pool_authority_source_schema_version": 2,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        label="synthetic pool authority source",
+        mode=0o600,
+    )
+
+
+def _write_launcher_state(data_home: Path, state_home: Path) -> None:
+    from codex_usage.models import AccountUsage, LimitWindow, UsagePool
     from codex_usage.private_io import write_private_text
 
     usage = AccountUsage(
         account_id="alpha",
         label="never-exported-label",
-        captured_at=datetime(2026, 8, 15, 10, 0, tzinfo=UTC),
+        captured_at=datetime.now(UTC),
+        main=UsagePool(
+            key="main",
+            display_name="Synthetic",
+            windows=(
+                LimitWindow(
+                    name="5h",
+                    percent=75.0,
+                    duration_seconds=18_000,
+                ),
+            ),
+            availability_sources=("usage",),
+        ),
         backend_configured="direct",
         backend_used="direct",
     )
@@ -3758,11 +3801,12 @@ def _write_launcher_state(data_home: Path) -> None:
         json.dumps(body),
         label="synthetic launcher state",
     )
+    _write_pool_authority_source(state_home, ("alpha",))
 
 
 def test_temporary_launcher_emits_schema2_from_temporary_state(tmp_path):
     release, data_home, state_home = _install(tmp_path)
-    _write_launcher_state(data_home)
+    _write_launcher_state(data_home, state_home)
     completed = subprocess.run(
         [
             str(release.launcher_path),
@@ -3790,10 +3834,18 @@ def test_temporary_launcher_emits_schema2_from_temporary_state(tmp_path):
     generation = integration / "generations" / pointer["current_generation_id"]
     assert (generation / "account-usage-v2.json").read_bytes() == completed.stdout.encode()
     assert (generation / "account-usage-v2.binding.json").is_file()
+    assert (generation / "pool-authority-v2.json").is_file()
+    assert {path.name for path in generation.iterdir()} == {
+        "account-usage-v2.json",
+        "account-usage-v2.binding.json",
+        "pool-authority-v2.json",
+    }
     assert not (integration / "account-usage-v1.json").exists()
 
 
 def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts(tmp_path):
+    from test_app_server import _auth, _fake_codex
+
     from codex_usage.app_server import fetch_account_usage_app_server
     from codex_usage.history import usage_samples_from_usage
     from codex_usage.integration_evidence import read_current_evidence
@@ -3805,7 +3857,6 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
     )
     from codex_usage.models import Account, LimitWindow
     from codex_usage.state import save_current_usage
-    from tests.test_app_server import _auth, _fake_codex
 
     release, data_home, state_home = _install(tmp_path)
     auth_home = tmp_path / "codex-home"
@@ -3913,6 +3964,11 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
         source="json:credits",
     )
     save_current_usage(offset_reset, current_dir)
+    _write_pool_authority_source(
+        state_home,
+        set(scalar_values)
+        | {"near-endpoint-credit", "offset-reset-credit", "percent-credit"},
+    )
     roundtrip = read_current_usage_records(current_dir)
     roundtrip_by_id = {usage.account_id: usage for usage in roundtrip}
     for account_id, source_value in scalar_values.items():
@@ -4048,13 +4104,14 @@ def test_installed_launcher_omits_real_absolute_credit_without_blocking_accounts
 
 
 def test_installed_launcher_invalid_real_credit_does_not_commit_current(tmp_path):
+    from test_app_server import _auth, _fake_codex
+
     from codex_usage.app_server import fetch_account_usage_app_server
     from codex_usage.integration_evidence import read_current_evidence
     from codex_usage.integration_snapshot import read_current_usage_records
     from codex_usage.models import Account, LimitWindow
     from codex_usage.scheduler import _apply_watchdog_block
     from codex_usage.state import save_current_usage
-    from tests.test_app_server import _auth, _fake_codex
 
     release, data_home, state_home = _install(tmp_path)
     auth_home = tmp_path / "codex-home-invalid"
@@ -4077,6 +4134,7 @@ def test_installed_launcher_invalid_real_credit_does_not_commit_current(tmp_path
         codex_command=healthy_command,
     )
     save_current_usage(healthy, current_dir)
+    _write_pool_authority_source(state_home, ("healthy",))
 
     argv = [
         str(release.launcher_path),
@@ -4448,7 +4506,7 @@ def test_temporary_launcher_keeps_final_release_tree_and_attestation_unchanged(t
     from codex_usage.integration_attestation import _release_tree_sha256
 
     release, data_home, state_home = _install(tmp_path)
-    _write_launcher_state(data_home)
+    _write_launcher_state(data_home, state_home)
     active = state_home / "codex-usage" / "integration" / "active.json"
     before_tree = _release_tree_sha256(release_dir=release.release_dir)
     before_active = active.read_bytes()
@@ -5972,7 +6030,7 @@ def rollback_active_release(**kwargs):
     active = json.loads(
         (state_home / "codex-usage" / "integration" / "active.json").read_bytes()
     )
-    assert active["version"] == "0.6.536"
+    assert active["version"] == "0.6.537"
 
 
 def test_installer_script_rejects_symlinked_entrypoint_before_ambient_import(tmp_path):
@@ -7809,7 +7867,7 @@ def test_record_must_bind_nonempty_entrypoint_row(tmp_path):
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("release_id", "0.6.536-ffffffffffffffff"),
+        ("release_id", "0.6.537-ffffffffffffffff"),
         ("source_manifest_sha256", "f" * 64),
     ],
 )
@@ -7888,7 +7946,7 @@ def test_builder_rejects_wrong_wheel_basename_before_release_use(tmp_path, monke
     monkeypatch.setattr(integration_installer, "_require_offline_builder", lambda **_: None)
 
     def fake_builder(command, *, env, cwd):
-        (wheel_dir / "wrong-name-0.6.536-py3-none-any.whl").write_bytes(b"wheel")
+        (wheel_dir / "wrong-name-0.6.537-py3-none-any.whl").write_bytes(b"wheel")
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(integration_installer, "_run_builder_bounded", fake_builder)
@@ -7950,7 +8008,7 @@ def test_launcher_drops_marker_environment_before_runtime(tmp_path):
         python_executable=Path(sys.executable),
         temporary_root=temporary_root,
     )
-    _write_launcher_state(data_home)
+    _write_launcher_state(data_home, state_home)
     completed = subprocess.run(
         [
             str(release.launcher_path),
@@ -10652,7 +10710,7 @@ def test_installer_release_entry_guards_and_public_wrapper(tmp_path, monkeypatch
     pyproject = bad_source_root / "pyproject.toml"
     pyproject.write_text(
         pyproject.read_text(encoding="utf-8").replace(
-            'version = "0.6.536"',
+            'version = "0.6.537"',
             'version = "0.0.0"',
         ),
         encoding="utf-8",

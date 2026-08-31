@@ -21,6 +21,17 @@ from typing import Literal, cast
 
 from . import private_io
 from .integration_attestation import VerifiedActiveManifest, verify_active_manifest_at
+from .integration_pool_authority import (
+    POOL_AUTHORITY_FILENAME,
+    POOL_AUTHORITY_MAX_BYTES,
+    POOL_AUTHORITY_SOURCE_FILENAME,
+    POOL_AUTHORITY_SOURCE_MAX_BYTES,
+    PoolAuthorityInvalid,
+    build_pool_authority_projection,
+    parse_pool_authority_projection,
+    parse_pool_authority_source,
+    serialize_pool_authority_projection,
+)
 from .integration_snapshot import (
     IntegrationInvalidSource,
     _canonical_document_v2,
@@ -41,8 +52,16 @@ _POINTER_MAX_BYTES = 4096
 _PAYLOAD_MAX_BYTES = 2 * 1024 * 1024
 _BINDING_FIELDS = frozenset(
     (
-        "active_manifest_sha256",
         "binding_schema_version",
+        "pool_authority_filename",
+        "pool_authority_sha256",
+        "pool_authority_size_bytes",
+        "usage_binding",
+    )
+)
+_USAGE_BINDING_FIELDS = frozenset(
+    (
+        "active_manifest_sha256",
         "generation_id",
         "payload_filename",
         "payload_sha256",
@@ -51,6 +70,7 @@ _BINDING_FIELDS = frozenset(
         "producer_version",
         "release_id",
         "source_manifest_sha256",
+        "usage_binding_schema_version",
     )
 )
 _POINTER_FIELDS = frozenset(
@@ -66,10 +86,10 @@ _ALLOWED_WINDOW_SECONDS = frozenset((18_000, 604_800, 2_592_000))
 ALLOWED_WINDOW_SECONDS = _ALLOWED_WINDOW_SECONDS
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 _GENERATION_ID_RE = re.compile(r"[0-9a-f]{32}")
-_RELEASE_ID_RE = re.compile(r"0\.6\.536-[0-9a-f]{16}")
+_RELEASE_ID_RE = re.compile(r"0\.6\.537-[0-9a-f]{16}")
 _STAGING_RE = re.compile(r"\.tmp-([0-9a-f]{32})")
 _STAGING_FILE_RE = re.compile(
-    r"\.tmp-account-usage-v2(?:\.binding)?\.json-[0-9a-f]{32}"
+    r"\.tmp-(?:account-usage-v2(?:\.binding)?|pool-authority-v2)\.json-[0-9a-f]{32}"
 )
 _POINTER_STAGING_PREFIX = ".tmp-current.json-"
 _POINTER_STAGING_RE = re.compile(r"\.tmp-current\.json-[0-9a-f]{32}")
@@ -89,6 +109,10 @@ class EvidenceBinding:
     producer_version: str
     release_id: str
     source_manifest_sha256: str
+    usage_binding_schema_version: int
+    pool_authority_filename: str
+    pool_authority_sha256: str
+    pool_authority_size_bytes: int
 
 
 @dataclass(frozen=True)
@@ -98,6 +122,13 @@ class EvidencePointer:
     pointer_schema_version: int
     previous_generation_id: str | None
     previous_binding_sha256: str | None
+
+
+@dataclass(frozen=True)
+class EvidenceGenerationBundle:
+    usage: dict[str, object]
+    pool_authority: dict[str, object]
+    binding: EvidenceBinding
 
 
 @dataclass
@@ -118,8 +149,11 @@ class _HeldEvidenceLocks:
 @dataclass(frozen=True)
 class _ValidatedEvidenceGeneration:
     document: dict[str, object] | None
+    pool_authority: dict[str, object]
+    binding: EvidenceBinding
     generation_identity: FileIdentity
     binding_identity: FileIdentity
+    pool_authority_identity: FileIdentity
     payload_identity: FileIdentity | None
 
 
@@ -129,6 +163,7 @@ class _CompleteEvidenceGeneration:
     published_at: datetime
     generation_identity: FileIdentity
     binding_identity: FileIdentity
+    pool_authority_identity: FileIdentity
     payload_identity: FileIdentity
 
 
@@ -173,6 +208,22 @@ def _before_publish_payload_recheck(
 
 
 def _before_publish_binding_recheck(
+    _parent_fd: int,
+    _name: str,
+    _held_fd: int,
+) -> None:
+    return None
+
+
+def _before_publish_pool_authority_source_recheck(
+    _parent_fd: int,
+    _name: str,
+    _held_fd: int,
+) -> None:
+    return None
+
+
+def _before_publish_pool_authority_recheck(
     _parent_fd: int,
     _name: str,
     _held_fd: int,
@@ -227,6 +278,14 @@ def _before_reader_payload_recheck(
 
 
 def _before_reader_binding_recheck(
+    _parent_fd: int,
+    _name: str,
+    _held_fd: int,
+) -> None:
+    return None
+
+
+def _before_reader_pool_authority_recheck(
     _parent_fd: int,
     _name: str,
     _held_fd: int,
@@ -306,10 +365,13 @@ def _require_generation_id(value: object) -> str:
     return value
 
 
-def _canonical_binding(binding: EvidenceBinding) -> dict[str, object]:
+def _canonical_usage_binding(binding: EvidenceBinding) -> dict[str, object]:
     if type(binding) is not EvidenceBinding:
         _invalid_contract()
-    if type(binding.binding_schema_version) is not int or binding.binding_schema_version != 1:
+    if (
+        type(binding.usage_binding_schema_version) is not int
+        or binding.usage_binding_schema_version != 2
+    ):
         _invalid_contract()
     if binding.payload_filename != "account-usage-v2.json":
         _invalid_contract()
@@ -318,21 +380,49 @@ def _canonical_binding(binding: EvidenceBinding) -> dict[str, object]:
         or not 1 <= binding.payload_size_bytes <= _PAYLOAD_MAX_BYTES
     ):
         _invalid_contract()
-    if binding.producer_version != "0.6.536":
+    if binding.producer_version != "0.6.537":
         _invalid_contract()
     if type(binding.release_id) is not str or _RELEASE_ID_RE.fullmatch(binding.release_id) is None:
         _invalid_contract()
     return {
         "active_manifest_sha256": _require_digest(binding.active_manifest_sha256),
-        "binding_schema_version": 1,
         "generation_id": _require_generation_id(binding.generation_id),
         "payload_filename": "account-usage-v2.json",
         "payload_sha256": _require_digest(binding.payload_sha256),
         "payload_size_bytes": binding.payload_size_bytes,
         "published_at": _canonical_timestamp(binding.published_at),
-        "producer_version": "0.6.536",
+        "producer_version": "0.6.537",
         "release_id": binding.release_id,
         "source_manifest_sha256": _require_digest(binding.source_manifest_sha256),
+        "usage_binding_schema_version": 2,
+    }
+
+
+def serialize_usage_binding(binding: EvidenceBinding) -> bytes:
+    payload = _serialize_contract(_canonical_usage_binding(binding))
+    if not 1 <= len(payload) <= _BINDING_MAX_BYTES:
+        _invalid_contract()
+    return payload
+
+
+def _canonical_binding(binding: EvidenceBinding) -> dict[str, object]:
+    if type(binding) is not EvidenceBinding:
+        _invalid_contract()
+    if type(binding.binding_schema_version) is not int or binding.binding_schema_version != 2:
+        _invalid_contract()
+    if binding.pool_authority_filename != POOL_AUTHORITY_FILENAME:
+        _invalid_contract()
+    if (
+        type(binding.pool_authority_size_bytes) is not int
+        or not 1 <= binding.pool_authority_size_bytes <= POOL_AUTHORITY_MAX_BYTES
+    ):
+        _invalid_contract()
+    return {
+        "binding_schema_version": 2,
+        "pool_authority_filename": POOL_AUTHORITY_FILENAME,
+        "pool_authority_sha256": _require_digest(binding.pool_authority_sha256),
+        "pool_authority_size_bytes": binding.pool_authority_size_bytes,
+        "usage_binding": _canonical_usage_binding(binding),
     }
 
 
@@ -385,17 +475,24 @@ def parse_binding(payload: bytes) -> EvidenceBinding:
         _invalid_contract()
     try:
         value = _require_exact_object(loads_strict(payload), fields=_BINDING_FIELDS)
+        usage = _require_exact_object(
+            value["usage_binding"], fields=_USAGE_BINDING_FIELDS
+        )
         binding = EvidenceBinding(
-            active_manifest_sha256=_require_digest(value["active_manifest_sha256"]),
+            active_manifest_sha256=_require_digest(usage["active_manifest_sha256"]),
             binding_schema_version=value["binding_schema_version"],
-            generation_id=_require_generation_id(value["generation_id"]),
-            payload_filename=value["payload_filename"],
-            payload_sha256=_require_digest(value["payload_sha256"]),
-            payload_size_bytes=value["payload_size_bytes"],
-            published_at=value["published_at"],
-            producer_version=value["producer_version"],
-            release_id=value["release_id"],
-            source_manifest_sha256=_require_digest(value["source_manifest_sha256"]),
+            generation_id=_require_generation_id(usage["generation_id"]),
+            payload_filename=usage["payload_filename"],
+            payload_sha256=_require_digest(usage["payload_sha256"]),
+            payload_size_bytes=usage["payload_size_bytes"],
+            published_at=usage["published_at"],
+            producer_version=usage["producer_version"],
+            release_id=usage["release_id"],
+            source_manifest_sha256=_require_digest(usage["source_manifest_sha256"]),
+            usage_binding_schema_version=usage["usage_binding_schema_version"],
+            pool_authority_filename=value["pool_authority_filename"],
+            pool_authority_sha256=_require_digest(value["pool_authority_sha256"]),
+            pool_authority_size_bytes=value["pool_authority_size_bytes"],
         )
         canonical = serialize_binding(binding)
     except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
@@ -882,7 +979,7 @@ def _require_verified_manifest(value: object) -> VerifiedActiveManifest:
         raise IntegrationEvidenceInvalid()
     verified = cast(VerifiedActiveManifest, value)
     if (
-        verified.active_release.version != "0.6.536"
+        verified.active_release.version != "0.6.537"
         or _RELEASE_ID_RE.fullmatch(verified.release_id) is None
         or verified.active_manifest_sha256
         != hashlib.sha256(verified.active_manifest_bytes).hexdigest()
@@ -1108,6 +1205,45 @@ def _validate_pointer_binding(
                 or binding.published_at != document["generated_at"]
             ):
                 raise IntegrationEvidenceInvalid()
+        pool_authority_bytes, pool_authority_identity = (
+            _read_verified_evidence_file(
+                generation_fd,
+                binding.pool_authority_filename,
+                maximum=POOL_AUTHORITY_MAX_BYTES,
+                hook=(
+                    _before_reader_pool_authority_recheck
+                    if read_payload and hooks
+                    else lambda *_: None
+                ),
+            )
+        )
+        pool_authority = parse_pool_authority_projection(pool_authority_bytes)
+        if (
+            len(pool_authority_bytes) != binding.pool_authority_size_bytes
+            or hashlib.sha256(pool_authority_bytes).hexdigest()
+            != binding.pool_authority_sha256
+            or pool_authority["generation_id"] != binding.generation_id
+            or pool_authority["release_id"] != binding.release_id
+            or pool_authority["producer_version"] != binding.producer_version
+            or pool_authority["issued_at"] != binding.published_at
+            or pool_authority["usage_payload_sha256"] != binding.payload_sha256
+            or pool_authority["usage_binding_sha256"]
+            != hashlib.sha256(serialize_usage_binding(binding)).hexdigest()
+        ):
+            raise IntegrationEvidenceInvalid()
+        if document is not None:
+            usage_account_ids = {
+                item["account_id"]
+                for item in cast(list[dict[str, object]], document["accounts"])
+            }
+            authority_account_ids = {
+                item["account_id"]
+                for item in cast(
+                    list[dict[str, object]], pool_authority["authorities"]
+                )
+            }
+            if usage_account_ids != authority_account_ids:
+                raise IntegrationEvidenceInvalid()
             if require_current_active and verified is not None and (
                 binding.active_manifest_sha256 != verified.active_manifest_sha256
                 or binding.release_id != verified.release_id
@@ -1122,13 +1258,16 @@ def _validate_pointer_binding(
             raise IntegrationEvidenceInvalid()
         return _ValidatedEvidenceGeneration(
             document=document,
+            pool_authority=pool_authority,
+            binding=binding,
             generation_identity=generation_identity,
             binding_identity=binding_identity,
+            pool_authority_identity=pool_authority_identity,
             payload_identity=payload_identity,
         )
     except IntegrationEvidenceError:
         raise
-    except IntegrationInvalidSource as exc:
+    except (IntegrationInvalidSource, PoolAuthorityInvalid) as exc:
         raise IntegrationEvidenceInvalid() from exc
     except FileNotFoundError as exc:
         raise IntegrationEvidenceUnavailable() from exc
@@ -1140,7 +1279,12 @@ def _validate_pointer_binding(
         _close_fds(generation_fd)
 
 
-def _reader_status(document: dict[str, object], *, now: datetime) -> str:
+def _reader_status(
+    document: dict[str, object],
+    *,
+    now: datetime,
+    pool_authority: dict[str, object] | None = None,
+) -> str:
     stale = False
     partial = False
     for account in cast(list[dict[str, object]], document["accounts"]):
@@ -1165,17 +1309,23 @@ def _reader_status(document: dict[str, object], *, now: datetime) -> str:
         return "stale"
     if partial:
         return "partial"
+    if pool_authority is not None:
+        expires_at = datetime.fromisoformat(
+            cast(str, pool_authority["expires_at"]).replace("Z", "+00:00")
+        )
+        if now >= expires_at:
+            return "stale"
     return "complete"
 
 
-def read_current_evidence(
+def read_current_generation_bundle(
     *,
     state_home: Path,
     data_home: Path,
     expected_entrypoint_path: Path,
     now: datetime,
-) -> tuple[dict[str, object], str]:
-    """Return only atomically bound, currently attested V2 evidence."""
+) -> tuple[EvidenceGenerationBundle | None, str]:
+    """Return the one atomically bound UsageEvidenceV2/PoolAuthorityV2 bundle."""
     if (
         type(state_home) is not type(Path())
         or type(data_home) is not type(Path())
@@ -1187,7 +1337,7 @@ def read_current_evidence(
         or now.tzinfo is None
         or now.utcoffset() != timedelta(0)
     ):
-        return {}, "invalid"
+        return None, "invalid"
     try:
         with evidence_lock_set(
             state_home=state_home,
@@ -1337,15 +1487,43 @@ def read_current_evidence(
                     or final_integration_identity != integration_identity
                 ):
                     raise IntegrationEvidenceInvalid()
-                return document, _reader_status(document, now=now)
+                return (
+                    EvidenceGenerationBundle(
+                        usage=document,
+                        pool_authority=current_generation.pool_authority,
+                        binding=current_generation.binding,
+                    ),
+                    _reader_status(
+                        document,
+                        now=now,
+                        pool_authority=current_generation.pool_authority,
+                    ),
+                )
             finally:
                 _close_fds(generations_fd, integration_fd, app_fd, state_fd)
     except IntegrationBusy:
-        return {}, "busy"
+        return None, "busy"
     except (IntegrationEvidenceUnavailable, FileNotFoundError):
-        return {}, "unavailable"
+        return None, "unavailable"
     except (IntegrationEvidenceInvalid, IntegrationInvalidSource, ValueError, OSError):
-        return {}, "invalid"
+        return None, "invalid"
+
+
+def read_current_evidence(
+    *,
+    state_home: Path,
+    data_home: Path,
+    expected_entrypoint_path: Path,
+    now: datetime,
+) -> tuple[dict[str, object], str]:
+    """Return UsageEvidenceV2 from the single validated V2 generation bundle."""
+    bundle, status = read_current_generation_bundle(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=expected_entrypoint_path,
+        now=now,
+    )
+    return (bundle.usage if bundle is not None else {}), status
 
 
 def _safe_unlink_owned_file(parent_fd: int, name: str, identity: FileIdentity) -> None:
@@ -1613,19 +1791,23 @@ def _remove_safe_staging_directory(generations_fd: int, name: str) -> None:
         with os.scandir(staging_fd) as iterator:
             for entry in iterator:
                 entries.append(entry)
-                if len(entries) > 4:
+                if len(entries) > 6:
                     raise IntegrationEvidenceInvalid()
         snapshots: list[tuple[str, os.stat_result, int]] = []
         for entry in entries:
             if entry.name not in {
                 "account-usage-v2.json",
                 "account-usage-v2.binding.json",
+                POOL_AUTHORITY_FILENAME,
             } and _STAGING_FILE_RE.fullmatch(entry.name) is None:
                 raise IntegrationEvidenceInvalid()
             item = entry.stat(follow_symlinks=False)
-            maximum = (
-                _BINDING_MAX_BYTES if "binding" in entry.name else _PAYLOAD_MAX_BYTES
-            )
+            if "binding" in entry.name:
+                maximum = _BINDING_MAX_BYTES
+            elif "pool-authority" in entry.name:
+                maximum = POOL_AUTHORITY_MAX_BYTES
+            else:
+                maximum = _PAYLOAD_MAX_BYTES
             private_io._require_private_file_stat(
                 item,
                 maximum=maximum,
@@ -2023,11 +2205,12 @@ def _inspect_complete_generation(
         with os.scandir(generation_fd) as entries:
             for entry in entries:
                 names.add(entry.name)
-                if len(names) > 2:
+                if len(names) > 3:
                     raise IntegrationEvidenceInvalid()
         if names != {
             "account-usage-v2.json",
             "account-usage-v2.binding.json",
+            POOL_AUTHORITY_FILENAME,
         }:
             raise IntegrationEvidenceInvalid()
         binding_bytes, binding_identity = _read_verified_evidence_file(
@@ -2037,6 +2220,15 @@ def _inspect_complete_generation(
             hook=lambda *_: None,
         )
         binding = parse_binding(binding_bytes)
+        pool_authority_bytes, pool_authority_identity = (
+            _read_verified_evidence_file(
+                generation_fd,
+                binding.pool_authority_filename,
+                maximum=POOL_AUTHORITY_MAX_BYTES,
+                hook=lambda *_: None,
+            )
+        )
+        pool_authority = parse_pool_authority_projection(pool_authority_bytes)
         payload, payload_identity = _read_verified_evidence_file(
             generation_fd,
             binding.payload_filename,
@@ -2044,11 +2236,30 @@ def _inspect_complete_generation(
             hook=lambda *_: None,
         )
         document = validate_v2_payload_bytes(payload)
+        usage_account_ids = {
+            item["account_id"]
+            for item in cast(list[dict[str, object]], document["accounts"])
+        }
+        authority_account_ids = {
+            item["account_id"]
+            for item in cast(list[dict[str, object]], pool_authority["authorities"])
+        }
         if (
             binding.generation_id != generation_id
             or len(payload) != binding.payload_size_bytes
             or hashlib.sha256(payload).hexdigest() != binding.payload_sha256
             or binding.published_at != document["generated_at"]
+            or len(pool_authority_bytes) != binding.pool_authority_size_bytes
+            or hashlib.sha256(pool_authority_bytes).hexdigest()
+            != binding.pool_authority_sha256
+            or pool_authority["generation_id"] != binding.generation_id
+            or pool_authority["release_id"] != binding.release_id
+            or pool_authority["producer_version"] != binding.producer_version
+            or pool_authority["issued_at"] != binding.published_at
+            or pool_authority["usage_payload_sha256"] != binding.payload_sha256
+            or pool_authority["usage_binding_sha256"]
+            != hashlib.sha256(serialize_usage_binding(binding)).hexdigest()
+            or usage_account_ids != authority_account_ids
             or _fd_identity(generation_fd) != generation_identity
             or _named_identity(generations_fd, generation_id, directory=True)
             != generation_identity
@@ -2061,6 +2272,7 @@ def _inspect_complete_generation(
             ).astimezone(UTC),
             generation_identity=generation_identity,
             binding_identity=binding_identity,
+            pool_authority_identity=pool_authority_identity,
             payload_identity=payload_identity,
         )
     finally:
@@ -2314,6 +2526,16 @@ def _publish_evidence_generation_locked(
         ):
             raise IntegrationEvidenceInvalid()
 
+        authority_source_bytes, _authority_source_identity = (
+            _read_verified_evidence_file(
+                integration_fd,
+                POOL_AUTHORITY_SOURCE_FILENAME,
+                maximum=POOL_AUTHORITY_SOURCE_MAX_BYTES,
+                hook=_before_publish_pool_authority_source_recheck,
+            )
+        )
+        authority_source = parse_pool_authority_source(authority_source_bytes)
+
         namespace = _recover_evidence_staging_from_fds(
             integration_fd=integration_fd,
             generations_fd=generations_fd,
@@ -2399,15 +2621,47 @@ def _publish_evidence_generation_locked(
         staged_identity = _fd_identity(generation_fd)
         binding = EvidenceBinding(
             active_manifest_sha256=verified.active_manifest_sha256,
-            binding_schema_version=1,
+            binding_schema_version=2,
             generation_id=generation_id,
             payload_filename="account-usage-v2.json",
             payload_sha256=payload_digest,
             payload_size_bytes=len(payload),
             published_at=published_at,
-            producer_version="0.6.536",
+            producer_version="0.6.537",
             release_id=verified.release_id,
             source_manifest_sha256=verified.source_manifest_sha256,
+            usage_binding_schema_version=2,
+            pool_authority_filename=POOL_AUTHORITY_FILENAME,
+            pool_authority_sha256="0" * 64,
+            pool_authority_size_bytes=1,
+        )
+        usage_binding_digest = hashlib.sha256(
+            serialize_usage_binding(binding)
+        ).hexdigest()
+        pool_authority = build_pool_authority_projection(
+            source=authority_source,
+            usage_document=document,
+            generation_id=generation_id,
+            release_id=verified.release_id,
+            usage_payload_sha256=payload_digest,
+            usage_binding_sha256=usage_binding_digest,
+        )
+        pool_authority_bytes = serialize_pool_authority_projection(pool_authority)
+        binding = EvidenceBinding(
+            active_manifest_sha256=binding.active_manifest_sha256,
+            binding_schema_version=2,
+            generation_id=binding.generation_id,
+            payload_filename=binding.payload_filename,
+            payload_sha256=binding.payload_sha256,
+            payload_size_bytes=binding.payload_size_bytes,
+            published_at=binding.published_at,
+            producer_version=binding.producer_version,
+            release_id=binding.release_id,
+            source_manifest_sha256=binding.source_manifest_sha256,
+            usage_binding_schema_version=2,
+            pool_authority_filename=POOL_AUTHORITY_FILENAME,
+            pool_authority_sha256=hashlib.sha256(pool_authority_bytes).hexdigest(),
+            pool_authority_size_bytes=len(pool_authority_bytes),
         )
         binding_bytes = serialize_binding(binding)
         if parse_binding(binding_bytes) != binding:
@@ -2418,6 +2672,13 @@ def _publish_evidence_generation_locked(
             payload,
             maximum=_PAYLOAD_MAX_BYTES,
             hook=_before_publish_payload_recheck,
+        )
+        _write_staged_file(
+            generation_fd,
+            POOL_AUTHORITY_FILENAME,
+            pool_authority_bytes,
+            maximum=POOL_AUTHORITY_MAX_BYTES,
+            hook=_before_publish_pool_authority_recheck,
         )
         _write_staged_file(
             generation_fd,
@@ -2502,7 +2763,7 @@ def _publish_evidence_generation_locked(
         return pointer
     except IntegrationEvidenceError:
         raise
-    except IntegrationInvalidSource as exc:
+    except (IntegrationInvalidSource, PoolAuthorityInvalid) as exc:
         raise IntegrationEvidenceInvalid() from exc
     except ValueError as exc:
         raise IntegrationEvidenceInvalid() from exc
