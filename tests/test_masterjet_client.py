@@ -1276,6 +1276,12 @@ def test_https_secret_uses_encoded_session_id_on_fixed_admin_route(monkeypatch):
             ("POST", "/admin/v1/ollama/instances/ollama-instance-1/probe"),
             {"expected_generation": 4, "idempotency_key": "idem-ollama-probe"},
         ),
+        (
+            "ollama.instance.stop",
+            {"instance_ref": "ollama-instance-1"},
+            ("POST", "/admin/v1/ollama/instances/ollama-instance-1/stop"),
+            {"expected_generation": 4, "idempotency_key": "idem-ollama-stop"},
+        ),
     ],
 )
 def test_https_documented_operations_use_fixed_routes_without_get_body(

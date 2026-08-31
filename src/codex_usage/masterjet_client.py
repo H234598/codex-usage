@@ -35,6 +35,10 @@ from .masterjet_contracts import (
     parse_google_oauth_transaction,
     parse_google_projects,
     parse_google_provision_plan,
+    parse_ollama_fleet_apply,
+    parse_ollama_fleet_plan,
+    parse_ollama_fleet_probe,
+    parse_ollama_fleet_stop,
     parse_openai_accounts,
     parse_operation_status,
     parse_secret_ingress_receipt,
@@ -140,6 +144,7 @@ _OPERATION_ARGUMENT_FIELDS = {
     ),
     "ollama.instance.apply": ({"plan_id": "token"}, frozenset()),
     "ollama.instance.probe": ({"instance_ref": "token"}, frozenset()),
+    "ollama.instance.stop": ({"instance_ref": "token"}, frozenset()),
     "secret.ingress.create": (
         {
             "account_ref": "token",
@@ -581,6 +586,14 @@ def _https_operation_route(
             "POST",
             f"/admin/v1/ollama/instances/{quote(instance_ref, safe='')}/probe",
         )
+    if operation == "ollama.instance.stop":
+        instance_ref = arguments.get("instance_ref")
+        if type(instance_ref) is not str:
+            raise MasterjetClientError("control.request_invalid")
+        return (
+            "POST",
+            f"/admin/v1/ollama/instances/{quote(instance_ref, safe='')}/stop",
+        )
     if operation == "ollama.instance.apply":
         plan_id = arguments.get("plan_id")
         if type(plan_id) is not str:
@@ -862,6 +875,22 @@ def _decode_response(
             ):
                 raise MasterjetClientError("control.response_invalid")
             return result
+        if operation in {
+            "ollama.instance.plan",
+            "ollama.instance.apply",
+            "ollama.instance.probe",
+            "ollama.instance.stop",
+        }:
+            try:
+                return parse_operation_status(payload)
+            except ControlContractError:
+                if operation == "ollama.instance.plan":
+                    return parse_ollama_fleet_plan(payload)
+                if operation == "ollama.instance.apply":
+                    return parse_ollama_fleet_apply(payload)
+                if operation == "ollama.instance.probe":
+                    return parse_ollama_fleet_probe(payload)
+                return parse_ollama_fleet_stop(payload)
         return parse_control_operation(payload)
     except ControlContractError:
         raise MasterjetClientError("control.response_invalid") from None

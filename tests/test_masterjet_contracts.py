@@ -858,6 +858,21 @@ def test_operation_status_has_null_until_terminal_and_a_typed_host_probe_result(
     assert done.result is not None
 
 
+def test_operation_status_accepts_terminal_unknown_without_fabricating_result() -> None:
+    status = parse_operation_status(
+        valid_operation()
+        | {
+            "state": "unknown",
+            "reason_codes": ["host.operation_unknown"],
+            "result_kind": None,
+            "result": None,
+        }
+    )
+
+    assert status.operation.state == "unknown"
+    assert status.result is None
+
+
 @pytest.mark.parametrize(
     "payload",
     [

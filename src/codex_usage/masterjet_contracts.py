@@ -56,9 +56,20 @@ _ABSOLUTE_PATH_RE = re.compile(
     r"(?:^|[^A-Za-z0-9_])(?:file://|/(?:[^\s]*)|\\\\[^\s]+|[A-Za-z]:[\\/])"
 )
 _OPERATION_STATES = frozenset(
-    {"planned", "queued", "running", "partial", "succeeded", "failed", "blocked"}
+    {
+        "planned",
+        "queued",
+        "running",
+        "partial",
+        "succeeded",
+        "failed",
+        "blocked",
+        "unknown",
+    }
 )
-_TERMINAL_OPERATION_STATES = frozenset({"partial", "succeeded", "failed", "blocked"})
+_TERMINAL_OPERATION_STATES = frozenset(
+    {"partial", "succeeded", "failed", "blocked", "unknown"}
+)
 _PUBLIC_AGENT_REASON_CODES = frozenset(
     {
         "host.unreachable",
@@ -67,6 +78,8 @@ _PUBLIC_AGENT_REASON_CODES = frozenset(
         "host.lease_expired",
         "host.capability_mismatch",
         "host.probe_failed",
+        "host.operation_succeeded",
+        "host.operation_failed",
         "host.operation_unknown",
         "resource.host_response_invalid",
         "resource.host_unreachable",
@@ -649,6 +662,37 @@ class OllamaStopResultV1:
 
 
 @dataclass(frozen=True, slots=True)
+class OllamaFleetPlanImmediateV1:
+    """The bounded local-plan shape rendered by the same fleet consumer."""
+
+    plan_id: str
+    plan_digest: str
+    expected_generation: int
+    resource_generation: int | None
+    instance_ref: str
+
+    def __post_init__(self) -> None:
+        _token(self.plan_id, "plan_id")
+        _plan_digest(self.plan_digest)
+        _generation(self.expected_generation, "expected_generation")
+        _optional_generation(self.resource_generation, "resource_generation")
+        _token(self.instance_ref, "instance_ref")
+
+
+@dataclass(frozen=True, slots=True)
+class OllamaFleetApplyImmediateV1:
+    generation: int
+    instance_ref: str
+    readiness: OllamaProbeResultV1
+
+    def __post_init__(self) -> None:
+        _generation(self.generation, "generation")
+        _token(self.instance_ref, "instance_ref")
+        if type(self.readiness) is not OllamaProbeResultV1:
+            _invalid("readiness")
+
+
+@dataclass(frozen=True, slots=True)
 class ControlOperationStatusV1:
     operation: ControlOperation
     result_kind: str | None
@@ -1079,6 +1123,75 @@ def parse_operation_status(payload: object) -> ControlOperationStatusV1:
         _invalid("result")
     result = _parse_agent_result(result_kind, result_payload)
     return ControlOperationStatusV1(operation, result_kind, result)
+
+
+def parse_ollama_fleet_plan(payload: object) -> OllamaFleetPlanImmediateV1:
+    data = _document(
+        payload,
+        {
+            "plan_id",
+            "plan_digest",
+            "expected_generation",
+            "resource_generation",
+            "instance",
+        },
+    )
+    instance = _document(data["instance"], {
+        "ref",
+        "label",
+        "host_ref",
+        "selected_model_refs",
+        "allowed_cpus",
+        "cpu_quota_percent",
+        "cpu_weight",
+        "lifecycle_state",
+        "readiness_state",
+        "path_state",
+    })
+    if instance["path_state"] != "configured_private":
+        _invalid("instance")
+    return OllamaFleetPlanImmediateV1(
+        _token(data["plan_id"], "plan_id"),
+        _plan_digest(data["plan_digest"]),
+        _generation(data["expected_generation"], "expected_generation"),
+        _optional_generation(data["resource_generation"], "resource_generation"),
+        _token(instance["ref"], "instance.ref"),
+    )
+
+
+def parse_ollama_fleet_apply(payload: object) -> OllamaFleetApplyImmediateV1:
+    data = _document(payload, {"generation", "instance", "readiness", "hive_lanes"})
+    instance = _document(data["instance"], {
+        "ref", "label", "host_ref", "selected_model_refs", "allowed_cpus",
+        "cpu_quota_percent", "cpu_weight", "lifecycle_state", "readiness_state",
+        "path_state",
+    })
+    if instance["path_state"] != "configured_private" or not isinstance(
+        data["hive_lanes"], list
+    ):
+        _invalid("instance")
+    readiness = _parse_agent_result("ollama.instance.probe", data["readiness"])
+    if type(readiness) is not OllamaProbeResultV1:
+        _invalid("readiness")
+    return OllamaFleetApplyImmediateV1(
+        _generation(data["generation"], "generation"),
+        _token(instance["ref"], "instance.ref"),
+        readiness,
+    )
+
+
+def parse_ollama_fleet_probe(payload: object) -> OllamaProbeResultV1:
+    result = _parse_agent_result("ollama.instance.probe", payload)
+    if type(result) is not OllamaProbeResultV1:
+        _invalid("probe")
+    return result
+
+
+def parse_ollama_fleet_stop(payload: object) -> OllamaStopResultV1:
+    data = _document(payload, {"schema_version", "stopped"})
+    if data["schema_version"] != 1:
+        _invalid("schema_version")
+    return OllamaStopResultV1(_bool(data["stopped"], "stopped"))
 
 
 def _parse_agent_result(
