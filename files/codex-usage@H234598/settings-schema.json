@@ -50,6 +50,7 @@
       "sections": [
         "openai-accounts-section",
         "masterjet-connection-section",
+        "ollama-fleet-section",
         "reactivation-options-section"
       ]
     },
@@ -140,6 +141,13 @@
       "title": "Masterjet-Verbindung",
       "keys": [
         "masterjet-connection"
+      ]
+    },
+    "ollama-fleet-section": {
+      "type": "section",
+      "title": "Ollama-Flotte",
+      "keys": [
+        "ollama-fleet-plan"
       ]
     },
     "display-section": {
@@ -446,6 +454,12 @@
     "widget": "MasterjetConnectionWidget",
     "description": "Kanonische Codex-Usage-Verbindung und Status",
     "tooltip": "Liest und testet ausschließlich die kanonische config.toml. Bearer, TOTP und eine zweite Verbindungsautorität sind keine Settingswerte.",
+    "default": ""
+  },
+  "ollama-fleet-plan": {
+    "type": "entry",
+    "description": "Ollama-Plan-Konfiguration (JSON)",
+    "tooltip": "Begrenzte Planfelder: ref, label, host_ref, ollama_executable, models_directory, selected_model_refs, allowed_cpus, cpu_quota_percent, cpu_weight, expected_generation. Keine Zugangsdaten eintragen; das Applet zeigt die Konfiguration nie an.",
     "default": ""
   },
   "panel-value-count": {

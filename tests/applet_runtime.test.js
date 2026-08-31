@@ -15437,3 +15437,100 @@ test("cleanup is idempotent across 100 applet removals", () => {
     assert.equal(applet.menu, null);
   }
 });
+
+function ollamaFleetPlanConfig() {
+  return JSON.stringify({
+    ref: "remote-west",
+    label: "Remote West",
+    host_ref: "worker-west",
+    ollama_executable: "/usr/bin/ollama",
+    models_directory: "/srv/ollama/models",
+    selected_model_refs: ["model-a"],
+    allowed_cpus: "2-3",
+    cpu_quota_percent: 200,
+    cpu_weight: 50,
+    expected_generation: 4,
+  });
+}
+
+function ollamaFleetRender(operationId, state, mutationAllowed) {
+  return {
+    operation_id: operationId,
+    plan_id: "operation-plan",
+    plan_digest: "sha256:" + "a".repeat(64),
+    state,
+    mutation_allowed: mutationAllowed,
+    remote: true,
+  };
+}
+
+test("Ollama fleet menu uses the canonical CLI poll path before apply", () => {
+  const applet = makeApplet();
+  const calls = [];
+  const actions = [];
+  const replies = [
+    ollamaFleetRender("operation-plan", "queued", false),
+    ollamaFleetRender("operation-plan", "succeeded", true),
+    ollamaFleetRender("operation-apply", "queued", false),
+  ];
+  applet.ollamaFleetPlan = ollamaFleetPlanConfig();
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._buildUsageMenu = () => {};
+  applet._showCommandError = (error) => { throw new Error(error); };
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv.slice());
+    callback(replies.shift(), null);
+  };
+  applet.menu = {
+    addAction(label, callback) {
+      const item = { label, callback, setSensitive(value) { this.sensitive = value; } };
+      actions.push(item);
+      return item;
+    },
+    addMenuItem() {},
+  };
+
+  applet._addOllamaFleetActions();
+  actions.find((item) => item.label === "Ollama-Plan starten").callback();
+  assert.deepEqual(calls[0], [
+    "codex-usage", "masterjet", "ollama", "plan",
+    "--ref", "remote-west", "--label", "Remote West",
+    "--host-ref", "worker-west", "--ollama-executable", "/usr/bin/ollama",
+    "--models-directory", "/srv/ollama/models", "--selected-model-ref", "model-a",
+    "--allowed-cpus", "2-3", "--cpu-quota-percent", "200", "--cpu-weight", "50",
+    "--expected-generation", "4", "--idempotency-key",
+    calls[0][calls[0].length - 1],
+  ]);
+  assert.equal(applet._ollamaFleet.state, "queued");
+  assert.equal(applet._ollamaFleet.mutationAllowed, false);
+
+  applet._runOllamaFleet("poll");
+  assert.deepEqual(calls[1].slice(0, 8), [
+    "codex-usage", "masterjet", "ollama", "poll",
+    "--operation-id", "operation-plan", "--plan-id", "operation-plan",
+  ]);
+  assert.equal(applet._ollamaFleet.state, "succeeded");
+  assert.equal(applet._ollamaFleet.mutationAllowed, true);
+
+  applet._runOllamaFleet("apply");
+  assert.equal(calls[2][3], "apply");
+  assert.equal(calls[2].includes("--expected-generation"), true);
+  assert.equal(applet._ollamaFleet.state, "queued");
+  assert.equal(applet._ollamaFleet.mutationAllowed, false);
+});
+
+test("Ollama failed stale and unknown renders lock every mutation", () => {
+  for (const state of ["failed", "stale", "unknown"]) {
+    const applet = makeApplet();
+    let calls = 0;
+    applet._buildUsageMenu = () => {};
+    applet._showCommandError = () => {};
+    applet._spawnAuxJson = () => { calls += 1; };
+    applet._acceptOllamaFleetRender(ollamaFleetRender("operation-plan", state, false));
+    assert.equal(applet._ollamaFleet.mutationAllowed, false, state);
+    applet._runOllamaFleet("apply");
+    applet._runOllamaFleet("probe");
+    applet._runOllamaFleet("stop");
+    assert.equal(calls, 0, state);
+  }
+});

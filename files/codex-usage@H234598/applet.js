@@ -22,6 +22,8 @@ const MAX_CONSUMPTION_WINDOWS = 64;
 const MAX_TEXT_CHARS = 500;
 const COMMAND_TIMEOUT_MS = 120000;
 const AUX_COMMAND_TIMEOUT_MS = 30000;
+const MAX_OLLAMA_FLEET_CONFIG_CHARS = 4096;
+const MAX_OLLAMA_FLEET_ID_CHARS = 128;
 const DEVICE_LOGIN_TIMEOUT_MS = 910000;
 const MAX_DEFERRED_AUX_REQUESTS = 8;
 const REACTIVATION_TIMEOUT_MS = 900000;
@@ -145,6 +147,7 @@ CodexUsageApplet.prototype = {
         this.panelHeight = panelHeight;
         this.commandPath = "codex-usage";
         this.configPath = "";
+        this.ollamaFleetPlan = "";
         this.autoRefresh = true;
         this.pollOwner = "auto";
         this.refreshInterval = 300;
@@ -249,6 +252,10 @@ CodexUsageApplet.prototype = {
         this._auxCommand = "";
         this._auxTimeoutId = 0;
         this._auxGeneration = 0;
+        // This is only the current CLI render projection.  It is deliberately
+        // not an applet queue or persistent second source of fleet state.
+        this._ollamaFleet = this._emptyOllamaFleetState();
+        this._ollamaFleetRequest = 0;
         this._healthProcess = null;
         this._healthTimeoutId = 0;
         this._settingsMaximizeId = 0;
@@ -393,6 +400,7 @@ CodexUsageApplet.prototype = {
         });
         bind("command-path", "commandPath", this._onCommandSettingsChanged);
         bind("config-path", "configPath", this._onCommandSettingsChanged);
+        bind("ollama-fleet-plan", "ollamaFleetPlan", this._rebuildMenu);
         bind("auto-refresh", "autoRefresh", this._onRefreshSettingsChanged);
         bind("poll-owner", "pollOwner", this._onPollOwnerChanged);
         bind("refresh-interval", "refreshInterval", this._onRefreshSettingsChanged);
@@ -8642,6 +8650,251 @@ CodexUsageApplet.prototype = {
         }
     },
 
+    _emptyOllamaFleetState: function() {
+        return {
+            operationId: "",
+            planId: "",
+            planDigest: "",
+            state: "unknown",
+            mutationAllowed: false,
+            instanceRef: "",
+            expectedGeneration: null,
+            remote: false
+        };
+    },
+
+    _ollamaFleetText: function(value, maximum) {
+        return typeof value === "string" && value.length > 0 &&
+            value.length <= maximum && value.indexOf("\u0000") === -1 &&
+            !/[\x00-\x1f]/.test(value) ? value : null;
+    },
+
+    _ollamaFleetIdentifier: function(value) {
+        let text = this._ollamaFleetText(value, MAX_OLLAMA_FLEET_ID_CHARS);
+        return text && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(text) ? text : null;
+    },
+
+    _ollamaFleetPlanConfig: function() {
+        let raw = this._ollamaFleetText(this.ollamaFleetPlan, MAX_OLLAMA_FLEET_CONFIG_CHARS);
+        if (!raw) {
+            return null;
+        }
+        let value;
+        try {
+            value = JSON.parse(raw);
+        } catch (e) {
+            return null;
+        }
+        let required = [
+            "ref", "label", "host_ref", "ollama_executable", "models_directory",
+            "selected_model_refs", "allowed_cpus", "cpu_quota_percent", "cpu_weight",
+            "expected_generation"
+        ];
+        if (!value || typeof value !== "object" || Array.isArray(value) ||
+            Object.keys(value).length !== required.length) {
+            return null;
+        }
+        for (let index = 0; index < required.length; index++) {
+            if (!Object.prototype.hasOwnProperty.call(value, required[index])) {
+                return null;
+            }
+        }
+        let reference = this._ollamaFleetIdentifier(value.ref);
+        let hostRef = this._ollamaFleetIdentifier(value.host_ref);
+        let label = this._ollamaFleetText(value.label, 128);
+        let executable = this._ollamaFleetText(value.ollama_executable, 1024);
+        let modelsDirectory = this._ollamaFleetText(value.models_directory, 1024);
+        let allowedCpus = this._ollamaFleetText(value.allowed_cpus, 128);
+        let models = value.selected_model_refs;
+        if (!reference || !hostRef || !label || !executable || !modelsDirectory || !allowedCpus ||
+            !Array.isArray(models) || models.length < 1 || models.length > 16 ||
+            models.some(Lang.bind(this, function(model) {
+                return !this._ollamaFleetIdentifier(model);
+            })) || !Number.isInteger(value.cpu_quota_percent) ||
+            !Number.isInteger(value.cpu_weight) || !Number.isInteger(value.expected_generation) ||
+            value.cpu_quota_percent < 1 || value.cpu_quota_percent > 10000 ||
+            value.cpu_weight < 1 || value.cpu_weight > 10000 ||
+            value.expected_generation < 0 || value.expected_generation > 2147483647) {
+            return null;
+        }
+        return {
+            ref: reference,
+            label: label,
+            hostRef: hostRef,
+            executable: executable,
+            modelsDirectory: modelsDirectory,
+            models: models.slice(),
+            allowedCpus: allowedCpus,
+            cpuQuotaPercent: value.cpu_quota_percent,
+            cpuWeight: value.cpu_weight,
+            expectedGeneration: value.expected_generation
+        };
+    },
+
+    _ollamaFleetIdempotencyKey: function(action) {
+        this._ollamaFleetRequest += 1;
+        return "applet-ollama-" + action + "-" + Date.now().toString(36) + "-" +
+            this._ollamaFleetRequest.toString(36);
+    },
+
+    _acceptOllamaFleetRender: function(payload) {
+        let required = [
+            "operation_id", "plan_id", "plan_digest", "state", "mutation_allowed", "remote"
+        ];
+        if (!payload || typeof payload !== "object" || Array.isArray(payload) ||
+            Object.keys(payload).length !== required.length) {
+            return false;
+        }
+        for (let index = 0; index < required.length; index++) {
+            if (!Object.prototype.hasOwnProperty.call(payload, required[index])) {
+                return false;
+            }
+        }
+        let operationId = this._ollamaFleetIdentifier(payload.operation_id);
+        let planId = this._ollamaFleetIdentifier(payload.plan_id);
+        let digest = this._ollamaFleetText(payload.plan_digest, 80);
+        let state = this._ollamaFleetText(payload.state, 32);
+        if (!operationId || !planId || !digest || !/^sha256:[0-9a-f]{64}$/.test(digest) ||
+            ["queued", "leased", "succeeded", "failed", "stale", "unknown"].indexOf(state) < 0 ||
+            typeof payload.mutation_allowed !== "boolean" || typeof payload.remote !== "boolean") {
+            return false;
+        }
+        let previous = this._ollamaFleet || this._emptyOllamaFleetState();
+        this._ollamaFleet = {
+            operationId: operationId,
+            planId: planId,
+            planDigest: digest,
+            state: state,
+            // A terminal success is the only mutation gate.  Every failure,
+            // stale projection, or unknown state remains locked locally.
+            mutationAllowed: state === "succeeded" && payload.mutation_allowed === true,
+            instanceRef: previous.instanceRef || "",
+            expectedGeneration: previous.expectedGeneration,
+            remote: payload.remote
+        };
+        return true;
+    },
+
+    _setOllamaFleetUnknown: function() {
+        let previous = this._ollamaFleet || this._emptyOllamaFleetState();
+        this._ollamaFleet = {
+            operationId: previous.operationId,
+            planId: previous.planId,
+            planDigest: previous.planDigest,
+            state: "unknown",
+            mutationAllowed: false,
+            instanceRef: previous.instanceRef,
+            expectedGeneration: previous.expectedGeneration,
+            remote: previous.remote
+        };
+    },
+
+    _runOllamaFleet: function(action) {
+        if (this._removed || this._safeMode ||
+            ["plan", "poll", "apply", "probe", "stop"].indexOf(action) < 0) {
+            return;
+        }
+        let state = this._ollamaFleet || this._emptyOllamaFleetState();
+        let config = null;
+        if (action === "plan" || action === "probe" || action === "stop") {
+            config = this._ollamaFleetPlanConfig();
+            if (!config) {
+                this._showCommandError(_("Ollama-Plan-Konfiguration ist ungültig"));
+                return;
+            }
+        }
+        if (action !== "plan" && (!state.operationId || !state.planId || !state.planDigest)) {
+            this._showCommandError(_("Keine Ollama-Operation zum Abrufen vorhanden"));
+            return;
+        }
+        if (action === "apply" || action === "probe" || action === "stop") {
+            if (!state.mutationAllowed || !state.instanceRef ||
+                !Number.isInteger(state.expectedGeneration) ||
+                ((action === "probe" || action === "stop") && config.ref !== state.instanceRef)) {
+                return;
+            }
+        }
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            this._showCommandError(_("Ollama-Befehl konnte nicht vorbereitet werden"));
+            return;
+        }
+        argv.push("masterjet", "ollama", action);
+        if (action === "plan") {
+            argv.push(
+                "--ref", config.ref, "--label", config.label, "--host-ref", config.hostRef,
+                "--ollama-executable", config.executable, "--models-directory", config.modelsDirectory
+            );
+            for (let index = 0; index < config.models.length; index++) {
+                argv.push("--selected-model-ref", config.models[index]);
+            }
+            argv.push(
+                "--allowed-cpus", config.allowedCpus,
+                "--cpu-quota-percent", String(config.cpuQuotaPercent),
+                "--cpu-weight", String(config.cpuWeight),
+                "--expected-generation", String(config.expectedGeneration),
+                "--idempotency-key", this._ollamaFleetIdempotencyKey(action)
+            );
+            this._ollamaFleet = this._emptyOllamaFleetState();
+            this._ollamaFleet.instanceRef = config.ref;
+            this._ollamaFleet.expectedGeneration = config.expectedGeneration;
+        } else {
+            argv.push(
+                "--operation-id", state.operationId, "--plan-id", state.planId,
+                "--plan-digest", state.planDigest
+            );
+            if (action !== "poll") {
+                argv.push(
+                    "--expected-generation", String(state.expectedGeneration),
+                    "--idempotency-key", this._ollamaFleetIdempotencyKey(action)
+                );
+                if (action === "probe" || action === "stop") {
+                    argv.push("--instance-ref", state.instanceRef);
+                }
+            }
+        }
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+            if (error || !this._acceptOllamaFleetRender(payload)) {
+                this._setOllamaFleetUnknown();
+                this._showCommandError(_("Ollama-Flottenoperation konnte nicht ausgeführt werden"));
+            }
+            this._buildUsageMenu();
+        }), false, AUX_COMMAND_TIMEOUT_MS);
+    },
+
+    _addOllamaFleetActions: function() {
+        if (!this.menu) {
+            return;
+        }
+        let fleet = this._ollamaFleet || this._emptyOllamaFleetState();
+        let configured = this._ollamaFleetPlanConfig() !== null;
+        let stateLabel = fleet.operationId
+            ? _("Ollama · ") + fleet.operationId + " · " + fleet.state
+            : _("Ollama · keine Operation");
+        this._addDisabled(this.menu, stateLabel, "codex-usage-detail");
+        let add = Lang.bind(this, function(label, action, enabled) {
+            let item = this.menu.addAction(label, Lang.bind(this, function() {
+                this._runSafely("ollama " + action, Lang.bind(this, function() {
+                    this._runOllamaFleet(action);
+                }));
+            }));
+            if (!enabled && item && item.setSensitive) {
+                item.setSensitive(false);
+            }
+        });
+        add(_("Ollama-Plan starten"), "plan", configured);
+        add(_("Ollama-Operation abrufen"), "poll", Boolean(fleet.operationId));
+        let mutable = fleet.mutationAllowed && Boolean(fleet.instanceRef) &&
+            Number.isInteger(fleet.expectedGeneration);
+        add(_("Ollama-Plan anwenden"), "apply", mutable);
+        add(_("Ollama prüfen"), "probe", mutable && configured &&
+            this._ollamaFleetPlanConfig().ref === fleet.instanceRef);
+        add(_("Ollama stoppen"), "stop", mutable && configured &&
+            this._ollamaFleetPlanConfig().ref === fleet.instanceRef);
+    },
+
     _addActions: function() {
         let refreshLabel = this._refreshing ? _("Aktualisierung läuft …") : _("Jetzt aktualisieren");
         let refreshItem = this.menu.addAction(refreshLabel, Lang.bind(this, function() {
@@ -8660,6 +8913,7 @@ CodexUsageApplet.prototype = {
                 })
             );
         }
+        this._addOllamaFleetActions();
         this.menu.addAction(_("Codex Analytics öffnen"), Lang.bind(this, function() {
             this._runSafely("analytics action", Lang.bind(this, this._openAnalytics));
         }));
