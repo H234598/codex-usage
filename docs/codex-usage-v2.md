@@ -321,7 +321,11 @@ producer-eigenes `codex_usage/__pycache__` außerhalb des attestierten
 Baumhashs zugelassen: jedes enthaltene Bytecodefile muss privat, regulär,
 einfach verlinkt, größenbegrenzt, zur laufenden CPython-Version passend und
 über seinen exakten Namen einer vorhandenen attestierten `.py`-Quelldatei
-zugeordnet sein. Der Installer führt diese Dateien weder aus noch löscht oder
+zugeordnet sein. Flags und alle 16 Headerbytes müssen nach PEP 552 exakt zur
+no-follow gelesenen Quelle passen; der Marshal-Payload muss ihrer
+deterministischen Kompilierung entsprechen. Die PYC-Bytes werden nicht in den
+historischen Baumhash aufgenommen, weil dies dessen vorhandene Digestbindung
+brechen würde. Der Installer führt diese Dateien weder aus noch löscht oder
 übernimmt er sie; unbekannte Cache-Namen, Cacheorte und sonstige Zusätze
 bleiben fail-closed. Die `0.6.537`-Runtime- und Releasebaumprüfung besitzt
 diese einmalige Cutover-Ausnahme nicht. Unter denselben Release→Current-EX-Locks

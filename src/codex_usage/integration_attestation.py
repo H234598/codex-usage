@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import marshal
 import os
 import stat
 from collections.abc import Mapping
@@ -248,11 +249,14 @@ def _validate_expected_runtime_bytecode(
     cache_fd: int,
     cache_item: os.stat_result,
     python_directory: str,
+    package_path: Path,
 ) -> int:
     cache_tag = "cpython-" + python_directory.removeprefix("python").replace(".", "")
-    expected_names: set[str] = set()
+    expected_sources: dict[str, tuple[bytes, os.stat_result, Path]] = {}
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     directory_flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    file_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
     source_scan_fd = os.open(".", directory_flags, dir_fd=package_fd)
     try:
         with os.scandir(source_scan_fd) as entries:
@@ -265,7 +269,55 @@ def _validate_expected_runtime_bytecode(
                     and item.st_nlink == 1
                     and stat.S_IMODE(item.st_mode) == 0o600
                 ):
-                    expected_names.add(f"{entry.name[:-3]}.{cache_tag}.pyc")
+                    source_fd = -1
+                    try:
+                        source_fd = os.open(
+                            entry.name,
+                            file_flags,
+                            dir_fd=source_scan_fd,
+                        )
+                        opened = os.fstat(source_fd)
+                        source_payload = bytearray()
+                        while len(source_payload) <= MAX_ATTESTATION_FILE_BYTES:
+                            chunk = os.read(
+                                source_fd,
+                                min(
+                                    65_536,
+                                    MAX_ATTESTATION_FILE_BYTES + 1 - len(source_payload),
+                                ),
+                            )
+                            if not chunk:
+                                break
+                            source_payload.extend(chunk)
+                        final = os.fstat(source_fd)
+                        if (
+                            opened.st_dev != item.st_dev
+                            or opened.st_ino != item.st_ino
+                            or opened.st_mode != item.st_mode
+                            or opened.st_uid != item.st_uid
+                            or opened.st_nlink != item.st_nlink
+                            or opened.st_size != item.st_size
+                            or opened.st_mtime_ns != item.st_mtime_ns
+                            or opened.st_ctime_ns != item.st_ctime_ns
+                            or final.st_dev != opened.st_dev
+                            or final.st_ino != opened.st_ino
+                            or final.st_mode != opened.st_mode
+                            or final.st_uid != opened.st_uid
+                            or final.st_nlink != opened.st_nlink
+                            or final.st_size != opened.st_size
+                            or final.st_mtime_ns != opened.st_mtime_ns
+                            or final.st_ctime_ns != opened.st_ctime_ns
+                            or len(source_payload) > MAX_ATTESTATION_FILE_BYTES
+                        ):
+                            raise _unavailable()
+                        expected_sources[f"{entry.name[:-3]}.{cache_tag}.pyc"] = (
+                            bytes(source_payload),
+                            opened,
+                            package_path / entry.name,
+                        )
+                    finally:
+                        if source_fd >= 0:
+                            os.close(source_fd)
     finally:
         os.close(source_scan_fd)
     if (
@@ -282,12 +334,11 @@ def _validate_expected_runtime_bytecode(
     ):
         raise _unavailable()
     count = 0
-    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    file_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
     with os.scandir(cache_fd) as entries:
         for entry in entries:
             count += 1
-            if count > len(expected_names) or entry.name not in expected_names:
+            source = expected_sources.get(entry.name)
+            if count > len(expected_sources) or source is None:
                 raise _unavailable()
             initial = entry.stat(follow_symlinks=False)
             if (
@@ -316,6 +367,27 @@ def _validate_expected_runtime_bytecode(
                         break
                     payload.extend(chunk)
                 final = os.fstat(fd)
+                source_payload, source_item, source_path = source
+                flags = int.from_bytes(payload[4:8], "little")
+                if flags == 0:
+                    expected_header_data = (
+                        (int(source_item.st_mtime) & 0xFFFFFFFF).to_bytes(4, "little")
+                        + (len(source_payload) & 0xFFFFFFFF).to_bytes(4, "little")
+                    )
+                elif flags in {1, 3}:
+                    expected_header_data = importlib.util.source_hash(source_payload)
+                else:
+                    raise _unavailable()
+                try:
+                    expected_code = compile(
+                        source_payload,
+                        str(source_path),
+                        "exec",
+                        dont_inherit=True,
+                        optimize=0,
+                    )
+                except (MemoryError, OverflowError, SyntaxError, ValueError):
+                    raise _unavailable() from None
                 if (
                     opened.st_dev != initial.st_dev
                     or opened.st_ino != initial.st_ino
@@ -334,7 +406,9 @@ def _validate_expected_runtime_bytecode(
                     or final.st_mtime_ns != opened.st_mtime_ns
                     or final.st_ctime_ns != opened.st_ctime_ns
                     or len(payload) > MAX_ATTESTATION_FILE_BYTES
-                    or not payload.startswith(importlib.util.MAGIC_NUMBER)
+                    or payload[:4] != importlib.util.MAGIC_NUMBER
+                    or payload[8:16] != expected_header_data
+                    or payload[16:] != marshal.dumps(expected_code)
                 ):
                     raise _unavailable()
             finally:
@@ -455,6 +529,10 @@ def _release_tree_rows(
                                             python_directory=Path(
                                                 expected_runtime_bytecode_root
                                             ).parts[2],
+                                            package_path=release_dir
+                                            / expected_runtime_bytecode_root.removeprefix(
+                                                "./"
+                                            ),
                                         )
                                         if entries_seen > MAX_RELEASE_TREE_ENTRIES:
                                             raise _unavailable()

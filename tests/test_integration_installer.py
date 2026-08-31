@@ -1015,21 +1015,40 @@ def test_runtime_rejects_compromised_06535_but_installer_upgrades_verified_06536
         verify_compromised_06535_runtime(tmp_path / "compromised-06535")
 
 
-def _write_runtime_bytecode(release_dir: Path) -> Path:
+def _write_runtime_bytecode(
+    release_dir: Path,
+    *,
+    invalidation_mode: py_compile.PycInvalidationMode = (
+        py_compile.PycInvalidationMode.TIMESTAMP
+    ),
+) -> Path:
     source = next(
         release_dir.glob(
             "venv/lib/python*/site-packages/codex_usage/integration_entrypoint.py"
         )
     )
     cache_path = Path(importlib.util.cache_from_source(str(source)))
-    py_compile.compile(str(source), cfile=str(cache_path), doraise=True)
+    py_compile.compile(
+        str(source),
+        cfile=str(cache_path),
+        doraise=True,
+        invalidation_mode=invalidation_mode,
+    )
     cache_path.parent.chmod(0o755)
     cache_path.chmod(0o600)
     return cache_path
 
 
+@pytest.mark.parametrize(
+    "invalidation_mode",
+    (
+        py_compile.PycInvalidationMode.TIMESTAMP,
+        py_compile.PycInvalidationMode.CHECKED_HASH,
+    ),
+)
 def test_install_cutover_accepts_expected_runtime_bytecode_in_06536_release(
     tmp_path,
+    invalidation_mode,
 ):
     from codex_usage import integration_attestation, integration_installer
 
@@ -1044,7 +1063,10 @@ def test_install_cutover_accepts_expected_runtime_bytecode_in_06536_release(
             python_executable=Path(sys.executable),
             temporary_root=temporary_root,
         )
-    cache_path = _write_runtime_bytecode(previous.release_dir)
+    cache_path = _write_runtime_bytecode(
+        previous.release_dir,
+        invalidation_mode=invalidation_mode,
+    )
 
     installed = integration_installer.install_release(
         source_root=source_root,
@@ -1068,7 +1090,14 @@ def test_install_cutover_accepts_expected_runtime_bytecode_in_06536_release(
 
 @pytest.mark.parametrize(
     "addition",
-    ("unknown-cache-name", "foreign-release-file", "attested-source-tampering"),
+    (
+        "unknown-cache-name",
+        "foreign-release-file",
+        "invalid-pyc-flags",
+        "pyc-header-source-mismatch",
+        "pyc-payload-tampering",
+        "attested-source-tampering",
+    ),
 )
 def test_install_cutover_rejects_unexpected_addition_beside_06536_runtime_bytecode(
     tmp_path,
@@ -1094,6 +1123,21 @@ def test_install_cutover_rejects_unexpected_addition_beside_06536_runtime_byteco
     elif addition == "foreign-release-file":
         unexpected = previous.release_dir / "foreign-runtime-artifact"
         unexpected.write_bytes(b"foreign")
+    elif addition == "invalid-pyc-flags":
+        unexpected = cache_path
+        payload = bytearray(unexpected.read_bytes())
+        payload[4:8] = (2).to_bytes(4, "little")
+        unexpected.write_bytes(payload)
+    elif addition == "pyc-header-source-mismatch":
+        unexpected = cache_path
+        payload = bytearray(unexpected.read_bytes())
+        payload[8] ^= 1
+        unexpected.write_bytes(payload)
+    elif addition == "pyc-payload-tampering":
+        unexpected = cache_path
+        payload = bytearray(unexpected.read_bytes())
+        payload[-1] ^= 1
+        unexpected.write_bytes(payload)
     else:
         unexpected = cache_path.parent.parent / "integration_entrypoint.py"
         unexpected.write_bytes(unexpected.read_bytes() + b"\n")
