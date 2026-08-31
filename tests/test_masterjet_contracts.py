@@ -9,6 +9,7 @@ from codex_usage import masterjet_contracts
 from codex_usage.masterjet_contracts import (
     ControlContractError,
     ControlOperation,
+    ControlOperationStatusV1,
     ControlProblem,
     GoogleBillingPlanV1,
     GoogleBillingReceiptV1,
@@ -22,6 +23,7 @@ from codex_usage.masterjet_contracts import (
     SecretIngressReceipt,
     SecretIngressSession,
     parse_control_operation,
+    parse_operation_status,
     parse_control_problem,
     parse_google_account_add_receipt,
     parse_google_account_list,
@@ -174,6 +176,29 @@ def valid_operation() -> dict[str, object]:
         "not_attempted_count": 3,
         "reason_codes": ["quota.provider_exhausted"],
     }
+
+
+def host_probe_result() -> dict[str, object]:
+    evidence = {
+        "kernel_class": "linux",
+        "architecture_class": "x86_64",
+        "cpu_count": 8,
+        "memory_class": "8-31-gib",
+        "cgroup_v2": True,
+        "systemd": True,
+        "load_class": "idle",
+        "pressure_class": "none",
+        "ollama_capability": True,
+        "observed_at": "2026-08-28T10:00:00Z",
+        "agent_generation": 1,
+    }
+    import hashlib
+    import json
+
+    encoded = json.dumps(
+        evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
+    return evidence | {"evidence_digest": "sha256:" + hashlib.sha256(encoded).hexdigest()}
 
 
 def valid_google_provision_plan() -> dict[str, object]:
@@ -807,6 +832,64 @@ def test_control_operation_parses_bounded_timestamp_and_reason_codes():
     assert operation.state == "partial"
     assert operation.reason_codes == ("quota.provider_exhausted",)
     assert operation.expires_at == datetime(2026, 8, 28, 12, 30, tzinfo=UTC)
+
+
+def test_operation_status_has_null_until_terminal_and_a_typed_host_probe_result():
+    """RED: result fields and the typed operation-status parser do not exist."""
+
+    running = parse_operation_status(
+        valid_operation()
+        | {"state": "running", "result_kind": None, "result": None}
+    )
+    done = parse_operation_status(
+        valid_operation()
+        | {
+            "kind": "hosts.probe",
+            "state": "succeeded",
+            "reason_codes": [],
+            "result_kind": "host.probe",
+            "result": host_probe_result(),
+        }
+    )
+
+    assert type(running) is ControlOperationStatusV1
+    assert running.result is None
+    assert done.result_kind == "host.probe"
+    assert done.result is not None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        valid_operation()
+        | {
+            "kind": "hosts.probe",
+            "state": "succeeded",
+            "reason_codes": [],
+            "result_kind": "host.unknown",
+            "result": host_probe_result(),
+        },
+        valid_operation()
+        | {
+            "kind": "hosts.probe",
+            "state": "succeeded",
+            "reason_codes": ["host.unlisted"],
+            "result_kind": "host.probe",
+            "result": host_probe_result(),
+        },
+        valid_operation()
+        | {
+            "kind": "hosts.probe",
+            "state": "succeeded",
+            "reason_codes": [],
+            "result_kind": "host.probe",
+            "result": host_probe_result() | {"private_marker": "hidden"},
+        },
+    ],
+)
+def test_operation_status_rejects_unknown_types_codes_and_private_fields(payload):
+    with pytest.raises(ControlContractError, match=r"control\.response_invalid"):
+        parse_operation_status(payload)
 
 
 def test_control_operation_accepts_complete_spec_v1_fixture():

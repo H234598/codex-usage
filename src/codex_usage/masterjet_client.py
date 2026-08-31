@@ -23,6 +23,7 @@ from .config import MasterjetConnection
 from .masterjet_contracts import (
     ControlContractError,
     ControlProblem,
+    parse_operation_status,
     parse_control_operation,
     parse_control_problem,
     parse_google_account_add_receipt,
@@ -874,12 +875,14 @@ def _decode_response(
             ):
                 raise MasterjetClientError("control.response_invalid")
             return plan
-        result = parse_control_operation(payload)
-        if operation == "operations.get" and (
-            type(arguments) is not dict or result.id != arguments.get("operation_id")
-        ):
-            raise MasterjetClientError("control.response_invalid")
-        return result
+        if operation == "operations.get":
+            result = parse_operation_status(payload)
+            if type(arguments) is not dict or result.operation.id != arguments.get(
+                "operation_id"
+            ):
+                raise MasterjetClientError("control.response_invalid")
+            return result
+        return parse_control_operation(payload)
     except ControlContractError:
         raise MasterjetClientError("control.response_invalid") from None
 

@@ -44,6 +44,7 @@ from codex_usage.masterjet_credentials import (
     bearer_provider_from_fd,
     bearer_provider_from_systemd_credentials,
 )
+from codex_usage.masterjet_contracts import ControlOperationStatusV1
 from codex_usage.models import Account
 
 REDIRECT_URI = "http://127.0.0.1:8765/oauth/callback"
@@ -1593,6 +1594,38 @@ def test_operations_get_binds_returned_operation_id(monkeypatch):
             "operations.get",
             {"operation_id": "plan-1", "account_ref": "google-1"},
         )
+
+
+def test_operations_get_returns_the_typed_asynchronous_status(monkeypatch):
+    """RED: client currently decodes operations.get as an untyped operation."""
+
+    payload = {
+        "schema_version": 1,
+        "id": "operation-one",
+        "kind": "hosts.probe",
+        "state": "running",
+        "expected_generation": 4,
+        "resulting_generation": None,
+        "plan_digest": "sha256:" + "a" * 64,
+        "created_at": "2026-08-28T12:00:00Z",
+        "expires_at": "2026-08-28T12:05:00Z",
+        "completed_count": 0,
+        "failed_count": 0,
+        "not_attempted_count": 1,
+        "reason_codes": [],
+        "result_kind": None,
+        "result": None,
+    }
+    FakeHTTPSConnection.response = FakeHTTPResponse(json.dumps(payload).encode())
+    monkeypatch.setattr(client_module.http.client, "HTTPSConnection", FakeHTTPSConnection)
+
+    result = https_client(bearer_provider=lambda: "remote-bearer").call(
+        "operations.get", {"operation_id": "operation-one"}
+    )
+
+    assert type(result) is ControlOperationStatusV1
+    assert result.operation.id == "operation-one"
+    assert result.result is None
 
 
 @pytest.mark.parametrize(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 import unicodedata
@@ -56,6 +58,38 @@ _ABSOLUTE_PATH_RE = re.compile(
 _OPERATION_STATES = frozenset(
     {"planned", "queued", "running", "partial", "succeeded", "failed", "blocked"}
 )
+_TERMINAL_OPERATION_STATES = frozenset({"partial", "succeeded", "failed", "blocked"})
+_PUBLIC_AGENT_REASON_CODES = frozenset(
+    {
+        "host.unreachable",
+        "host.identity_mismatch",
+        "host.generation_stale",
+        "host.lease_expired",
+        "host.capability_mismatch",
+        "host.probe_failed",
+        "host.operation_unknown",
+        "resource.host_response_invalid",
+        "resource.host_unreachable",
+        "control.plan_stale",
+    }
+)
+_OPERATION_STATUS_FIELDS = {
+    "schema_version",
+    "id",
+    "kind",
+    "state",
+    "expected_generation",
+    "resulting_generation",
+    "plan_digest",
+    "created_at",
+    "expires_at",
+    "completed_count",
+    "failed_count",
+    "not_attempted_count",
+    "reason_codes",
+    "result_kind",
+    "result",
+}
 _PROBLEM_TEMPLATES = {
     "control.step_up_required": (
         "warning",
@@ -520,6 +554,133 @@ class ControlOperation:
 
 
 @dataclass(frozen=True, slots=True)
+class HostProbeResultV1:
+    kernel_class: str
+    architecture_class: str
+    cpu_count: int
+    memory_class: str
+    cgroup_v2: bool
+    systemd: bool
+    load_class: str
+    pressure_class: str
+    ollama_capability: bool
+    observed_at: datetime
+    agent_generation: int
+    evidence_digest: str
+
+    def __post_init__(self) -> None:
+        if self.kernel_class not in {"linux", "other"}:
+            _invalid("kernel_class")
+        if self.architecture_class not in {"x86_64", "arm64", "other"}:
+            _invalid("architecture_class")
+        _count(self.cpu_count, "cpu_count", 2**31 - 1)
+        if self.cpu_count == 0 or self.memory_class not in {
+            "under-8-gib",
+            "8-31-gib",
+            "32-127-gib",
+            "128-plus-gib",
+        }:
+            _invalid("memory_class")
+        for field in ("cgroup_v2", "systemd", "ollama_capability"):
+            _bool(getattr(self, field), field)
+        if self.load_class not in {"idle", "busy", "saturated"}:
+            _invalid("load_class")
+        if self.pressure_class not in {"none", "low", "elevated"}:
+            _invalid("pressure_class")
+        _timestamp_value(self.observed_at, "observed_at")
+        _generation(self.agent_generation, "agent_generation")
+        _plan_digest(self.evidence_digest)
+
+
+@dataclass(frozen=True, slots=True)
+class OllamaPlanResultV1:
+    plan_ref: str
+
+    def __post_init__(self) -> None:
+        _token(self.plan_ref, "plan_ref")
+
+
+@dataclass(frozen=True, slots=True)
+class OllamaApplyResultV1:
+    instance_ref: str
+    generation: int
+
+    def __post_init__(self) -> None:
+        _token(self.instance_ref, "instance_ref")
+        _generation(self.generation, "generation")
+
+
+@dataclass(frozen=True, slots=True)
+class OllamaProbeResultV1:
+    ready: bool
+    reason_codes: tuple[str, ...]
+    process_running: bool
+    cgroup_member: bool
+    loopback_endpoint_reachable: bool
+    available_model_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for field in (
+            "ready",
+            "process_running",
+            "cgroup_member",
+            "loopback_endpoint_reachable",
+        ):
+            _bool(getattr(self, field), field)
+        _public_agent_reason_codes(self.reason_codes)
+        if type(self.available_model_ids) is not tuple or len(self.available_model_ids) > 64:
+            _invalid("available_model_ids")
+        if len(set(self.available_model_ids)) != len(self.available_model_ids):
+            _invalid("available_model_ids")
+        for model_id in self.available_model_ids:
+            _token(model_id, "available_model_ids")
+
+
+@dataclass(frozen=True, slots=True)
+class OllamaStopResultV1:
+    stopped: bool
+
+    def __post_init__(self) -> None:
+        _bool(self.stopped, "stopped")
+
+
+@dataclass(frozen=True, slots=True)
+class ControlOperationStatusV1:
+    operation: ControlOperation
+    result_kind: str | None
+    result: (
+        HostProbeResultV1
+        | OllamaPlanResultV1
+        | OllamaApplyResultV1
+        | OllamaProbeResultV1
+        | OllamaStopResultV1
+        | None
+    )
+
+    def __post_init__(self) -> None:
+        if type(self.operation) is not ControlOperation:
+            _invalid("operation")
+        if self.result_kind is None or self.result is None:
+            if self.result_kind is not None or self.result is not None:
+                _invalid("result")
+            return
+        expected = {
+            "host.probe": HostProbeResultV1,
+            "ollama.instance.plan": OllamaPlanResultV1,
+            "ollama.instance.apply": OllamaApplyResultV1,
+            "ollama.instance.probe": OllamaProbeResultV1,
+            "ollama.instance.stop": OllamaStopResultV1,
+        }.get(self.result_kind)
+        if (
+            expected is None
+            or type(self.result) is not expected
+            or self.operation.state not in _TERMINAL_OPERATION_STATES
+            or any(code not in _PUBLIC_AGENT_REASON_CODES for code in self.operation.reason_codes)
+        ):
+            _invalid("result")
+
+
+@dataclass(frozen=True, slots=True)
 class SecretIngressSession:
     id: str
     account_ref: str
@@ -897,6 +1058,128 @@ def parse_control_operation(payload: object) -> ControlOperation:
         reason_codes=_parse_reason_codes(data["reason_codes"]),
     )
     return operation
+
+
+def parse_operation_status(payload: object) -> ControlOperationStatusV1:
+    """Parse the exact public ``operations.get`` envelope."""
+
+    data = _document(payload, _OPERATION_STATUS_FIELDS)
+    operation = parse_control_operation(
+        {field: data[field] for field in _OPERATION_STATUS_FIELDS - {"result_kind", "result"}}
+    )
+    result_kind = data["result_kind"]
+    result_payload = data["result"]
+    if result_kind is None and result_payload is None:
+        return ControlOperationStatusV1(operation, None, None)
+    if type(result_kind) is not str or result_payload is None:
+        _invalid("result")
+    result = _parse_agent_result(result_kind, result_payload)
+    return ControlOperationStatusV1(operation, result_kind, result)
+
+
+def _parse_agent_result(
+    result_kind: str, payload: object
+) -> (
+    HostProbeResultV1
+    | OllamaPlanResultV1
+    | OllamaApplyResultV1
+    | OllamaProbeResultV1
+    | OllamaStopResultV1
+):
+    if result_kind == "host.probe":
+        data = _mapping(
+            payload,
+            {
+                "kernel_class",
+                "architecture_class",
+                "cpu_count",
+                "memory_class",
+                "cgroup_v2",
+                "systemd",
+                "load_class",
+                "pressure_class",
+                "ollama_capability",
+                "observed_at",
+                "agent_generation",
+                "evidence_digest",
+            },
+        )
+        observed_at = data["observed_at"]
+        if type(observed_at) is not str or not re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",
+            observed_at,
+        ):
+            _invalid("observed_at")
+        result = HostProbeResultV1(
+            kernel_class=data["kernel_class"],  # type: ignore[arg-type]
+            architecture_class=data["architecture_class"],  # type: ignore[arg-type]
+            cpu_count=data["cpu_count"],  # type: ignore[arg-type]
+            memory_class=data["memory_class"],  # type: ignore[arg-type]
+            cgroup_v2=data["cgroup_v2"],  # type: ignore[arg-type]
+            systemd=data["systemd"],  # type: ignore[arg-type]
+            load_class=data["load_class"],  # type: ignore[arg-type]
+            pressure_class=data["pressure_class"],  # type: ignore[arg-type]
+            ollama_capability=data["ollama_capability"],  # type: ignore[arg-type]
+            observed_at=_timestamp(observed_at, "observed_at"),
+            agent_generation=data["agent_generation"],  # type: ignore[arg-type]
+            evidence_digest=data["evidence_digest"],  # type: ignore[arg-type]
+        )
+        evidence = {
+            "kernel_class": data["kernel_class"],
+            "architecture_class": data["architecture_class"],
+            "cpu_count": data["cpu_count"],
+            "memory_class": data["memory_class"],
+            "cgroup_v2": data["cgroup_v2"],
+            "systemd": data["systemd"],
+            "load_class": data["load_class"],
+            "pressure_class": data["pressure_class"],
+            "ollama_capability": data["ollama_capability"],
+            "observed_at": observed_at,
+            "agent_generation": data["agent_generation"],
+        }
+        digest = "sha256:" + hashlib.sha256(
+            json.dumps(
+                evidence, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+            ).encode("ascii")
+        ).hexdigest()
+        if result.evidence_digest != digest:
+            _invalid("evidence_digest")
+        return result
+    if result_kind == "ollama.instance.plan":
+        data = _mapping(payload, {"plan_ref"})
+        return OllamaPlanResultV1(data["plan_ref"])  # type: ignore[arg-type]
+    if result_kind == "ollama.instance.apply":
+        data = _mapping(payload, {"instance_ref", "generation"})
+        return OllamaApplyResultV1(
+            data["instance_ref"], data["generation"]  # type: ignore[arg-type]
+        )
+    if result_kind == "ollama.instance.probe":
+        data = _mapping(
+            payload,
+            {
+                "ready",
+                "reason_codes",
+                "process_running",
+                "cgroup_member",
+                "loopback_endpoint_reachable",
+                "available_model_ids",
+            },
+        )
+        model_ids = _list(data["available_model_ids"], "available_model_ids", 64)
+        return OllamaProbeResultV1(
+            ready=data["ready"],  # type: ignore[arg-type]
+            reason_codes=_public_agent_reason_codes(
+                tuple(_list(data["reason_codes"], "reason_codes", _MAX_REASON_CODES))
+            ),
+            process_running=data["process_running"],  # type: ignore[arg-type]
+            cgroup_member=data["cgroup_member"],  # type: ignore[arg-type]
+            loopback_endpoint_reachable=data["loopback_endpoint_reachable"],  # type: ignore[arg-type]
+            available_model_ids=tuple(model_ids),  # type: ignore[arg-type]
+        )
+    if result_kind == "ollama.instance.stop":
+        data = _mapping(payload, {"stopped"})
+        return OllamaStopResultV1(data["stopped"])  # type: ignore[arg-type]
+    _invalid("result_kind")
 
 
 def parse_secret_ingress_session(payload: object) -> SecretIngressSession:
@@ -1329,6 +1612,18 @@ def _reason_codes(value: object) -> tuple[str, ...]:
         _invalid("reason_codes")
     result = tuple(_code(code, "reason_codes") for code in value)
     if len(set(result)) != len(result):
+        _invalid("reason_codes")
+    return result
+
+
+def _public_agent_reason_codes(value: object) -> tuple[str, ...]:
+    if type(value) is not tuple or len(value) > _MAX_REASON_CODES:
+        _invalid("reason_codes")
+    result = tuple(_code(code, "reason_codes") for code in value)
+    if (
+        len(set(result)) != len(result)
+        or any(code not in _PUBLIC_AGENT_REASON_CODES for code in result)
+    ):
         _invalid("reason_codes")
     return result
 
