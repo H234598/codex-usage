@@ -16,8 +16,9 @@ integration-snapshot --schema 2 --format json
 
 Andere Argumente, PATH-Auflösung, ein allgemeiner `codex-usage`-CLI-Aufruf,
 Schema-1-Fallback und erneutes Lesen alter Snapshotquellen sind unzulässig.
-Einzige Consumerquelle ist die unten definierte immutable V2-Generation mit
-`account-usage-v2.json`, `pool-authority-v2.json`, Binding und `current.json`.
+Einzige Consumerquelle sind der separate Pointer `current.json` und die von
+ihm referenzierte immutable V2-Generation mit exakt `account-usage-v2.json`,
+`pool-authority-v2.json` und `account-usage-v2.binding.json`.
 Der frühere feste V1-Cachepfad ist nach dem Cutover keine Consumerquelle;
 es gibt weder Legacy-Read noch Dual-Write.
 
