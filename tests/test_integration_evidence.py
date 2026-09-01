@@ -2606,26 +2606,21 @@ def test_publish_teardown_failures_return_committed_pointer_and_attempt_all_clea
     assert len(close_attempts) >= 8
     assert len(unlock_attempts) == 3
     integration = state_home / "codex-usage/integration"
-    lock_root = integration_evidence.private_io._private_lock_root()
-    expected_unlock_targets = {
-        str(
-            lock_root
-            / integration_evidence.private_io._private_lock_name(
-                integration / integration_evidence.POOL_AUTHORITY_SOURCE_FILENAME
-            )
+
+    def documented_lock_name(target: Path) -> str:
+        digest = hashlib.sha256(os.fsencode(os.path.abspath(target))).hexdigest()
+        return f"{digest}.lock"
+
+    expected_unlock_names = {
+        documented_lock_name(
+            integration / integration_evidence.POOL_AUTHORITY_SOURCE_FILENAME
         ),
-        str(
-            lock_root
-            / integration_evidence._evidence_lock_name(
-                integration / "producer-install"
-            )
-        ),
-        str(
-            lock_root
-            / integration_evidence._evidence_lock_name(integration / "current.json")
-        ),
+        documented_lock_name(integration / "producer-install"),
+        documented_lock_name(integration / "current.json"),
     }
-    assert set(unlock_targets) == expected_unlock_targets
+    observed_unlock_targets = tuple(Path(target) for target in unlock_targets)
+    assert len({target.parent for target in observed_unlock_targets}) == 1
+    assert {target.name for target in observed_unlock_targets} == expected_unlock_names
 
 
 def test_fd_private_io_round_trip_and_identity(tmp_path):

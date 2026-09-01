@@ -4942,8 +4942,12 @@ def test_history_commands_cover_table_query_and_prune(monkeypatch, capsys):
             return 2 if dry_run else 1
 
     monkeypatch.setattr(cli_module, "HistoryStore", Store)
-    status_args = SimpleNamespace(path=Path("history"), format="table")
-    assert cli_module._cmd_history_status(status_args) == 0
+    assert (
+        cli_module._cmd_history_status(
+            SimpleNamespace(path=Path("history"), format="table")
+        )
+        == 0
+    )
     assert "Samples: 1" in capsys.readouterr().out
 
     query_args = SimpleNamespace(
