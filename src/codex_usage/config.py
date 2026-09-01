@@ -410,7 +410,7 @@ def add_or_update_account(
             if existing is None and config.pool_authority.configured:
                 from .pool_authority_owner import begin_account_set_invalidation
 
-                pending = begin_account_set_invalidation()
+                pending = begin_account_set_invalidation(config_path=config_path)
             _save_config_unlocked(updated, config_path)
             if pending is not None:
                 from .pool_authority_owner import finish_account_set_invalidation
@@ -610,7 +610,7 @@ def remove_account(
         if config.pool_authority.configured:
             from .pool_authority_owner import begin_account_set_invalidation
 
-            pending = begin_account_set_invalidation()
+            pending = begin_account_set_invalidation(config_path=config_path)
         _save_config_unlocked(updated, config_path)
         if pending is not None:
             from .pool_authority_owner import finish_account_set_invalidation
@@ -666,7 +666,7 @@ def restore_account(
         if existing is None and config.pool_authority.configured:
             from .pool_authority_owner import begin_account_set_invalidation
 
-            pending = begin_account_set_invalidation()
+            pending = begin_account_set_invalidation(config_path=config_path)
         _save_config_unlocked(restored, config_path)
         if pending is not None:
             from .pool_authority_owner import finish_account_set_invalidation

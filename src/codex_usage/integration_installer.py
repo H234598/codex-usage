@@ -65,6 +65,7 @@ SOURCE_MODULES = (
     "integration_evidence.py",
     "integration_entrypoint.py",
     "integration_pool_authority.py",
+    "pool_authority_owner.py",
     "integration_snapshot.py",
     "json_utils.py",
     "models.py",

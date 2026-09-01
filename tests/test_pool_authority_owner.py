@@ -12,6 +12,8 @@ from codex_usage.config import (
     AppConfig,
     add_or_update_account,
     load_config,
+    remove_account,
+    restore_account,
     save_config,
 )
 from codex_usage.integration_pool_authority import parse_pool_authority_source
@@ -310,6 +312,240 @@ def test_account_set_change_invalidates_configured_authority_but_same_id_update_
     )
     assert load_config(config_path).pool_authority.configured is False
     assert not _source_path(state_home).exists()
+
+
+def test_publish_pending_before_config_replace_recovers_by_forward_commit(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config" / "config.toml"
+    state_home = tmp_path / "state"
+    save_config(AppConfig(accounts=(_account("alpha", tmp_path),)), config_path)
+    import codex_usage.pool_authority_owner as owner_module
+
+    owner_module._prepare_source_directory(_source_path(state_home))
+    owner_module._write_pending_publish(
+        owner_module.pool_authority_pending_path(state_home),
+        owner_module.PoolAuthorityConfig(
+            generation=1, authorities=(_authority("alpha"),), configured=True
+        ),
+        expected_generation=0,
+        config_path=config_path,
+    )
+
+    owner_module.recover_pool_authority_pending(config_path=config_path, state_home=state_home)
+
+    assert load_pool_authority_owner(config_path=config_path).generation == 1
+    assert _source_path(state_home).exists()
+    assert not owner_module.pool_authority_pending_path(state_home).exists()
+
+
+def test_remove_and_restore_account_invalidate_source_and_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path, state_home, _saved = _save_complete_authority(tmp_path)
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    original = load_config(config_path).accounts[0]
+
+    removed, account = remove_account("alpha", config_path)
+
+    assert account == original
+    assert removed.pool_authority.configured is False
+    assert not _source_path(state_home).exists()
+    from codex_usage.pool_authority_owner import pool_authority_pending_path
+
+    assert not pool_authority_pending_path(state_home).exists()
+
+    restored = restore_account(original, config_path)
+
+    assert restored.pool_authority.configured is False
+    assert not _source_path(state_home).exists()
+
+
+def test_pending_recovery_is_bound_to_the_selected_config_path(tmp_path: Path) -> None:
+    first = tmp_path / "first" / "config.toml"
+    second = tmp_path / "second" / "config.toml"
+    state_home = tmp_path / "state"
+    save_config(AppConfig(accounts=(_account("alpha", tmp_path),)), first)
+    save_config(AppConfig(accounts=(_account("alpha", tmp_path),)), second)
+    import codex_usage.pool_authority_owner as owner_module
+
+    owner_module._prepare_source_directory(_source_path(state_home))
+    owner_module._write_pending_publish(
+        owner_module.pool_authority_pending_path(state_home),
+        owner_module.PoolAuthorityConfig(1, (_authority("alpha"),), True),
+        expected_generation=0,
+        config_path=first,
+    )
+
+    with pytest.raises(ValueError, match="another config"):
+        owner_module.recover_pool_authority_pending(config_path=second, state_home=state_home)
+
+    assert load_config(first).pool_authority.configured is False
+    assert load_config(second).pool_authority.configured is False
+
+
+@pytest.mark.parametrize("phase", ["config-replaced", "source-replaced"])
+def test_publish_pending_recovers_after_each_post_marker_crash_boundary(
+    tmp_path: Path, phase: str
+) -> None:
+    config_path, state_home, saved = _save_complete_authority(tmp_path)
+    source_path = _source_path(state_home)
+    import codex_usage.pool_authority_owner as owner_module
+
+    replacement = replace(_authority("alpha"), pool_id="pool-after-crash")
+    updated = owner_module._updated_config(
+        load_config(config_path),
+        candidate_authorities=(replacement,),
+        expected_generation=saved.generation,
+    )
+    owner_module._write_pending_publish(
+        owner_module.pool_authority_pending_path(state_home),
+        updated.pool_authority,
+        expected_generation=saved.generation,
+        config_path=config_path,
+    )
+    if phase in {"config-replaced", "source-replaced"}:
+        owner_module._save_config_unlocked(updated, config_path)
+    if phase == "source-replaced":
+        owner_module.write_private_text(
+            source_path,
+            owner_module._source_text((replacement,)),
+            label="pool authority source",
+            mode=0o600,
+        )
+
+    owner_module.recover_pool_authority_pending(config_path=config_path, state_home=state_home)
+
+    assert load_config(config_path).pool_authority == updated.pool_authority
+    assert source_path.read_bytes() == owner_module._source_text((replacement,)).encode()
+    assert not owner_module.pool_authority_pending_path(state_home).exists()
+
+
+@pytest.mark.parametrize("phase", ["source-present", "source-absent", "config-unconfigured"])
+def test_invalidation_pending_recovers_after_each_crash_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    config_path, state_home, _saved = _save_complete_authority(tmp_path)
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    import codex_usage.pool_authority_owner as owner_module
+
+    pending = owner_module.begin_account_set_invalidation(config_path=config_path)
+    if phase in {"source-absent", "config-unconfigured"}:
+        assert not _source_path(state_home).exists()
+    if phase == "config-unconfigured":
+        owner_module._save_config_unlocked(
+            replace(load_config(config_path), pool_authority=owner_module.PoolAuthorityConfig()),
+            config_path,
+        )
+
+    owner_module.recover_pool_authority_pending(config_path=config_path, state_home=state_home)
+
+    assert not pending.exists()
+    assert not _source_path(state_home).exists()
+    assert load_config(config_path).pool_authority.configured is False
+
+
+@pytest.mark.parametrize(
+    "mutation", ["symlink", "mode", "hardlink", "malformed", "unknown", "oversize"]
+)
+def test_untrusted_pending_fails_closed_without_mutation(tmp_path: Path, mutation: str) -> None:
+    config_path, state_home, saved = _save_complete_authority(tmp_path)
+    source_path = _source_path(state_home)
+    previous_source = source_path.read_bytes()
+    import codex_usage.pool_authority_owner as owner_module
+
+    pending = owner_module.pool_authority_pending_path(state_home)
+    pending.write_text("{}\n", encoding="utf-8")
+    pending.chmod(0o600)
+    if mutation == "symlink":
+        pending.unlink()
+        pending.symlink_to(tmp_path / "outside")
+    elif mutation == "mode":
+        pending.chmod(0o644)
+    elif mutation == "hardlink":
+        os.link(pending, tmp_path / "pending-link")
+    elif mutation == "malformed":
+        pass
+    elif mutation == "unknown":
+        pending.write_text('{"unknown":true}\n', encoding="utf-8")
+    elif mutation == "oversize":
+        pending.write_bytes(b"x" * 131073)
+
+    with pytest.raises(ValueError):
+        owner_module.recover_pool_authority_pending(config_path=config_path, state_home=state_home)
+
+    assert source_path.read_bytes() == previous_source
+    assert load_config(config_path).pool_authority.generation == saved.generation == 1
+
+
+def test_source_and_config_rollback_failure_keeps_pending_for_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path, state_home, saved = _save_complete_authority(tmp_path)
+    source_path = _source_path(state_home)
+    previous_source = source_path.read_bytes()
+    import codex_usage.pool_authority_owner as owner_module
+
+    original_save = owner_module._save_config_unlocked
+    original_write = owner_module.write_private_text
+    calls = 0
+
+    def fail_rollback(config, path):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("synthetic rollback failure")
+        original_save(config, path)
+
+    def fail_source(path, text, **kwargs):
+        if kwargs.get("label") == "pool authority source":
+            raise OSError("synthetic source failure")
+        original_write(path, text, **kwargs)
+
+    monkeypatch.setattr(owner_module, "_save_config_unlocked", fail_rollback)
+    monkeypatch.setattr(owner_module, "write_private_text", fail_source)
+
+    with pytest.raises(ExceptionGroup):
+        save_pool_authority_owner(
+            (replace(_authority("alpha"), pool_id="pool-recovered"),),
+            expected_generation=saved.generation,
+            config_path=config_path,
+            state_home=state_home,
+        )
+
+    pending = owner_module.pool_authority_pending_path(state_home)
+    assert pending.exists()
+    assert source_path.read_bytes() == previous_source
+    monkeypatch.setattr(owner_module, "_save_config_unlocked", original_save)
+    monkeypatch.setattr(owner_module, "write_private_text", original_write)
+    owner_module.recover_pool_authority_pending(config_path=config_path, state_home=state_home)
+
+    assert not pending.exists()
+    assert load_config(config_path).pool_authority.generation == saved.generation + 1
+    assert source_path.read_bytes() != previous_source
+
+
+def test_pending_symlink_ancestor_fails_closed_without_touching_config(tmp_path: Path) -> None:
+    config_path, state_home, saved = _save_complete_authority(tmp_path)
+    import codex_usage.pool_authority_owner as owner_module
+
+    owner_module._write_pending(
+        owner_module.pool_authority_pending_path(state_home),
+        {
+            "schema_version": 1,
+            "operation": "invalidate",
+            "config_path": owner_module._config_binding(config_path),
+        },
+    )
+    app_dir = state_home / "codex-usage"
+    outside = tmp_path / "outside"
+    app_dir.rename(outside)
+    app_dir.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink"):
+        owner_module.recover_pool_authority_pending(config_path=config_path, state_home=state_home)
+
+    assert load_config(config_path).pool_authority.generation == saved.generation
 
 
 def test_owner_values_are_never_derived_from_account_metadata(tmp_path: Path) -> None:

@@ -43,6 +43,7 @@ from .private_io import (
     IntegrationEvidenceError,
     IntegrationEvidenceInvalid,
     IntegrationEvidenceUnavailable,
+    private_path_lock,
 )
 
 _LOCK_MAX_BYTES = 4096
@@ -220,10 +221,12 @@ def _before_publish_pool_authority_source_recheck(
     _name: str,
     _held_fd: int,
 ) -> None:
-    from .pool_authority_owner import POOL_AUTHORITY_PENDING_FILENAME
-
     try:
-        os.stat(POOL_AUTHORITY_PENDING_FILENAME, dir_fd=_parent_fd, follow_symlinks=False)
+        os.stat(
+            "pool-authority-owner-pending-v2.json",
+            dir_fd=_parent_fd,
+            follow_symlinks=False,
+        )
     except FileNotFoundError:
         return None
     raise IntegrationEvidenceInvalid()
@@ -2498,12 +2501,16 @@ def _publish_evidence_generation_locked(
         ):
             raise IntegrationEvidenceInvalid()
 
-        authority_source_bytes, _authority_source_identity = _read_verified_evidence_file(
-            integration_fd,
-            POOL_AUTHORITY_SOURCE_FILENAME,
-            maximum=POOL_AUTHORITY_SOURCE_MAX_BYTES,
-            hook=_before_publish_pool_authority_source_recheck,
+        source_lock_path = (
+            state_home / "codex-usage" / "integration" / POOL_AUTHORITY_SOURCE_FILENAME
         )
+        with private_path_lock(source_lock_path, label="pool authority source lock"):
+            authority_source_bytes, _authority_source_identity = _read_verified_evidence_file(
+                integration_fd,
+                POOL_AUTHORITY_SOURCE_FILENAME,
+                maximum=POOL_AUTHORITY_SOURCE_MAX_BYTES,
+                hook=_before_publish_pool_authority_source_recheck,
+            )
         authority_source = parse_pool_authority_source(authority_source_bytes)
 
         namespace = _recover_evidence_staging_from_fds(
