@@ -25,7 +25,6 @@ _SOURCE_FILES = (
     "src/codex_usage/integration_evidence.py",
     "src/codex_usage/integration_entrypoint.py",
     "src/codex_usage/integration_pool_authority.py",
-    "src/codex_usage/pool_authority_owner.py",
     "src/codex_usage/integration_snapshot.py",
     "src/codex_usage/json_utils.py",
     "src/codex_usage/models.py",

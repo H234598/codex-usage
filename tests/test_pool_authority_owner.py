@@ -429,20 +429,25 @@ def test_invalidation_pending_recovers_after_each_crash_boundary(
     monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
     import codex_usage.pool_authority_owner as owner_module
 
-    pending = owner_module.begin_account_set_invalidation(config_path=config_path)
+    previous = load_config(config_path)
+    updated = replace(previous, pool_authority=owner_module.PoolAuthorityConfig())
+    pending = owner_module.begin_account_set_invalidation(
+        previous=previous, updated=updated, config_path=config_path
+    )
     if phase in {"source-absent", "config-unconfigured"}:
-        assert not _source_path(state_home).exists()
-    if phase == "config-unconfigured":
-        owner_module._save_config_unlocked(
-            replace(load_config(config_path), pool_authority=owner_module.PoolAuthorityConfig()),
-            config_path,
-        )
+        owner_module._save_config_unlocked(updated, config_path)
+    if phase == "source-absent":
+        _source_path(state_home).unlink()
 
     owner_module.recover_pool_authority_pending(config_path=config_path, state_home=state_home)
 
     assert not pending.exists()
-    assert not _source_path(state_home).exists()
-    assert load_config(config_path).pool_authority.configured is False
+    if phase == "source-present":
+        assert _source_path(state_home).exists()
+        assert load_config(config_path).pool_authority.configured is True
+    else:
+        assert not _source_path(state_home).exists()
+        assert load_config(config_path).pool_authority.configured is False
 
 
 @pytest.mark.parametrize(
@@ -546,6 +551,38 @@ def test_pending_symlink_ancestor_fails_closed_without_touching_config(tmp_path:
         owner_module.recover_pool_authority_pending(config_path=config_path, state_home=state_home)
 
     assert load_config(config_path).pool_authority.generation == saved.generation
+
+
+def test_failed_account_config_write_recovers_invalidation_to_old_owner_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path, state_home, saved = _save_complete_authority(tmp_path)
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    source_path = _source_path(state_home)
+    old_source = source_path.read_bytes()
+    import codex_usage.config as config_module
+    import codex_usage.pool_authority_owner as owner_module
+
+    original_save = config_module._save_config_unlocked
+
+    def fail_new_config(config, path):
+        if not config.pool_authority.configured:
+            raise OSError("synthetic config write failure")
+        original_save(config, path)
+
+    monkeypatch.setattr(config_module, "_save_config_unlocked", fail_new_config)
+    with pytest.raises(OSError, match="synthetic config"):
+        add_or_update_account(
+            "bravo", profile_dir=str(tmp_path / "profiles" / "bravo"), path=config_path
+        )
+    assert owner_module.pool_authority_pending_path(state_home).exists()
+    monkeypatch.setattr(config_module, "_save_config_unlocked", original_save)
+
+    owner_module.recover_pool_authority_pending(config_path=config_path, state_home=state_home)
+
+    assert not owner_module.pool_authority_pending_path(state_home).exists()
+    assert load_pool_authority_owner(config_path=config_path) == saved
+    assert source_path.read_bytes() == old_source
 
 
 def test_owner_values_are_never_derived_from_account_metadata(tmp_path: Path) -> None:

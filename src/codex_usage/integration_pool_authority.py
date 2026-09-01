@@ -16,6 +16,7 @@ from .json_utils import loads_strict
 from .private_io import IntegrationEvidenceInvalid
 
 POOL_AUTHORITY_SOURCE_FILENAME = "pool-authority-source-v2.json"
+POOL_AUTHORITY_PENDING_FILENAME = "pool-authority-owner-pending-v2.json"
 POOL_AUTHORITY_FILENAME = "pool-authority-v2.json"
 POOL_AUTHORITY_SOURCE_SCHEMA_VERSION = 2
 POOL_AUTHORITY_SCHEMA_VERSION = 2

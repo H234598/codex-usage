@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 import re
 import shutil
@@ -110,6 +111,10 @@ def default_config_path() -> Path:
     return root / APP_NAME / "config.toml"
 
 
+def _pool_authority_owner_api(name: str):
+    return getattr(importlib.import_module("codex_usage.pool_authority_owner"), name)
+
+
 def default_state_dir() -> Path:
     root = _xdg_root("XDG_DATA_HOME", Path.home() / ".local" / "share")
     return root / APP_NAME
@@ -200,6 +205,8 @@ def save_config(config: AppConfig, path: Path | None = None) -> Path:
     _validate_config(config)
     config_path = _select_config_path(path)
     _prepare_config_directory(config_path.parent)
+    _recovery = _pool_authority_owner_api("recover_pool_authority_pending")
+    _recovery(config_path=config_path)
     with private_path_lock(config_path, label="config lock"):
         _save_config_unlocked(config, config_path)
     return config_path
@@ -309,9 +316,12 @@ def add_or_update_account(
         raise ValueError("rollback_callback must be callable")
     config_path = _select_config_path(path)
     _prepare_config_directory(config_path.parent)
+    _pool_authority_owner_api("recover_pool_authority_pending")(config_path=config_path)
     from .account_lock import account_lock
 
     account_guard = nullcontext() if _all_accounts_lock_held else account_lock("__all_accounts__")
+    pending = None
+    previous_config = None
     with account_guard, private_path_lock(config_path, label="config lock"):
         config = load_config(config_path)
         existing = next((item for item in config.accounts if item.id == account_id), None)
@@ -406,16 +416,12 @@ def add_or_update_account(
                     source_auth_json,
                     target_auth_json,
                 )
-            pending = None
             if existing is None and config.pool_authority.configured:
-                from .pool_authority_owner import begin_account_set_invalidation
-
-                pending = begin_account_set_invalidation(config_path=config_path)
+                pending = _pool_authority_owner_api("begin_account_set_invalidation")(
+                    previous=config, updated=updated, config_path=config_path
+                )
+                previous_config = config
             _save_config_unlocked(updated, config_path)
-            if pending is not None:
-                from .pool_authority_owner import finish_account_set_invalidation
-
-                finish_account_set_invalidation(pending)
         except Exception as original_error:
             rollback_errors: list[Exception] = []
             try:
@@ -500,6 +506,14 @@ def add_or_update_account(
                     [original_error, *(error for _, error in state_rollback_errors)],
                 ) from None
             raise original_error
+    if pending is not None:
+        assert previous_config is not None
+        finish_account_set_invalidation = _pool_authority_owner_api(
+            "finish_account_set_invalidation"
+        )
+        finish_account_set_invalidation(
+            previous=previous_config, updated=updated, config_path=config_path
+        )
     return updated, account
 
 
@@ -591,6 +605,8 @@ def remove_account(
     expected: Account | None = None,
 ) -> tuple[AppConfig, Account]:
     config_path = _select_config_path(path)
+    _recovery = _pool_authority_owner_api("recover_pool_authority_pending")
+    _recovery(config_path=config_path)
     _prepare_config_directory(config_path.parent)
     with private_path_lock(config_path, label="config lock"):
         config = load_config(config_path)
@@ -608,14 +624,15 @@ def remove_account(
         _validate_config(updated)
         pending = None
         if config.pool_authority.configured:
-            from .pool_authority_owner import begin_account_set_invalidation
-
-            pending = begin_account_set_invalidation(config_path=config_path)
+            pending = _pool_authority_owner_api("begin_account_set_invalidation")(
+                previous=config, updated=updated, config_path=config_path
+            )
         _save_config_unlocked(updated, config_path)
-        if pending is not None:
-            from .pool_authority_owner import finish_account_set_invalidation
-
-            finish_account_set_invalidation(pending)
+    if pending is not None:
+        finish_account_set_invalidation = _pool_authority_owner_api(
+            "finish_account_set_invalidation"
+        )
+        finish_account_set_invalidation(previous=config, updated=updated, config_path=config_path)
     return updated, account
 
 
@@ -631,6 +648,8 @@ def restore_account(
     if index is not None and type(index) is not int:
         raise ValueError("restore index must be an integer")
     config_path = _select_config_path(path)
+    _recovery = _pool_authority_owner_api("recover_pool_authority_pending")
+    _recovery(config_path=config_path)
     _prepare_config_directory(config_path.parent)
     with private_path_lock(config_path, label="config lock"):
         config = load_config(config_path)
@@ -664,14 +683,15 @@ def restore_account(
         _validate_config(restored)
         pending = None
         if existing is None and config.pool_authority.configured:
-            from .pool_authority_owner import begin_account_set_invalidation
-
-            pending = begin_account_set_invalidation(config_path=config_path)
+            pending = _pool_authority_owner_api("begin_account_set_invalidation")(
+                previous=config, updated=restored, config_path=config_path
+            )
         _save_config_unlocked(restored, config_path)
-        if pending is not None:
-            from .pool_authority_owner import finish_account_set_invalidation
-
-            finish_account_set_invalidation(pending)
+    if pending is not None:
+        finish_account_set_invalidation = _pool_authority_owner_api(
+            "finish_account_set_invalidation"
+        )
+        finish_account_set_invalidation(previous=config, updated=restored, config_path=config_path)
     return restored
 
 

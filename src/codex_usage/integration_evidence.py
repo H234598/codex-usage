@@ -24,6 +24,7 @@ from .integration_attestation import VerifiedActiveManifest, verify_active_manif
 from .integration_pool_authority import (
     POOL_AUTHORITY_FILENAME,
     POOL_AUTHORITY_MAX_BYTES,
+    POOL_AUTHORITY_PENDING_FILENAME,
     POOL_AUTHORITY_SOURCE_FILENAME,
     POOL_AUTHORITY_SOURCE_MAX_BYTES,
     PoolAuthorityInvalid,
@@ -223,7 +224,7 @@ def _before_publish_pool_authority_source_recheck(
 ) -> None:
     try:
         os.stat(
-            "pool-authority-owner-pending-v2.json",
+            POOL_AUTHORITY_PENDING_FILENAME,
             dir_fd=_parent_fd,
             follow_symlinks=False,
         )

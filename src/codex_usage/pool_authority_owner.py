@@ -27,6 +27,7 @@ from .config import (
     load_config,
 )
 from .integration_pool_authority import (
+    POOL_AUTHORITY_PENDING_FILENAME,
     POOL_AUTHORITY_SOURCE_FILENAME,
     POOL_AUTHORITY_SOURCE_MAX_BYTES,
     PoolAuthorityInvalid,
@@ -42,8 +43,6 @@ from .private_io import (
 from .private_io import (
     write_private_text as _write_pending_text,
 )
-
-POOL_AUTHORITY_PENDING_FILENAME = "pool-authority-owner-pending-v2.json"
 
 
 @dataclass(frozen=True)
@@ -261,25 +260,33 @@ def _prepare_source_directory(source_file: Path) -> None:
         ensure_private_directory(path, label=label)
 
 
-def begin_account_set_invalidation(*, config_path: Path) -> Path:
+def begin_account_set_invalidation(
+    *, previous: AppConfig, updated: AppConfig, config_path: Path
+) -> Path:
     source_file = pool_authority_source_path()
     pending_file = pool_authority_pending_path()
     _prepare_source_directory(source_file)
     with private_path_lock(source_file, label="pool authority source lock"):
-        _write_pending(
-            pending_file,
-            {
-                "schema_version": 1,
-                "operation": "invalidate",
-                "config_path": _config_binding(config_path),
-            },
-        )
-        _remove_source(source_file)
+        if pending_file.exists():
+            raise ValueError("pool authority pending already exists")
+        _write_pending(pending_file, _invalidation_marker(previous, updated, config_path))
     return pending_file
 
 
-def finish_account_set_invalidation(pending_file: Path) -> None:
-    _remove_pending(pending_file)
+def finish_account_set_invalidation(
+    *, previous: AppConfig, updated: AppConfig, config_path: Path
+) -> None:
+    source_file = pool_authority_source_path()
+    pending_file = pool_authority_pending_path()
+    with private_path_lock(config_path, label="config lock"):
+        with private_path_lock(source_file, label="pool authority source lock"):
+            marker = _load_pending(pending_file, config_path)
+            if not _matches_invalidation(marker, previous, updated):
+                raise ValueError("pool authority pending is invalid")
+            if load_config(config_path) != updated:
+                raise ValueError("pool authority pending does not match config")
+            _remove_source(source_file)
+            _remove_pending(pending_file)
 
 
 def recover_pool_authority_pending(
@@ -309,10 +316,17 @@ def recover_pool_authority_pending(
         with private_path_lock(source_file, label="pool authority source lock"):
             config = load_config(config_file)
             if marker["operation"] == "invalidate":
-                if config.pool_authority.configured:
-                    _save_config_unlocked(
-                        replace(config, pool_authority=PoolAuthorityConfig()), config_file
-                    )
+                if (
+                    _account_ids(config) == marker["old_account_ids"]
+                    and config.pool_authority == marker["old_authority"]
+                ):
+                    _remove_pending(pending_file)
+                    return
+                if (
+                    _account_ids(config) != marker["new_account_ids"]
+                    or config.pool_authority.configured
+                ):
+                    raise ValueError("pool authority pending does not match config")
                 _remove_source(source_file)
             else:
                 records = marker["authorities"]
@@ -362,6 +376,49 @@ def _write_pending(path: Path, marker: dict[str, object]) -> None:
     _write_pending_text(path, text, label="pool authority pending", mode=0o600)
 
 
+def _account_ids(config: AppConfig) -> tuple[str, ...]:
+    return tuple(sorted(account.id for account in config.accounts))
+
+
+def _invalidation_marker(
+    previous: AppConfig, updated: AppConfig, config_path: Path
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "operation": "invalidate",
+        "config_path": _config_binding(config_path),
+        "old_account_ids": list(_account_ids(previous)),
+        "new_account_ids": list(_account_ids(updated)),
+        "old_generation": previous.pool_authority.generation,
+        "old_authorities": [
+            item.to_source_record() for item in previous.pool_authority.authorities
+        ],
+    }
+
+
+def _matches_invalidation(
+    marker: dict[str, object], previous: AppConfig, updated: AppConfig
+) -> bool:
+    return (
+        marker.get("operation") == "invalidate"
+        and marker.get("old_account_ids") == _account_ids(previous)
+        and marker.get("new_account_ids") == _account_ids(updated)
+        and marker.get("old_authority") == previous.pool_authority
+    )
+
+
+def _load_pending(path: Path, config_path: Path) -> dict[str, object]:
+    payload, _ = read_private_text(
+        path,
+        regular_label="pool authority pending",
+        read_label="pool authority pending",
+        max_bytes=POOL_AUTHORITY_SOURCE_MAX_BYTES,
+        too_large_label="pool authority pending",
+        invalid_utf8_label="pool authority pending",
+    )
+    return _parse_pending(payload, config_path)
+
+
 def _config_binding(path: Path) -> str:
     if not isinstance(path, Path):
         raise ValueError("pool authority pending is invalid")
@@ -385,12 +442,36 @@ def _parse_pending(payload: str, config_path: Path) -> dict[str, object]:
     operation = marker.get("operation")
     if type(operation) is not str or marker.get("config_path") != _config_binding(config_path):
         raise ValueError("pool authority pending is bound to another config")
-    if operation == "invalidate" and set(marker) == {
+    invalidation_fields = {
         "schema_version",
         "operation",
         "config_path",
-    }:
-        return marker
+        "old_account_ids",
+        "new_account_ids",
+        "old_generation",
+        "old_authorities",
+    }
+    if operation == "invalidate" and set(marker) == invalidation_fields:
+        old_ids, new_ids = marker["old_account_ids"], marker["new_account_ids"]
+        generation, raw = marker["old_generation"], marker["old_authorities"]
+        if (
+            type(old_ids) is not list
+            or type(new_ids) is not list
+            or type(generation) is not int
+            or type(raw) is not list
+        ):
+            raise ValueError("pool authority pending is invalid")
+        old_authorities = _records_from_pending(raw, generation)
+        if tuple(old_ids) != tuple(sorted(old_ids)) or tuple(new_ids) != tuple(sorted(new_ids)):
+            raise ValueError("pool authority pending is invalid")
+        if tuple(item.account_id for item in old_authorities) != tuple(old_ids):
+            raise ValueError("pool authority pending is invalid")
+        return {
+            "operation": operation,
+            "old_account_ids": tuple(old_ids),
+            "new_account_ids": tuple(new_ids),
+            "old_authority": PoolAuthorityConfig(generation, old_authorities, True),
+        }
     required = {
         "schema_version",
         "operation",
@@ -407,10 +488,26 @@ def _parse_pending(payload: str, config_path: Path) -> dict[str, object]:
     if (
         type(expected_generation) is not int
         or type(generation) is not int
+        or isinstance(expected_generation, bool)
+        or isinstance(generation, bool)
+        or not 0 <= expected_generation < MAX_POOL_AUTHORITY_GENERATION
+        or not 1 <= generation <= MAX_POOL_AUTHORITY_GENERATION
         or generation != expected_generation + 1
         or type(raw_authorities) is not list
     ):
         raise ValueError("pool authority pending is invalid")
+    authorities = _records_from_pending(raw_authorities, generation)
+    return {
+        "operation": operation,
+        "generation": generation,
+        "expected_generation": expected_generation,
+        "authorities": authorities,
+    }
+
+
+def _records_from_pending(
+    raw_authorities: list[object], generation: int
+) -> tuple[PoolAuthorityOwner, ...]:
     try:
         authorities = tuple(
             PoolAuthorityOwner(
@@ -445,15 +542,8 @@ def _parse_pending(payload: str, config_path: Path) -> dict[str, object]:
         raise ValueError("pool authority pending is invalid") from None
     if len(authorities) != len(raw_authorities):
         raise ValueError("pool authority pending is invalid")
-    _validate_pool_authority_config(
-        PoolAuthorityConfig(generation=generation, authorities=authorities, configured=True)
-    )
-    return {
-        "operation": operation,
-        "generation": generation,
-        "expected_generation": expected_generation,
-        "authorities": authorities,
-    }
+    _validate_pool_authority_config(PoolAuthorityConfig(generation, authorities, True))
+    return authorities
 
 
 def _remove_source(path: Path) -> None:
