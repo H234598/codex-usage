@@ -33,6 +33,7 @@ MAX_CONFIG_LABEL_CHARS = 256
 MAX_CONFIG_PATH_CHARS = 4096
 MAX_CONFIG_URL_CHARS = 2048
 MAX_AUTH_SYNC_GENERATION = 2**63 - 1
+MAX_POOL_AUTHORITY_GENERATION = 2**63 - 1
 _CODEX_HELP_ENV_NAMES = frozenset(
     {
         "HOME",
@@ -56,12 +57,52 @@ class MasterjetConnection:
 
 
 @dataclass(frozen=True)
+class PoolAuthorityOwner:
+    """One explicit, config-owned PoolAuthority input record."""
+
+    account_id: str
+    pool_id: str
+    provider: str
+    hive_available: bool
+    allowed_model_families: tuple[str, ...]
+    reasoning_minimum: str
+    reasoning_maximum: str
+    allowed_lifecycles: tuple[str, ...]
+    persistent_leadership_eligible: bool
+    long_running_leadership_eligible: bool
+
+    def to_source_record(self) -> dict[str, object]:
+        return {
+            "account_id": self.account_id,
+            "allowed_lifecycles": list(self.allowed_lifecycles),
+            "allowed_model_families": list(self.allowed_model_families),
+            "hive_available": self.hive_available,
+            "long_running_leadership_eligible": self.long_running_leadership_eligible,
+            "persistent_leadership_eligible": self.persistent_leadership_eligible,
+            "pool_id": self.pool_id,
+            "provider": self.provider,
+            "reasoning_maximum": self.reasoning_maximum,
+            "reasoning_minimum": self.reasoning_minimum,
+        }
+
+
+@dataclass(frozen=True)
+class PoolAuthorityConfig:
+    """Config-side owner data; generation is only an optimistic UI guard."""
+
+    generation: int = 0
+    authorities: tuple[PoolAuthorityOwner, ...] = ()
+    configured: bool = False
+
+
+@dataclass(frozen=True)
 class AppConfig:
     accounts: tuple[Account, ...]
     interval_seconds: int = 300
     analytics_url: str = "https://chatgpt.com/codex/cloud/settings/analytics"
     headless: bool = True
     masterjet: MasterjetConnection = MasterjetConnection()
+    pool_authority: PoolAuthorityConfig = PoolAuthorityConfig()
 
 
 def default_config_path() -> Path:
@@ -109,6 +150,10 @@ def load_config(path: Path | None = None) -> AppConfig:
         )
     accounts = tuple(_account_from_data(item) for item in raw_accounts)
     _validate_unique_accounts(accounts)
+    pool_authority = _pool_authority_from_data(
+        data.get("pool_authority"),
+        configured="pool_authority" in data,
+    )
     interval = _strict_int(data.get("interval_seconds", 300), "interval_seconds")
     if interval < 60:
         raise ValueError("interval_seconds must be at least 60")
@@ -133,6 +178,7 @@ def load_config(path: Path | None = None) -> AppConfig:
         analytics_url=analytics_url,
         headless=headless,
         masterjet=masterjet,
+        pool_authority=pool_authority,
     )
     _validate_config(config)
     return config
@@ -346,6 +392,7 @@ def add_or_update_account(
             analytics_url=config.analytics_url,
             headless=config.headless,
             masterjet=config.masterjet,
+            pool_authority=config.pool_authority,
         )
         _validate_account(account)
         _validate_config(updated)
@@ -544,6 +591,7 @@ def _save_auth_sync_account(
         analytics_url=config.analytics_url,
         headless=config.headless,
         masterjet=config.masterjet,
+        pool_authority=config.pool_authority,
     )
     _validate_config(updated)
     _save_config_unlocked(updated, config_path)
@@ -568,6 +616,7 @@ def remove_account(
             analytics_url=config.analytics_url,
             headless=config.headless,
             masterjet=config.masterjet,
+            pool_authority=config.pool_authority,
         )
         _validate_config(updated)
         _save_config_unlocked(updated, config_path)
@@ -618,6 +667,7 @@ def restore_account(
             analytics_url=config.analytics_url,
             headless=config.headless,
             masterjet=config.masterjet,
+            pool_authority=config.pool_authority,
         )
         _validate_config(restored)
         _save_config_unlocked(restored, config_path)
@@ -744,6 +794,74 @@ def _account_from_data(item: object) -> Account:
         series_active=series_active,
         auth_sync_required=auth_sync_required,
         auth_sync_generation=auth_sync_generation,
+    )
+
+
+_POOL_AUTHORITY_CONFIG_FIELDS = frozenset(("authorities", "generation"))
+_POOL_AUTHORITY_OWNER_FIELDS = frozenset(
+    (
+        "account_id",
+        "pool_id",
+        "provider",
+        "hive_available",
+        "allowed_model_families",
+        "reasoning_minimum",
+        "reasoning_maximum",
+        "allowed_lifecycles",
+        "persistent_leadership_eligible",
+        "long_running_leadership_eligible",
+    )
+)
+
+
+def _pool_authority_from_data(
+    value: object,
+    *,
+    configured: bool,
+) -> PoolAuthorityConfig:
+    if not configured:
+        if value is not None:
+            raise ValueError("pool_authority must be a TOML table")
+        return PoolAuthorityConfig()
+    if type(value) is not dict:
+        raise ValueError("pool_authority must be a TOML table")
+    mapping = value
+    if set(mapping) != _POOL_AUTHORITY_CONFIG_FIELDS:
+        raise ValueError("pool_authority must contain exactly generation and authorities")
+    generation = mapping["generation"]
+    authorities = mapping["authorities"]
+    if type(generation) is not int or not 0 <= generation <= MAX_POOL_AUTHORITY_GENERATION:
+        raise ValueError("pool_authority generation must be a bounded integer")
+    if type(authorities) is not list:
+        raise ValueError("pool_authority authorities must be a list of TOML tables")
+    parsed = tuple(_pool_authority_owner_from_data(item) for item in authorities)
+    result = PoolAuthorityConfig(
+        generation=generation,
+        authorities=parsed,
+        configured=True,
+    )
+    _validate_pool_authority_config(result)
+    return result
+
+
+def _pool_authority_owner_from_data(value: object) -> PoolAuthorityOwner:
+    if type(value) is not dict or set(value) != _POOL_AUTHORITY_OWNER_FIELDS:
+        raise ValueError("pool authority entry must contain exactly ten owner fields")
+    return PoolAuthorityOwner(
+        account_id=value["account_id"],
+        pool_id=value["pool_id"],
+        provider=value["provider"],
+        hive_available=value["hive_available"],
+        allowed_model_families=tuple(value["allowed_model_families"])
+        if type(value["allowed_model_families"]) is list
+        else value["allowed_model_families"],
+        reasoning_minimum=value["reasoning_minimum"],
+        reasoning_maximum=value["reasoning_maximum"],
+        allowed_lifecycles=tuple(value["allowed_lifecycles"])
+        if type(value["allowed_lifecycles"]) is list
+        else value["allowed_lifecycles"],
+        persistent_leadership_eligible=value["persistent_leadership_eligible"],
+        long_running_leadership_eligible=value["long_running_leadership_eligible"],
     )
 
 
@@ -1175,11 +1293,73 @@ def _validate_config(config: AppConfig) -> None:
     _validate_analytics_url(config.analytics_url)
     _strict_bool(config.headless, "headless")
     _validate_masterjet_connection(config.masterjet)
+    _validate_pool_authority_config(config.pool_authority)
 
     for account in config.accounts:
         _validate_account(account)
     _validate_unique_accounts(config.accounts)
     _validate_unique_account_resources(config.accounts)
+
+
+def _validate_pool_authority_config(value: object) -> None:
+    if type(value) is not PoolAuthorityConfig:
+        raise ValueError("pool_authority must be PoolAuthorityConfig")
+    if (
+        type(value.generation) is not int
+        or not 0 <= value.generation <= MAX_POOL_AUTHORITY_GENERATION
+    ):
+        raise ValueError("pool_authority generation must be a bounded integer")
+    if type(value.configured) is not bool:
+        raise ValueError("pool_authority configured must be boolean")
+    if type(value.authorities) is not tuple:
+        raise ValueError("pool_authority authorities must be a tuple")
+    if not value.configured:
+        if value.generation != 0 or value.authorities:
+            raise ValueError("unconfigured pool_authority must be empty")
+        return
+    for authority in value.authorities:
+        _validate_pool_authority_owner(authority)
+    account_ids = [authority.account_id for authority in value.authorities]
+    if len(set(account_ids)) != len(account_ids):
+        raise ValueError("pool_authority authorities contain duplicate account_id")
+    if account_ids != sorted(account_ids):
+        raise ValueError("pool_authority authorities must be sorted by account_id")
+    _validate_pool_authority_source_records(
+        [authority.to_source_record() for authority in value.authorities],
+        label="pool_authority contains invalid owner values",
+    )
+
+
+def _validate_pool_authority_owner(value: object) -> None:
+    if type(value) is not PoolAuthorityOwner:
+        raise ValueError("pool authority entry must be PoolAuthorityOwner")
+    _validate_pool_authority_source_records(
+        [value.to_source_record()],
+        label="pool authority entry contains invalid owner values",
+    )
+
+
+def _validate_pool_authority_source_records(
+    records: list[dict[str, object]],
+    *,
+    label: str,
+) -> None:
+    # This import must remain lazy: the producer depends on config's state-dir
+    # helper through the history stack.
+    from .integration_pool_authority import (
+        PoolAuthorityInvalid,
+        serialize_pool_authority_source,
+    )
+
+    try:
+        serialize_pool_authority_source(
+            {
+                "pool_authority_source_schema_version": 2,
+                "authorities": records,
+            }
+        )
+    except PoolAuthorityInvalid as exc:
+        raise ValueError(label) from exc
 
 
 def _validate_account(account: object) -> None:
@@ -1355,6 +1535,35 @@ def _to_toml(config: AppConfig) -> str:
                 "",
             ]
         )
+    if config.pool_authority.configured:
+        lines.extend(
+            [
+                "[pool_authority]",
+                f"generation = {config.pool_authority.generation}",
+                "",
+            ]
+        )
+        for authority in config.pool_authority.authorities:
+            lines.extend(
+                [
+                    "[[pool_authority.authorities]]",
+                    f"account_id = {_quote(authority.account_id)}",
+                    f"pool_id = {_quote(authority.pool_id)}",
+                    f"provider = {_quote(authority.provider)}",
+                    f"hive_available = {'true' if authority.hive_available else 'false'}",
+                    "allowed_model_families = "
+                    + _quote_list(authority.allowed_model_families),
+                    f"reasoning_minimum = {_quote(authority.reasoning_minimum)}",
+                    f"reasoning_maximum = {_quote(authority.reasoning_maximum)}",
+                    "allowed_lifecycles = "
+                    + _quote_list(authority.allowed_lifecycles),
+                    "persistent_leadership_eligible = "
+                    + ("true" if authority.persistent_leadership_eligible else "false"),
+                    "long_running_leadership_eligible = "
+                    + ("true" if authority.long_running_leadership_eligible else "false"),
+                    "",
+                ]
+            )
     for account in sorted(config.accounts, key=lambda item: item.id):
         lines.extend(
             [
@@ -1393,3 +1602,7 @@ def _quote(value: str) -> str:
         char if ord(char) >= 0x20 else f"\\u{ord(char):04x}" for char in escaped
     )
     return f'"{escaped}"'
+
+
+def _quote_list(values: tuple[str, ...]) -> str:
+    return "[" + ", ".join(_quote(value) for value in values) + "]"

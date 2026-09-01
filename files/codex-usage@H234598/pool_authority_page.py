@@ -5,13 +5,14 @@ from __future__ import annotations
 
 import importlib
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import cast
 
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk  # noqa: E402
+from gi.repository import Gtk  # noqa: E402, I001
 from JsonSettingsWidgets import SettingsWidget  # noqa: E402
 
 
@@ -76,7 +77,7 @@ def _closed_strings(
 def _canonical_authority(value: object) -> dict[str, object]:
     if type(value) is not dict:
         try:
-            source_record = getattr(value, "to_source_record")()
+            source_record = value.to_source_record()  # type: ignore[attr-defined]
         except (AttributeError, TypeError, ValueError):
             _invalid_authority()
         value = source_record
@@ -117,44 +118,78 @@ def _canonical_authority(value: object) -> dict[str, object]:
     }
 
 
-def _snapshot_parts(snapshot: object) -> tuple[int, object]:
+def _snapshot_parts(snapshot: object) -> tuple[int, object, object]:
     try:
-        generation = getattr(snapshot, "generation")
-        authorities = getattr(snapshot, "authorities")
+        generation = snapshot.generation  # type: ignore[attr-defined]
+        account_ids = snapshot.account_ids  # type: ignore[attr-defined]
+        authorities = snapshot.authorities  # type: ignore[attr-defined]
     except (AttributeError, TypeError):
         raise ValueError("invalid pool authority snapshot") from None
     if type(generation) is not int or generation < 0:
         raise ValueError("invalid pool authority snapshot")
-    return generation, authorities
+    return generation, account_ids, authorities
+
+
+def _configured_config_path(settings: object) -> Path | None:
+    if settings is None:
+        return None
+    getter = getattr(settings, "get_value", None)
+    if not callable(getter):
+        raise ValueError("invalid pool authority settings")
+    value = getter("config-path")
+    if type(value) is not str or "\x00" in value or len(value) > 4096:
+        raise ValueError("invalid pool authority settings")
+    return Path(value) if value.strip() else None
 
 
 class PoolAuthorityOwnerModel:
     """Strict, redaction-free UI state for the ten public owner fields only."""
 
-    __slots__ = ("_authorities", "generation")
+    __slots__ = ("_account_ids", "_authorities", "generation")
 
     editable_fields = _EDITABLE_FIELDS
 
     def __init__(self) -> None:
+        self._account_ids: tuple[str, ...] = ()
         self._authorities: tuple[dict[str, object], ...] = ()
         self.generation: int | None = None
+
+    @property
+    def account_ids(self) -> tuple[str, ...]:
+        return self._account_ids
 
     @property
     def authorities(self) -> tuple[dict[str, object], ...]:
         return tuple(self._copy_authority(authority) for authority in self._authorities)
 
+    @property
+    def is_complete(self) -> bool:
+        return self.generation is not None and tuple(
+            cast(str, item["account_id"]) for item in self._authorities
+        ) == self._account_ids
+
     def render(self, snapshot: object) -> None:
         try:
-            generation, raw_authorities = _snapshot_parts(snapshot)
+            generation, raw_account_ids, raw_authorities = _snapshot_parts(snapshot)
+            if type(raw_account_ids) not in (list, tuple):
+                raise ValueError("invalid pool authority inventory")
+            inventory = tuple(_text(item, _ACCOUNT_ID_RE) for item in raw_account_ids)
+            if inventory != tuple(sorted(inventory)) or len(inventory) != len(set(inventory)):
+                raise ValueError("invalid pool authority inventory")
             if type(raw_authorities) not in (list, tuple):
                 raise ValueError("invalid pool authority inventory")
             authorities = tuple(_canonical_authority(item) for item in raw_authorities)
             account_ids = [cast(str, item["account_id"]) for item in authorities]
-            if account_ids != sorted(account_ids) or len(account_ids) != len(set(account_ids)):
+            if (
+                account_ids != sorted(account_ids)
+                or len(account_ids) != len(set(account_ids))
+                or not set(account_ids).issubset(inventory)
+            ):
                 raise ValueError("invalid pool authority inventory")
         except ValueError:
             self.fail_closed()
             raise
+        self._account_ids = inventory
         self._authorities = authorities
         self.generation = generation
 
@@ -163,6 +198,8 @@ class PoolAuthorityOwnerModel:
             _invalid_authority()
         target_id = _text(account_id, _ACCOUNT_ID_RE)
         replacements = cast(dict[str, object], values)
+        if target_id not in self._account_ids:
+            raise ValueError("invalid pool authority inventory")
         changed: list[dict[str, object]] = []
         found = False
         for authority in self._authorities:
@@ -173,15 +210,20 @@ class PoolAuthorityOwnerModel:
             changed.append(_canonical_authority(candidate))
             found = True
         if not found:
-            raise ValueError("invalid pool authority inventory")
-        self._authorities = tuple(changed)
+            changed.append(_canonical_authority({"account_id": target_id, **replacements}))
+        self._authorities = tuple(
+            sorted(changed, key=lambda authority: cast(str, authority["account_id"]))
+        )
 
     def draft(self) -> list[dict[str, object]]:
         if self.generation is None:
             raise ValueError("pool authority inventory unavailable")
+        if not self.is_complete:
+            raise ValueError("pool authority inventory is incomplete")
         return [self._copy_authority(authority) for authority in self._authorities]
 
     def fail_closed(self) -> None:
+        self._account_ids = ()
         self._authorities = ()
         self.generation = None
 
@@ -242,6 +284,11 @@ class PoolAuthorityOwnerController:
 class PoolAuthorityOwnerActions:
     """Lazy bridge to the config owner API; it creates no UI-side storage."""
 
+    def __init__(
+        self, config_path_supplier: Callable[[], Path | None] | None = None
+    ) -> None:
+        self._config_path_supplier = config_path_supplier
+
     @staticmethod
     def _backend():
         try:
@@ -255,7 +302,7 @@ class PoolAuthorityOwnerActions:
         return backend
 
     def load(self):
-        return self._backend().load_pool_authority_owner()
+        return self._backend().load_pool_authority_owner(**self._config_path_kwargs())
 
     def save(self, authorities: Sequence[dict[str, object]], *, expected_generation: int):
         backend = self._backend()
@@ -266,7 +313,21 @@ class PoolAuthorityOwnerActions:
             records = [owner_type(**_canonical_authority(authority)) for authority in authorities]
         except (TypeError, ValueError):
             raise ValueError("invalid pool authority") from None
-        return backend.save_pool_authority_owner(records, expected_generation=expected_generation)
+        return backend.save_pool_authority_owner(
+            records,
+            expected_generation=expected_generation,
+            **self._config_path_kwargs(),
+        )
+
+    def _config_path_kwargs(self) -> dict[str, Path]:
+        if self._config_path_supplier is None:
+            return {}
+        config_path = self._config_path_supplier()
+        if config_path is None:
+            return {}
+        if not isinstance(config_path, Path):
+            raise ValueError("invalid pool authority settings")
+        return {"config_path": config_path}
 
 
 class PoolAuthorityOwnerPage(SettingsWidget):
@@ -275,12 +336,14 @@ class PoolAuthorityOwnerPage(SettingsWidget):
     bind_dir = None
 
     def __init__(self, info, key, settings):
-        del info, key, settings
+        del info, key
         SettingsWidget.__init__(self)
         self.set_orientation(Gtk.Orientation.VERTICAL)
         self.set_spacing(6)
         self._controller = PoolAuthorityOwnerController()
-        self._actions = PoolAuthorityOwnerActions()
+        self._actions = PoolAuthorityOwnerActions(
+            lambda: _configured_config_path(settings)
+        )
         self._entries: dict[str, dict[str, object]] = {}
         self.connect("destroy", self._on_destroy)
         self._status = Gtk.Label(label="PoolAuthority-Ownerwerte nicht geladen")
@@ -310,7 +373,13 @@ class PoolAuthorityOwnerPage(SettingsWidget):
             if not self._controller.receive_load(epoch, snapshot):
                 return
             self._render()
-            self._status.set_text("Aktuell · vollständige Account-Parität erforderlich")
+            if self._controller.model.is_complete:
+                self._status.set_text("Aktuell · vollständige Account-Parität erforderlich")
+            else:
+                self._status.set_text(
+                    "Unvollständig · Werte für jedes Konto explizit eingeben; "
+                    "Speichern bleibt fail-closed"
+                )
             self._save_button.set_sensitive(True)
         except (RuntimeError, TypeError, ValueError):
             self._clear_body()
@@ -319,8 +388,7 @@ class PoolAuthorityOwnerPage(SettingsWidget):
 
     def _save(self, *_args) -> None:
         try:
-            for authority in self._controller.model.authorities:
-                account_id = cast(str, authority["account_id"])
+            for account_id in self._controller.model.account_ids:
                 self._controller.model.replace_editable(account_id, self._values(account_id))
             epoch, expected_generation, authorities = self._controller.begin_save()
             self._save_button.set_sensitive(False)
@@ -337,8 +405,12 @@ class PoolAuthorityOwnerPage(SettingsWidget):
 
     def _render(self) -> None:
         self._clear_body()
-        for authority in self._controller.model.authorities:
-            account_id = cast(str, authority["account_id"])
+        by_account = {
+            cast(str, authority["account_id"]): authority
+            for authority in self._controller.model.authorities
+        }
+        for account_id in self._controller.model.account_ids:
+            authority = by_account.get(account_id)
             frame = Gtk.Frame(label=f"Account-ID: {account_id}")
             grid = Gtk.Grid(column_spacing=8, row_spacing=5)
             grid.set_margin_start(8)
@@ -362,14 +434,20 @@ class PoolAuthorityOwnerPage(SettingsWidget):
                 caption.set_xalign(0.0)
                 grid.attach(caption, 0, row, 1, 1)
                 if field in _BOOLEAN_FIELDS:
-                    widget = Gtk.CheckButton()
-                    widget.set_active(cast(bool, authority[field]))
+                    widget = Gtk.ComboBoxText()
+                    widget.append_text("false")
+                    widget.append_text("true")
+                    if authority is not None:
+                        widget.set_active(1 if authority[field] is True else 0)
                 else:
                     widget = Gtk.Entry()
-                    value = authority[field]
-                    widget.set_text(
-                        ", ".join(cast(list[str], value)) if field in _LIST_FIELDS else cast(str, value)
-                    )
+                    if authority is not None:
+                        value = authority[field]
+                        widget.set_text(
+                            ", ".join(cast(list[str], value))
+                            if field in _LIST_FIELDS
+                            else cast(str, value)
+                        )
                 grid.attach(widget, 1, row, 1, 1)
                 fields[field] = widget
                 row += 1
@@ -386,7 +464,10 @@ class PoolAuthorityOwnerPage(SettingsWidget):
         for field in _EDITABLE_FIELDS:
             widget = fields[field]
             if field in _BOOLEAN_FIELDS:
-                values[field] = cast(Gtk.CheckButton, widget).get_active()
+                selected = cast(Gtk.ComboBoxText, widget).get_active()
+                if selected not in (0, 1):
+                    _invalid_authority()
+                values[field] = selected == 1
             elif field in _LIST_FIELDS:
                 values[field] = self._list_value(cast(Gtk.Entry, widget).get_text())
             else:

@@ -8,7 +8,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 APPLET_DIR = ROOT / "files" / "codex-usage@H234598"
 
@@ -42,8 +41,24 @@ def _authority(account_id: str = "synthetic-account") -> dict[str, object]:
 
 
 class _Snapshot:
-    def __init__(self, generation: int, authorities: list[dict[str, object]]) -> None:
+    def __init__(
+        self,
+        generation: int,
+        authorities: list[dict[str, object]],
+        *,
+        account_ids: tuple[str, ...] | None = None,
+    ) -> None:
         self.generation = generation
+        self.account_ids = (
+            account_ids
+            if account_ids is not None
+            else tuple(
+                authority["account_id"]
+                if type(authority) is dict
+                else authority.to_source_record()["account_id"]
+                for authority in authorities
+            )
+        )
         self.authorities = authorities
 
 
@@ -59,6 +74,55 @@ def test_owner_ui_model_round_trips_every_explicit_authority_field() -> None:
     assert model.draft() == [_authority()]
     assert "account_id" not in model.editable_fields
     assert set(model.editable_fields) == set(original) - {"account_id"}
+
+
+def test_owner_ui_exposes_empty_canonical_inventory_without_inventing_values() -> None:
+    module = _module()
+    model = module.PoolAuthorityOwnerModel()
+
+    model.render(_Snapshot(0, [], account_ids=("synthetic-a", "synthetic-b")))
+
+    assert model.account_ids == ("synthetic-a", "synthetic-b")
+    assert model.authorities == ()
+    with pytest.raises(ValueError, match="incomplete"):
+        model.draft()
+
+
+def test_owner_ui_renders_empty_inputs_for_each_config_inventory_account() -> None:
+    module = _module()
+
+    class Actions:
+        def load(self):
+            return _Snapshot(0, [], account_ids=("synthetic-a", "synthetic-b"))
+
+    page = module.PoolAuthorityOwnerPage(None, None, None)
+    page._actions = Actions()
+    page._refresh()
+
+    assert set(page._entries) == {"synthetic-a", "synthetic-b"}
+    assert "Unvollständig" in page._status.get_text()
+    assert page._save_button.get_sensitive() is True
+    page.destroy()
+
+
+def test_owner_ui_marks_partial_account_parity_as_incomplete() -> None:
+    module = _module()
+
+    class Actions:
+        def load(self):
+            return _Snapshot(
+                3,
+                [_authority("synthetic-a")],
+                account_ids=("synthetic-a", "synthetic-b"),
+            )
+
+    page = module.PoolAuthorityOwnerPage(None, None, None)
+    page._actions = Actions()
+    page._refresh()
+
+    assert "Unvollständig" in page._status.get_text()
+    assert set(page._entries) == {"synthetic-a", "synthetic-b"}
+    page.destroy()
 
 
 @pytest.mark.parametrize(
@@ -175,6 +239,46 @@ def test_owner_ui_actions_adapt_config_owner_records_on_load_and_save(monkeypatc
     assert saved.generation == 9
 
 
+def test_owner_ui_binds_load_and_save_to_applet_config_path(monkeypatch, tmp_path) -> None:
+    module = _module()
+    configured_path = tmp_path / "selected-config.toml"
+    original = _authority()
+    captured: list[tuple[str, Path]] = []
+
+    class Owner:
+        def __init__(self, **values) -> None:
+            self.values = values
+
+        def to_source_record(self):
+            return dict(self.values)
+
+    backend = SimpleNamespace(
+        PoolAuthorityOwner=Owner,
+        load_pool_authority_owner=lambda *, config_path: captured.append(
+            ("load", config_path)
+        )
+        or _Snapshot(8, [Owner(**original)]),
+        save_pool_authority_owner=lambda authorities, *, expected_generation, config_path: (
+            captured.append(("save", config_path))
+        )
+        or _Snapshot(9, authorities),
+    )
+    monkeypatch.setattr(module.importlib, "import_module", lambda name: backend)
+
+    class Settings:
+        @staticmethod
+        def get_value(key):
+            assert key == "config-path"
+            return str(configured_path)
+
+    page = module.PoolAuthorityOwnerPage(None, None, Settings())
+    page._actions.load()
+    page._actions.save([original], expected_generation=8)
+
+    assert captured == [("load", configured_path), ("save", configured_path)]
+    page.destroy()
+
+
 def test_pool_authority_navigation_is_an_accounts_subpage() -> None:
     schema = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
     layout = schema["layout"]
@@ -194,6 +298,9 @@ def test_pool_authority_navigation_is_an_accounts_subpage() -> None:
         "file": "pool_authority_page.py",
         "widget": "PoolAuthorityOwnerPage",
         "description": "PoolAuthority-Ownerwerte je Account",
-        "tooltip": "Bearbeitet nur die kanonische config.toml-Authority. Ohne vollständige, gültige Account-Parität wird nicht gespeichert oder publiziert.",
+        "tooltip": (
+            "Bearbeitet nur die kanonische config.toml-Authority. Ohne vollständige, "
+            "gültige Account-Parität wird nicht gespeichert oder publiziert."
+        ),
         "default": "",
     }

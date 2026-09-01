@@ -116,6 +116,15 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
     }
 
 
+def test_readme_describes_codex_usage_as_ollama_control_frontend() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "Control-Frontend" in readme
+    assert "Fleetmanagement und Hostagent" in readme
+    assert "`codex --oss`" in readme
+    assert "Codex Usage has no fleet-management or Ollama link" not in readme
+
+
 def test_list_columns_use_cinnamon_supported_variable_types() -> None:
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
     supported = {
