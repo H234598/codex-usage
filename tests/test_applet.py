@@ -140,7 +140,7 @@ def test_account_table_contains_all_editable_fields() -> None:
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
     table = settings["account-backends"]
 
-    assert settings["layout"]["backend-section"]["title"] == "Abrufwege und Accounts"
+    assert "account-backends" in settings["layout"]["openai-accounts-section"]["keys"]
     assert [column["id"] for column in table["columns"]] == [
         "account",
         "label",
@@ -344,10 +344,8 @@ def test_format_and_display_sections_use_new_labels() -> None:
     assert layout["status-page"]["sections"] == [
         "credit-status-section", "reset-display-section"
     ]
-    assert layout["accounts-page"]["title"] == "Accounts"
-    assert layout["accounts-page"]["sections"] == [
-        "backend-section", "reactivation-options-section"
-    ]
+    assert "accounts-page" not in layout
+    assert "backend-section" not in layout
     assert layout["pages"][1] == "format-page"
     assert layout["format-page"]["title"] == "Formatierungen"
     assert layout["format-page"]["sections"] == ["formatting-section"]

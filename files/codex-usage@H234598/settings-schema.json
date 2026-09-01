@@ -6,7 +6,8 @@
       "format-page",
       "forecast-page",
       "status-page",
-      "accounts-page",
+      "openai-accounts-page",
+      "google-accounts-page",
       "routing-page",
       "alerts-page",
       "help-page"
@@ -43,12 +44,21 @@
         "reset-display-section"
       ]
     },
-    "accounts-page": {
+    "openai-accounts-page": {
       "type": "page",
-      "title": "Accounts",
+      "title": "Accounts · OpenAI",
       "sections": [
-        "backend-section",
+        "openai-accounts-section",
+        "masterjet-connection-section",
+        "ollama-fleet-section",
         "reactivation-options-section"
+      ]
+    },
+    "google-accounts-page": {
+      "type": "page",
+      "title": "Accounts · Google",
+      "sections": [
+        "google-accounts-section"
       ]
     },
     "alerts-page": {
@@ -111,11 +121,33 @@
         "refresh-on-open"
       ]
     },
-    "backend-section": {
+    "openai-accounts-section": {
       "type": "section",
-      "title": "Abrufwege und Accounts",
+      "title": "OpenAI-Profile und Status",
       "keys": [
-        "account-backends"
+        "account-backends",
+        "openai-account-status"
+      ]
+    },
+    "google-accounts-section": {
+      "type": "section",
+      "title": "Google-Control",
+      "keys": [
+        "google-account-control"
+      ]
+    },
+    "masterjet-connection-section": {
+      "type": "section",
+      "title": "Masterjet-Verbindung",
+      "keys": [
+        "masterjet-connection"
+      ]
+    },
+    "ollama-fleet-section": {
+      "type": "section",
+      "title": "Ollama-Flotte",
+      "keys": [
+        "ollama-fleet-plan"
       ]
     },
     "display-section": {
@@ -398,6 +430,36 @@
     "widget": "HelpPage",
     "description": "Alle GUI-Hilfetexte",
     "tooltip": "Diese Seite sammelt Beschreibungen und Tooltips aus allen anderen Seiten, Tabellen und Feldern. Sie wird automatisch aus dem aktuellen Schema aufgebaut.",
+    "default": ""
+  },
+  "openai-account-status": {
+    "type": "custom",
+    "file": "openai_accounts_page.py",
+    "widget": "OpenAIAccountsPage",
+    "description": "Lokaler Auth-, Vault-, Ablauf- und Hive-Status",
+    "tooltip": "Zeigt ausschließlich redigierte OpenAI-Zustände. Re-Auth und Auth-Sync laufen über die lokale Codex-Usage-CLI; Credentialwerte werden weder angezeigt noch gespeichert.",
+    "default": ""
+  },
+  "google-account-control": {
+    "type": "custom",
+    "file": "google_accounts_page.py",
+    "widget": "GoogleAccountsPage",
+    "description": "Google-Accounts, Projekte und Control-Aktionen",
+    "tooltip": "Zeigt redigierte Account- und Projektzustände. Jede Mutation läuft begrenzt im Hintergrund; Apply folgt erst auf eine sichtbare Planbestätigung.",
+    "default": ""
+  },
+  "masterjet-connection": {
+    "type": "custom",
+    "file": "openai_accounts_page.py",
+    "widget": "MasterjetConnectionWidget",
+    "description": "Kanonische Codex-Usage-Verbindung und Status",
+    "tooltip": "Liest und testet ausschließlich die kanonische config.toml. Bearer, TOTP und eine zweite Verbindungsautorität sind keine Settingswerte.",
+    "default": ""
+  },
+  "ollama-fleet-plan": {
+    "type": "entry",
+    "description": "Ollama-Plan-Konfiguration (JSON)",
+    "tooltip": "Begrenzte Planfelder: ref, label, host_ref, ollama_executable, models_directory, selected_model_refs, allowed_cpus, cpu_quota_percent, cpu_weight, expected_generation. Keine Zugangsdaten eintragen; das Applet zeigt die Konfiguration nie an.",
     "default": ""
   },
   "panel-value-count": {

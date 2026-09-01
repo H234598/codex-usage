@@ -237,6 +237,22 @@ def _require_private_directory_fd(fd: int) -> FileIdentity:
     return _directory_identity(item)
 
 
+def _require_trusted_directory_fd(fd: int, *, root_uid: int) -> FileIdentity:
+    try:
+        item = os.fstat(fd)
+    except OSError as exc:
+        raise ValueError("trusted directory descriptor is invalid") from exc
+    mode = stat.S_IMODE(item.st_mode)
+    root_sticky = item.st_uid == root_uid and bool(item.st_mode & stat.S_ISVTX)
+    if not stat.S_ISDIR(item.st_mode):
+        raise ValueError("trusted directory descriptor is not a directory")
+    if item.st_uid not in {root_uid, os.geteuid()}:
+        raise ValueError("trusted directory descriptor has an invalid owner")
+    if bool(mode & 0o022) and not root_sticky:
+        raise ValueError("trusted directory descriptor has an invalid mode")
+    return _directory_identity(item)
+
+
 def _open_existing_private_lock_root(
     lock_root: Path,
 ) -> tuple[int, tuple[FileIdentity, ...]]:
@@ -367,7 +383,10 @@ def open_verified_state_home(state_home: Path) -> int:
     flags = _directory_open_flags()
     current_fd = os.open(state_home.anchor, flags)
     try:
-        for component in state_home.parts[1:]:
+        root_uid = os.fstat(current_fd).st_uid
+        _require_trusted_directory_fd(current_fd, root_uid=root_uid)
+        components = state_home.parts[1:]
+        for index, component in enumerate(components):
             try:
                 next_fd = os.open(component, flags, dir_fd=current_fd)
             except OSError as exc:
@@ -376,7 +395,12 @@ def open_verified_state_home(state_home: Path) -> int:
                 raise
             os.close(current_fd)
             current_fd = next_fd
-        _require_private_directory_fd(current_fd)
+            if index == len(components) - 1:
+                _require_private_directory_fd(current_fd)
+            else:
+                _require_trusted_directory_fd(current_fd, root_uid=root_uid)
+        if not components:
+            _require_private_directory_fd(current_fd)
         result = current_fd
         current_fd = -1
         return result

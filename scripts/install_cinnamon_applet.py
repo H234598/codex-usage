@@ -24,6 +24,8 @@ REQUIRED_FILES = (
     "forecast_table_selector.py",
     "format_table_selector.py",
     "help_page.py",
+    "openai_accounts_page.py",
+    "google_accounts_page.py",
     "panel_settings_list.py",
 )
 VERSION_CHECK_ATTEMPTS = 10

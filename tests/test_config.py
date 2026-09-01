@@ -4,6 +4,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Event, Thread, current_thread
 
 import pytest
 
@@ -13,6 +14,7 @@ from codex_usage.bridge import load_latest_usages
 from codex_usage.config import (
     MAX_CONFIG_BYTES,
     AppConfig,
+    MasterjetConnection,
     add_or_update_account,
     get_account,
     load_config,
@@ -20,9 +22,259 @@ from codex_usage.config import (
     resolve_account,
     restore_account,
     save_config,
+    set_masterjet_connection,
 )
 from codex_usage.models import Account, AccountUsage, LimitWindow
 from codex_usage.state import load_current_usage, save_current_usage, save_usage_snapshot
+
+
+def load_text(tmp_path, text):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(text, encoding="utf-8")
+    config_path.chmod(0o600)
+    return load_config(config_path)
+
+
+def test_loads_local_masterjet_connection(tmp_path):
+    config = load_text(
+        tmp_path,
+        '[masterjet]\ntransport="local"\nendpoint="/run/user/1000/masterjet.sock"\n',
+    )
+    assert config.masterjet.transport == "local"
+
+
+def test_load_config_defaults_masterjet_to_local_connection(tmp_path):
+    config = load_text(tmp_path, "")
+
+    assert config.masterjet.transport == "local"
+    assert config.masterjet.endpoint == ""
+    assert config.masterjet.timeout_seconds == 10
+
+
+def test_set_masterjet_connection_atomically_preserves_concurrent_account_update(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("alpha", label="Old", path=config_path)
+    loaded = Event()
+    release = Event()
+    failures: list[BaseException] = []
+    original_load = config_module.load_config
+
+    def paused_load(path):
+        config = original_load(path)
+        if current_thread().name == "connection-update":
+            loaded.set()
+            assert release.wait(2)
+        return config
+
+    def update_connection():
+        try:
+            set_masterjet_connection(
+                MasterjetConnection("https", "https://masterjet.example.test/control", 20),
+                config_path,
+            )
+        except BaseException as exc:
+            failures.append(exc)
+
+    def update_account():
+        try:
+            add_or_update_account(
+                "alpha",
+                label="New",
+                auth_json_path="/private/new-auth.json",
+                path=config_path,
+            )
+        except BaseException as exc:
+            failures.append(exc)
+
+    monkeypatch.setattr(config_module, "load_config", paused_load)
+    connection_thread = Thread(target=update_connection, name="connection-update")
+    account_thread = Thread(target=update_account, name="account-update")
+    connection_thread.start()
+    assert loaded.wait(2)
+    account_thread.start()
+    release.set()
+    connection_thread.join(2)
+    account_thread.join(2)
+
+    assert not connection_thread.is_alive()
+    assert not account_thread.is_alive()
+    assert failures == []
+    result = original_load(config_path)
+    assert result.accounts[0].label == "New"
+    assert result.accounts[0].auth_json_path == "/private/new-auth.json"
+    assert result.masterjet == MasterjetConnection(
+        "https", "https://masterjet.example.test/control", 20
+    )
+
+
+def test_save_and_load_preserves_https_masterjet_connection(tmp_path):
+    config_path = tmp_path / "config.toml"
+    save_config(
+        AppConfig(
+            accounts=(),
+            masterjet=MasterjetConnection(
+                transport="https",
+                endpoint="https://masterjet.example.test/control",
+                timeout_seconds=25,
+            ),
+        ),
+        config_path,
+    )
+
+    loaded = load_config(config_path)
+
+    assert loaded.masterjet.transport == "https"
+    assert loaded.masterjet.endpoint == "https://masterjet.example.test/control"
+    assert loaded.masterjet.timeout_seconds == 25
+
+
+def test_masterjet_https_endpoint_rejects_credentials_in_url(tmp_path):
+    with pytest.raises(ValueError, match="masterjet endpoint must not contain credentials"):
+        load_text(
+            tmp_path,
+            '[masterjet]\ntransport="https"\nendpoint="https://u:p@example.test"\n',
+        )
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        (
+            '[masterjet]\ntransport="local"\nendpoint="masterjet.sock"\n',
+            "local masterjet endpoint must be an absolute socket path",
+        ),
+        (
+            '[masterjet]\ntransport="https"\nendpoint=""\n',
+            "masterjet endpoint must not be empty",
+        ),
+        (
+            '[masterjet]\ntransport="https"\nendpoint="http://masterjet.example.test"\n',
+            "masterjet endpoint must be an HTTPS URL",
+        ),
+        (
+            '[masterjet]\ntransport="https"\nendpoint="https://masterjet.example.test/?debug=1"\n',
+            "masterjet endpoint must not contain a query or fragment",
+        ),
+        (
+            '[masterjet]\ntransport="https"\nendpoint="https://masterjet.example.test/#section"\n',
+            "masterjet endpoint must not contain a query or fragment",
+        ),
+        (
+            '[masterjet]\ntransport="tcp"\nendpoint="/run/user/1000/masterjet.sock"\n',
+            "masterjet transport must be one of",
+        ),
+        (
+            '[masterjet]\ntimeout_seconds="10"\n',
+            "masterjet timeout_seconds must be an integer",
+        ),
+        (
+            '[masterjet]\ntimeout_seconds=0\n',
+            "masterjet timeout_seconds must be at least 1",
+        ),
+    ],
+)
+def test_masterjet_rejects_invalid_connection_boundaries(tmp_path, text, message):
+    with pytest.raises(ValueError, match=message):
+        load_text(tmp_path, text)
+
+
+def test_save_config_rejects_masterjet_none_timeout(tmp_path):
+    config_path = tmp_path / "config.toml"
+
+    with pytest.raises(ValueError, match="masterjet timeout_seconds must be an integer"):
+        save_config(
+            AppConfig(
+                accounts=(),
+                masterjet=MasterjetConnection(timeout_seconds=None),
+            ),
+            config_path,
+        )
+
+    assert not config_path.exists()
+
+
+def test_adding_account_preserves_masterjet_connection(tmp_path):
+    config_path = tmp_path / "config.toml"
+    save_config(
+        AppConfig(
+            accounts=(),
+            masterjet=MasterjetConnection(
+                transport="https",
+                endpoint="https://masterjet.example.test/control",
+                timeout_seconds=25,
+            ),
+        ),
+        config_path,
+    )
+
+    add_or_update_account(
+        "added",
+        profile_dir=str(tmp_path / "profiles" / "added"),
+        path=config_path,
+    )
+
+    loaded = load_config(config_path)
+    assert loaded.masterjet.transport == "https"
+    assert loaded.masterjet.endpoint == "https://masterjet.example.test/control"
+    assert loaded.masterjet.timeout_seconds == 25
+
+
+def test_removing_account_preserves_masterjet_connection(tmp_path):
+    config_path = tmp_path / "config.toml"
+    account = Account(
+        id="removed",
+        label="Removed",
+        profile_dir=str(tmp_path / "profile"),
+    )
+    save_config(
+        AppConfig(
+            accounts=(account,),
+            masterjet=MasterjetConnection(
+                transport="https",
+                endpoint="https://masterjet.example.test/control",
+                timeout_seconds=25,
+            ),
+        ),
+        config_path,
+    )
+
+    remove_account("removed", path=config_path)
+
+    loaded = load_config(config_path)
+    assert loaded.masterjet.transport == "https"
+    assert loaded.masterjet.endpoint == "https://masterjet.example.test/control"
+    assert loaded.masterjet.timeout_seconds == 25
+
+
+def test_restoring_account_preserves_masterjet_connection(tmp_path):
+    config_path = tmp_path / "config.toml"
+    save_config(
+        AppConfig(
+            accounts=(),
+            masterjet=MasterjetConnection(
+                transport="https",
+                endpoint="https://masterjet.example.test/control",
+                timeout_seconds=25,
+            ),
+        ),
+        config_path,
+    )
+
+    restore_account(
+        Account(
+            id="restored",
+            label="Restored",
+            profile_dir=str(tmp_path / "profile"),
+        ),
+        path=config_path,
+    )
+
+    loaded = load_config(config_path)
+    assert loaded.masterjet.transport == "https"
+    assert loaded.masterjet.endpoint == "https://masterjet.example.test/control"
+    assert loaded.masterjet.timeout_seconds == 25
 
 
 class _BrokenInt(int):
@@ -1276,6 +1528,163 @@ def test_config_round_trip_auth_json_path(tmp_path):
 
     assert loaded.accounts[0].auth_json_path == str(auth_path)
     assert f'auth_json_path = "{auth_path}"' in config_path.read_text(encoding="utf-8")
+
+
+def test_auth_sync_required_round_trips_and_unrelated_update_preserves_it(tmp_path):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("privat", path=config_path)
+    config_module.mark_account_auth_sync_required("privat", path=config_path)
+
+    restarted = load_config(config_path)
+    assert restarted.accounts[0].auth_sync_required is True
+    assert "auth_sync_required = true" in config_path.read_text(encoding="utf-8")
+
+    _, updated = add_or_update_account("privat", label="Privat", path=config_path)
+    assert updated.auth_sync_required is True
+    assert updated.auth_sync_generation == 1
+    assert load_config(config_path).accounts[0].auth_sync_required is True
+
+
+def test_auth_sync_revision_is_monotone_and_old_clear_cannot_lose_newer_mark(
+    tmp_path,
+):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("privat", path=config_path)
+
+    first = config_module.mark_account_auth_sync_required("privat", path=config_path)
+    assert first.auth_sync_generation == 1
+    assert first.auth_sync_required is True
+    assert load_config(config_path).accounts[0] == first
+
+    second = config_module.mark_account_auth_sync_required("privat", path=config_path)
+    assert second.auth_sync_generation == 2
+    assert second.auth_sync_required is True
+
+    assert (
+        config_module.compare_and_clear_account_auth_sync_required(
+            first, path=config_path
+        )
+        is False
+    )
+    restarted = load_config(config_path).accounts[0]
+    assert restarted.auth_sync_generation == 2
+    assert restarted.auth_sync_required is True
+
+    assert (
+        config_module.compare_and_clear_account_auth_sync_required(
+            second, path=config_path
+        )
+        is True
+    )
+    cleared = load_config(config_path).accounts[0]
+    assert cleared.auth_sync_generation == 2
+    assert cleared.auth_sync_required is False
+    assert (
+        config_module.compare_and_clear_account_auth_sync_required(
+            cleared, path=config_path
+        )
+        is True
+    )
+
+
+def test_auth_sync_clear_rejects_changed_canonical_source(tmp_path):
+    config_path = tmp_path / "config.toml"
+    first_profile = tmp_path / "first-profile"
+    second_profile = tmp_path / "second-profile"
+    add_or_update_account("privat", profile_dir=str(first_profile), path=config_path)
+    snapshot = config_module.mark_account_auth_sync_required("privat", path=config_path)
+
+    add_or_update_account("privat", profile_dir=str(second_profile), path=config_path)
+
+    assert (
+        config_module.compare_and_clear_account_auth_sync_required(
+            snapshot, path=config_path
+        )
+        is False
+    )
+    restarted = load_config(config_path).accounts[0]
+    assert restarted.profile_dir == str(second_profile)
+    assert restarted.auth_sync_required is True
+    assert restarted.auth_sync_generation == snapshot.auth_sync_generation
+
+
+def test_concurrent_auth_sync_marks_serialize_monotone_generation(tmp_path):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("privat", path=config_path)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        marked = tuple(
+            executor.map(
+                lambda _index: config_module.mark_account_auth_sync_required(
+                    "privat", path=config_path
+                ),
+                range(2),
+            )
+        )
+
+    assert {account.auth_sync_generation for account in marked} == {1, 2}
+    restarted = load_config(config_path).accounts[0]
+    assert restarted.auth_sync_generation == 2
+    assert restarted.auth_sync_required is True
+
+
+def test_legacy_account_defaults_auth_sync_required_to_false(tmp_path):
+    account = config_module._account_from_data(
+        {"id": "legacy", "profile_dir": str(tmp_path / "profile")}
+    )
+
+    assert account.auth_sync_required is False
+    assert account.auth_sync_generation == 0
+
+
+def test_auth_sync_required_rejects_non_boolean_values(tmp_path):
+    with pytest.raises(ValueError, match=r"auth_sync_required must be (?:a )?boolean"):
+        config_module._account_from_data(
+            {
+                "id": "invalid",
+                "profile_dir": str(tmp_path / "profile"),
+                "auth_sync_required": 1,
+            }
+        )
+
+@pytest.mark.parametrize("value", [-1, 2**63, True, 1.0, "1"])
+def test_auth_sync_generation_rejects_invalid_values(tmp_path, value):
+    with pytest.raises(ValueError, match="auth_sync_generation"):
+        config_module._account_from_data(
+            {
+                "id": "invalid",
+                "profile_dir": str(tmp_path / "profile"),
+                "auth_sync_generation": value,
+            }
+        )
+
+
+def test_auth_sync_mark_rejects_generation_exhaustion_without_change(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config = AppConfig(
+        accounts=(
+            Account(
+                id="privat",
+                label="Privat",
+                profile_dir=str(tmp_path / "profile"),
+                auth_sync_required=True,
+                auth_sync_generation=2**63 - 1,
+            ),
+        )
+    )
+    save_config(config, config_path)
+
+    with pytest.raises(ValueError, match="auth_sync_generation"):
+        config_module.mark_account_auth_sync_required("privat", path=config_path)
+
+    assert load_config(config_path) == config
+    assert (
+        config_module.compare_and_clear_account_auth_sync_required(
+            config.accounts[0], path=config_path
+        )
+        is False
+    )
+    assert load_config(config_path) == config
 
 
 def test_reconfiguring_account_clears_old_usage_state(tmp_path, monkeypatch):

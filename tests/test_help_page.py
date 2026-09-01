@@ -32,14 +32,13 @@ def _schema() -> dict:
     return json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
 
 
-def test_help_module_loads_sibling_format_module_in_isolation() -> None:
+def test_help_module_does_not_depend_on_format_module() -> None:
     module_name = "_codex_usage_help_loader_probe"
     bound_name = "_codex_usage_format_table_selector"
     original_path = list(sys.path)
     original_format_module = sys.modules.get("format_table_selector")
     original_bound_module = sys.modules.pop(bound_name, None)
     collision = ModuleType("format_table_selector")
-    collision._materialize_format_definition = lambda *_args: {}
     sys.modules["format_table_selector"] = collision
     sys.path[:] = [path for path in sys.path if path != str(APPLET_DIR)]
     try:
@@ -50,7 +49,8 @@ def test_help_module_loads_sibling_format_module_in_isolation() -> None:
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        assert module._materialize_format_definition.__module__ == bound_name
+        assert module._help_definition.__module__ == module_name
+        assert bound_name not in sys.modules
     finally:
         sys.path[:] = original_path
         sys.modules.pop(module_name, None)
@@ -112,7 +112,12 @@ def test_help_group_builder_covers_gui_pages_and_format_copies() -> None:
     groups = build_help_groups(schema)
     titles = {group["title"] for group in groups}
     assert "Hilfe" not in titles
-    assert {"Einstellungen", "Formatierungen", "Accounts"}.issubset(titles)
+    assert {
+        "Einstellungen",
+        "Formatierungen",
+        "Accounts · OpenAI",
+        "Accounts · Google",
+    }.issubset(titles)
     settings_group = next(group for group in groups if group["title"] == "Einstellungen")
     settings_entries = [
         entry for section in settings_group["sections"] for entry in section["entries"]
@@ -319,10 +324,16 @@ def _expanders(widget):
 
 
 def test_help_page_defers_field_widgets_until_entry_expands() -> None:
-    widget = HelpPage({}, "help-content", SimpleNamespace(settings=_schema()))
+    schema = _schema()
+    expected_entries = sum(
+        len(section["entries"])
+        for group in build_help_groups(schema)
+        for section in group["sections"]
+    )
+    widget = HelpPage({}, "help-content", SimpleNamespace(settings=schema))
     try:
         expanders = list(_expanders(widget))
-        assert len(expanders) == 55
+        assert len(expanders) == expected_entries
         initial_count = _widget_count(widget)
         assert initial_count < 300
         assert all(expander.get_child() is None for expander in expanders)

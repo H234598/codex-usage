@@ -62,6 +62,99 @@ This keeps the browser profile by default. To also delete the stored profile:
 codex-usage account delete privat --delete-profile
 ```
 
+## Masterjet account control
+
+Codex Usage owns local OpenAI profile configuration, its canonical
+`PROFILE/codex-home/auth.json`, and usage polling. Masterjet remains the only
+authority for remote credential generations, Google inventory, plans, and
+applies. Google pages receive strictly redacted projections; they never read
+provider inventory files or persist provider credentials. CLI, MCP, and HTTPS
+are separate clients of that same Masterjet authority. The Master-MCP process
+may therefore run on another host.
+
+One canonical connection profile selects either a local `AF_UNIX` socket or a
+remote HTTPS endpoint:
+
+```bash
+codex-usage masterjet connection-set --transport local \
+  --endpoint /run/user/1000/masterjet.sock
+codex-usage masterjet connection-set --transport https \
+  --endpoint https://masterjet.example.test/control
+codex-usage masterjet connection-show --json
+codex-usage masterjet connection-test --json
+```
+
+HTTPS keeps certificate and hostname verification enabled and rejects
+redirects. Settings actions run the CLI in a transient `systemd --user` service
+with `--pipe --wait --collect`. HTTPS loads only
+`masterjet-control-bearer`; local AF_UNIX loads only
+`masterjet-local-attestation-key`. `systemd` creates `CREDENTIALS_DIRECTORY`
+for that process. Missing systemd user-manager support or credential fails
+closed; there is no plaintext fallback.
+
+Provision fixed encrypted sources once. Replace `/home/USER` with the home
+directory from the local account database, not an environment override. Input
+is read transiently by `systemd-ask-password`; no secret belongs in the command,
+environment, config, cache, or shell history:
+
+```bash
+install -d -m 0700 /home/USER/.config/codex-usage/credentials
+chmod 0700 /home/USER /home/USER/.config /home/USER/.config/codex-usage
+systemd-ask-password --user --echo=no -n "Masterjet HTTPS bearer" |
+  systemd-creds encrypt --user --name=masterjet-control-bearer - \
+  /home/USER/.config/codex-usage/credentials/masterjet-control-bearer.cred
+systemd-ask-password --user --echo=no -n "Masterjet local attestation key" |
+  systemd-creds encrypt --user --name=masterjet-local-attestation-key - \
+  /home/USER/.config/codex-usage/credentials/masterjet-local-attestation-key.cred
+chmod 0400 /home/USER/.config/codex-usage/credentials/*.cred
+```
+
+Provision only the credential for transports this desktop uses. Step-up TOTP
+stays in the same running CLI process through the Settings dialog/stdin pipe.
+Local secret ingress uses a private file descriptor; HTTPS ingress uses a
+bounded raw request body. Do not store secrets in the endpoint or config.
+
+OpenAI re-login only marks synchronization as required. Upload of the canonical
+`auth.json` is always a separate explicit action:
+
+```bash
+codex-usage account auth-sync ACCOUNT --format json
+```
+
+Google OAuth-client import, browser OAuth, inventory refresh, planning, and
+apply remain separate operations. `provision-apply` needs the complete preview
+digest plus explicit confirmation:
+
+```bash
+codex-usage google add ACCOUNT --label "Google Account" --oauth-client-json /private/client.json --json
+codex-usage google oauth-begin ACCOUNT --browser firefox --json
+codex-usage google inventory-refresh ACCOUNT --json
+codex-usage google provision-plan ACCOUNT --json
+codex-usage google provision-apply ACCOUNT PLAN_ID \
+  --plan-digest sha256:DIGEST --confirm --json
+```
+
+On control failure, a redacted cache can preserve read-only display for at most
+30 seconds. Older or invalid data is `STALE`; account mutations, apply, and any
+direct settings write stay disabled. Recovery always starts with a fresh
+projection.
+
+Maintainer self-check uses only local fixtures: real `AF_UNIX` and TLS servers,
+the shipped CLI through the bounded page runner, both account-page callbacks,
+cache fallback after endpoint shutdown, and fail-closed action guards:
+
+```bash
+pytest -q tests/test_masterjet_client.py tests/test_masterjet_cache.py \
+  tests/test_openai_accounts_page.py tests/test_google_accounts_page.py
+```
+
+### Fleet management and Ollama
+
+Fleet lifecycle, worker placement, and Ollama belong to Masterjet's separate
+fleet-management surface. Codex Usage has no fleet-management or Ollama link:
+it does not list Ollama as an OpenAI or Google account and never invokes
+`codex-master-mcp fleet` from a settings widget.
+
 ## Run
 
 One poll:

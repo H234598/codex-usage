@@ -8,7 +8,7 @@ import subprocess
 import tomllib
 from collections.abc import Callable
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -25,12 +25,14 @@ APP_NAME = "codex-usage"
 SUPPORTED_BROWSERS = ("firefox", "chromium")
 SUPPORTED_REACTIVATION_BROWSERS = ("auto", "vivaldi", "chromium", "firefox")
 SUPPORTED_BACKENDS = ("direct", "app-server")
+SUPPORTED_MASTERJET_TRANSPORTS = ("local", "https")
 SERIES_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,15}$")
 MAX_CONFIG_BYTES = 1_000_000
 MAX_CONFIG_ACCOUNTS = 100
 MAX_CONFIG_LABEL_CHARS = 256
 MAX_CONFIG_PATH_CHARS = 4096
 MAX_CONFIG_URL_CHARS = 2048
+MAX_AUTH_SYNC_GENERATION = 2**63 - 1
 _CODEX_HELP_ENV_NAMES = frozenset(
     {
         "HOME",
@@ -46,12 +48,20 @@ _CODEX_HELP_ENV_NAMES = frozenset(
 )
 
 
+@dataclass(frozen=True, slots=True)
+class MasterjetConnection:
+    transport: str = "local"
+    endpoint: str = ""
+    timeout_seconds: int = 10
+
+
 @dataclass(frozen=True)
 class AppConfig:
     accounts: tuple[Account, ...]
     interval_seconds: int = 300
     analytics_url: str = "https://chatgpt.com/codex/cloud/settings/analytics"
     headless: bool = True
+    masterjet: MasterjetConnection = MasterjetConnection()
 
 
 def default_config_path() -> Path:
@@ -109,11 +119,20 @@ def load_config(path: Path | None = None) -> AppConfig:
         raise ValueError("analytics_url must be an https://chatgpt.com URL")
     _validate_analytics_url(analytics_url)
     headless = _strict_bool(data.get("headless", True), "headless")
+    raw_masterjet = data.get("masterjet", {})
+    if not isinstance(raw_masterjet, dict):
+        raise ValueError("masterjet must be a TOML table")
+    masterjet = MasterjetConnection(
+        transport=raw_masterjet.get("transport", "local"),
+        endpoint=raw_masterjet.get("endpoint", ""),
+        timeout_seconds=raw_masterjet.get("timeout_seconds", 10),
+    )
     config = AppConfig(
         accounts=accounts,
         interval_seconds=interval,
         analytics_url=analytics_url,
         headless=headless,
+        masterjet=masterjet,
     )
     _validate_config(config)
     return config
@@ -142,6 +161,20 @@ def save_config(config: AppConfig, path: Path | None = None) -> Path:
     with private_path_lock(config_path, label="config lock"):
         _save_config_unlocked(config, config_path)
     return config_path
+
+
+def set_masterjet_connection(
+    connection: MasterjetConnection, path: Path | None = None
+) -> AppConfig:
+    if type(connection) is not MasterjetConnection:
+        raise ValueError("masterjet must be a MasterjetConnection")
+    config_path = _select_config_path(path)
+    _prepare_config_directory(config_path.parent)
+    with private_path_lock(config_path, label="config lock"):
+        updated = replace(load_config(config_path), masterjet=connection)
+        _validate_config(updated)
+        _save_config_unlocked(updated, config_path)
+    return updated
 
 
 def _save_config_unlocked(config: AppConfig, config_path: Path) -> None:
@@ -299,6 +332,10 @@ def add_or_update_account(
                 if series_active is not None
                 else (existing.series_active if existing else False)
             ),
+            auth_sync_required=(existing.auth_sync_required if existing else False),
+            auth_sync_generation=(
+                existing.auth_sync_generation if existing else 0
+            ),
         )
 
         accounts = [item for item in config.accounts if item.id != account_id]
@@ -308,6 +345,7 @@ def add_or_update_account(
             interval_seconds=config.interval_seconds,
             analytics_url=config.analytics_url,
             headless=config.headless,
+            masterjet=config.masterjet,
         )
         _validate_account(account)
         _validate_config(updated)
@@ -426,6 +464,91 @@ def add_or_update_account(
     return updated, account
 
 
+def mark_account_auth_sync_required(
+    account_id: str,
+    *,
+    path: Path | None = None,
+) -> Account:
+    _validate_account_id(account_id)
+    config_path = _select_config_path(path)
+    _prepare_config_directory(config_path.parent)
+    from .account_lock import account_lock
+
+    with account_lock("__all_accounts__"), private_path_lock(
+        config_path, label="config lock"
+    ):
+        config = load_config(config_path)
+        existing = next(
+            (account for account in config.accounts if account.id == account_id),
+            None,
+        )
+        if existing is None:
+            raise KeyError("unknown account")
+        if existing.auth_sync_generation >= MAX_AUTH_SYNC_GENERATION:
+            raise ValueError("auth_sync_generation is exhausted")
+        updated = replace(
+            existing,
+            auth_sync_required=True,
+            auth_sync_generation=existing.auth_sync_generation + 1,
+        )
+        _save_auth_sync_account(config, updated, config_path)
+        return updated
+
+
+def compare_and_clear_account_auth_sync_required(
+    snapshot: Account,
+    *,
+    path: Path | None = None,
+) -> bool:
+    _validate_account(snapshot)
+    config_path = _select_config_path(path)
+    _prepare_config_directory(config_path.parent)
+    from .account_lock import account_lock
+
+    with account_lock("__all_accounts__"), private_path_lock(
+        config_path, label="config lock"
+    ):
+        config = load_config(config_path)
+        existing = next(
+            (account for account in config.accounts if account.id == snapshot.id),
+            None,
+        )
+        if existing is None or (
+            existing.auth_sync_generation != snapshot.auth_sync_generation
+            or existing.profile_dir != snapshot.profile_dir
+            or existing.auth_json_path != snapshot.auth_json_path
+        ):
+            return False
+        if existing.auth_sync_generation == MAX_AUTH_SYNC_GENERATION:
+            return False
+        if existing.auth_sync_required:
+            _save_auth_sync_account(
+                config,
+                replace(existing, auth_sync_required=False),
+                config_path,
+            )
+        return True
+
+
+def _save_auth_sync_account(
+    config: AppConfig,
+    account: Account,
+    config_path: Path,
+) -> None:
+    updated = AppConfig(
+        accounts=tuple(
+            account if existing.id == account.id else existing
+            for existing in config.accounts
+        ),
+        interval_seconds=config.interval_seconds,
+        analytics_url=config.analytics_url,
+        headless=config.headless,
+        masterjet=config.masterjet,
+    )
+    _validate_config(updated)
+    _save_config_unlocked(updated, config_path)
+
+
 def remove_account(
     account_ref: str,
     path: Path | None = None,
@@ -444,6 +567,7 @@ def remove_account(
             interval_seconds=config.interval_seconds,
             analytics_url=config.analytics_url,
             headless=config.headless,
+            masterjet=config.masterjet,
         )
         _validate_config(updated)
         _save_config_unlocked(updated, config_path)
@@ -493,6 +617,7 @@ def restore_account(
             interval_seconds=config.interval_seconds,
             analytics_url=config.analytics_url,
             headless=config.headless,
+            masterjet=config.masterjet,
         )
         _validate_config(restored)
         _save_config_unlocked(restored, config_path)
@@ -599,6 +724,13 @@ def _account_from_data(item: object) -> Account:
     _validate_series(series, allow_empty=True)
     raw_series_active = item.get("series_active", False)
     series_active = _strict_bool(raw_series_active, "series_active")
+    auth_sync_required = _strict_bool(
+        item.get("auth_sync_required", False),
+        "auth_sync_required",
+    )
+    auth_sync_generation = _auth_sync_generation(
+        item.get("auth_sync_generation", 0)
+    )
     return Account(
         id=account_id,
         label=label,
@@ -610,6 +742,8 @@ def _account_from_data(item: object) -> Account:
         reactivation_browser=reactivation_browser,
         series=series,
         series_active=series_active,
+        auth_sync_required=auth_sync_required,
+        auth_sync_generation=auth_sync_generation,
     )
 
 
@@ -1040,6 +1174,7 @@ def _validate_config(config: AppConfig) -> None:
     _validate_text_field(config.analytics_url, "analytics_url", MAX_CONFIG_URL_CHARS)
     _validate_analytics_url(config.analytics_url)
     _strict_bool(config.headless, "headless")
+    _validate_masterjet_connection(config.masterjet)
 
     for account in config.accounts:
         _validate_account(account)
@@ -1065,6 +1200,14 @@ def _validate_account(account: object) -> None:
     _validate_series(account.series, allow_empty=True)
     if not isinstance(account.series_active, bool):
         raise ValueError("series_active must be boolean")
+    if type(account.auth_sync_required) is not bool:
+        raise ValueError("auth_sync_required must be boolean")
+    _auth_sync_generation(account.auth_sync_generation)
+    if (
+        account.auth_sync_generation == MAX_AUTH_SYNC_GENERATION
+        and not account.auth_sync_required
+    ):
+        raise ValueError("auth_sync_generation exhaustion must remain sync_required")
     if account.series_active and not account.series:
         raise ValueError("active series requires a series name")
     if account.auth_json_path is not None:
@@ -1112,6 +1255,41 @@ def _validate_analytics_url(url: str) -> None:
         raise ValueError("analytics_url must point to /codex/cloud/settings/analytics")
 
 
+def _validate_masterjet_connection(connection: object) -> None:
+    if not isinstance(connection, MasterjetConnection):
+        raise ValueError("masterjet must be a MasterjetConnection")
+    if connection.transport not in SUPPORTED_MASTERJET_TRANSPORTS:
+        choices = ", ".join(SUPPORTED_MASTERJET_TRANSPORTS)
+        raise ValueError(f"masterjet transport must be one of: {choices}")
+    if not isinstance(connection.endpoint, str):
+        raise ValueError("masterjet endpoint must be a string")
+    _validate_text_field(
+        connection.endpoint,
+        "masterjet endpoint",
+        MAX_CONFIG_URL_CHARS,
+        allow_empty=connection.transport == "local",
+    )
+    timeout = _strict_int(connection.timeout_seconds, "masterjet timeout_seconds")
+    if timeout < 1:
+        raise ValueError("masterjet timeout_seconds must be at least 1")
+    if connection.transport == "local":
+        if connection.endpoint and not Path(connection.endpoint).is_absolute():
+            raise ValueError("local masterjet endpoint must be an absolute socket path")
+        return
+
+    parts = urlsplit(connection.endpoint)
+    if parts.username is not None or parts.password is not None:
+        raise ValueError("masterjet endpoint must not contain credentials")
+    if parts.scheme != "https" or parts.hostname is None:
+        raise ValueError("masterjet endpoint must be an HTTPS URL")
+    if parts.query or parts.fragment:
+        raise ValueError("masterjet endpoint must not contain a query or fragment")
+    try:
+        _ = parts.port
+    except ValueError as exc:
+        raise ValueError("masterjet endpoint must be an HTTPS URL") from exc
+
+
 def _validate_browser(browser: str) -> None:
     if browser not in SUPPORTED_BROWSERS:
         choices = ", ".join(SUPPORTED_BROWSERS)
@@ -1151,6 +1329,15 @@ def _strict_bool(value: object, name: str) -> bool:
     return value
 
 
+def _auth_sync_generation(value: object) -> int:
+    if (
+        type(value) is not int
+        or not 0 <= value <= MAX_AUTH_SYNC_GENERATION
+    ):
+        raise ValueError("auth_sync_generation must be a bounded integer")
+    return value
+
+
 def _to_toml(config: AppConfig) -> str:
     lines = [
         f"interval_seconds = {config.interval_seconds}",
@@ -1158,6 +1345,16 @@ def _to_toml(config: AppConfig) -> str:
         f"headless = {'true' if config.headless else 'false'}",
         "",
     ]
+    if config.masterjet != MasterjetConnection():
+        lines.extend(
+            [
+                "[masterjet]",
+                f"transport = {_quote(config.masterjet.transport)}",
+                f"endpoint = {_quote(config.masterjet.endpoint)}",
+                f"timeout_seconds = {config.masterjet.timeout_seconds}",
+                "",
+            ]
+        )
     for account in sorted(config.accounts, key=lambda item: item.id):
         lines.extend(
             [
@@ -1171,6 +1368,8 @@ def _to_toml(config: AppConfig) -> str:
                 f"reactivation_browser = {_quote(account.reactivation_browser)}",
                 f"series = {_quote(account.series)}",
                 f"series_active = {'true' if account.series_active else 'false'}",
+                f"auth_sync_required = {'true' if account.auth_sync_required else 'false'}",
+                f"auth_sync_generation = {account.auth_sync_generation}",
                 *(
                     [f"auth_json_path = {_quote(account.auth_json_path)}"]
                     if account.auth_json_path

@@ -1776,4 +1776,5 @@ def test_reactivate_cli_renders_json(tmp_path, monkeypatch, capsys):
         "browser": "vivaldi",
         "auth_updated": True,
         "auth_access_expires_at": None,
+        "auth_sync_required": True,
     }

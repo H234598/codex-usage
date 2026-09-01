@@ -5,7 +5,7 @@ import json
 import runpy
 import sys
 from contextlib import nullcontext
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from io import BytesIO, StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import codex_usage.cli as cli_module
+import codex_usage.config as config_module
 from codex_usage import __version__
 from codex_usage.account_lock import AccountLockError, account_lock
 from codex_usage.bridge import MAX_INGEST_BYTES, bridge_token_for_account, load_latest_usages
@@ -28,7 +29,16 @@ from codex_usage.cli import (
     _usage_for_policy,
     main,
 )
-from codex_usage.config import AppConfig, add_or_update_account, load_config, save_config
+from codex_usage.config import (
+    AppConfig,
+    MasterjetConnection,
+    add_or_update_account,
+    load_config,
+    save_config,
+)
+from codex_usage.masterjet_cache import CachedControlSnapshot, ControlCacheError, ControlSnapshot
+from codex_usage.masterjet_client import MasterjetClientError
+from codex_usage.masterjet_contracts import OpenAIControlAccount
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.spark_health import set_spark_health
 from codex_usage.state import load_current_usage, save_current_usage, save_usage_snapshot
@@ -134,6 +144,9 @@ def test_root_help_lists_all_commands(capsys):
         in output
     )
     assert "codex-usage account terminal ACCOUNT" in output
+    assert (
+        "codex-usage google add ACCOUNT --label LABEL --oauth-client-json PATH --json" in output
+    )
     assert "--format table|json" in output
     assert "codex-usage profile jobs [--account ACCOUNT] [--json]" in output
     assert "codex-usage profile job-status JOB_ID [--json]" in output
@@ -1010,6 +1023,16 @@ def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
     }
 
 
+def test_global_step_up_stdin_flag_survives_root_command_normalization() -> None:
+    argv = ["--step-up-stdin", "account", "auth-sync", "openai-one", "--format", "json"]
+
+    assert cli_module._default_root_command(argv) == argv
+    parsed = cli_module._build_parser().parse_args(argv)
+    assert parsed.step_up_stdin is True
+    assert parsed.command == "account"
+    assert parsed.account_command == "auth-sync"
+
+
 def test_select_accounts_rejects_duplicate_refs():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/privat")
     config = AppConfig(accounts=(account,))
@@ -1117,7 +1140,9 @@ def test_account_list_is_removed(capsys):
     assert "invalid choice" in capsys.readouterr().err
 
 
-def test_login_accepts_unique_label(tmp_path, monkeypatch):
+def test_login_accepts_unique_label_and_marks_projection_sync_required(
+    tmp_path, monkeypatch, capsys
+):
     config_path = tmp_path / "config.toml"
     called = {}
 
@@ -1127,6 +1152,11 @@ def test_login_accepts_unique_label(tmp_path, monkeypatch):
         called["url"] = config.analytics_url
 
     monkeypatch.setattr("codex_usage.cli.login_account", fake_login)
+    monkeypatch.setattr(
+        cli_module,
+        "sync_account_auth",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("must remain explicit")),
+    )
 
     assert (
         main(["--config", str(config_path), "account", "add", "privat", "--label", "BW_Privat"])
@@ -1134,10 +1164,1043 @@ def test_login_accepts_unique_label(tmp_path, monkeypatch):
     )
     assert main(["--config", str(config_path), "login", "BW_Privat"]) == 0
 
+    assert "sync_required" in capsys.readouterr().out
+    restarted = load_config(config_path).accounts[0]
+    assert restarted.auth_sync_required is True
+    assert restarted.auth_sync_generation == 1
     assert called == {
         "account_id": "privat",
         "label": "BW_Privat",
         "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+    }
+
+
+def test_reactivate_success_persists_sync_required_without_upload(
+    tmp_path, monkeypatch, capsys
+):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("openai-1", path=config_path)
+    monkeypatch.setattr(
+        cli_module,
+        "reactivate_account",
+        lambda *_args, **kwargs: {"ok": True, "browser": kwargs["browser"]},
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "sync_account_auth",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("must remain explicit")),
+    )
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "reactivate",
+                "openai-1",
+                "--browser",
+                "firefox",
+            ]
+        )
+        == 0
+    )
+
+    restarted = load_config(config_path).accounts[0]
+    assert restarted.auth_sync_required is True
+    assert restarted.auth_sync_generation == 1
+    assert "sync_required" in capsys.readouterr().out
+
+
+def test_account_auth_sync_uses_resolved_account_and_authenticated_client(
+    monkeypatch, capsys
+):
+    account = Account(
+        id="openai-1",
+        label="OpenAI",
+        profile_dir="/private/profile",
+        auth_json_path="/private/profile/codex-home/auth.json",
+    )
+    config = SimpleNamespace(masterjet=object())
+    client = object()
+    calls = []
+    persisted = []
+    monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
+    monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: account)
+    monkeypatch.setattr(cli_module, "_new_masterjet_client", lambda *_args, **_kwargs: client)
+    monkeypatch.setattr(
+        cli_module,
+        "compare_and_clear_account_auth_sync_required",
+        lambda snapshot, **kwargs: persisted.append((snapshot, kwargs)) or True,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "sync_account_auth",
+        lambda selected, authenticated: calls.append((selected, authenticated))
+        or SimpleNamespace(account_ref="openai-1", generation=5, status="succeeded"),
+    )
+
+    assert main(["account", "auth-sync", "OpenAI", "--format", "json"]) == 0
+
+    assert calls == [(account, client)]
+    assert persisted == [
+        (account, {"path": None})
+    ]
+    assert json.loads(capsys.readouterr().out) == {
+        "account_ref": "openai-1",
+        "generation": 5,
+        "status": "succeeded",
+    }
+
+
+def test_account_auth_sync_success_clears_persisted_sync_required(
+    tmp_path, monkeypatch, capsys
+):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("openai-1", path=config_path)
+    config_module.mark_account_auth_sync_required("openai-1", path=config_path)
+    monkeypatch.setattr(
+        cli_module,
+        "MasterjetControlClient",
+        lambda _connection, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "sync_account_auth",
+        lambda *_args: SimpleNamespace(
+            account_ref="openai-1", generation=5, status="succeeded"
+        ),
+    )
+
+    assert main(["--config", str(config_path), "account", "auth-sync", "openai-1"]) == 0
+
+    restarted = load_config(config_path).accounts[0]
+    assert restarted.auth_sync_required is False
+    assert restarted.auth_sync_generation == 1
+    assert "succeeded" in capsys.readouterr().out
+
+
+def test_account_auth_sync_old_completion_cannot_clear_newer_reauth_and_retry_can(
+    tmp_path, monkeypatch, capsys
+):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("openai-1", path=config_path)
+    first = config_module.mark_account_auth_sync_required(
+        "openai-1", path=config_path
+    )
+    assert first.auth_sync_generation == 1
+    monkeypatch.setattr(
+        cli_module,
+        "MasterjetControlClient",
+        lambda _connection, **_kwargs: object(),
+    )
+
+    def sync_with_concurrent_reauth(account, _client):
+        assert account.auth_sync_generation == 1
+        config_module.mark_account_auth_sync_required(
+            account.id, path=config_path
+        )
+        return SimpleNamespace(
+            account_ref="remote-openai-7",
+            generation=5,
+            status="succeeded",
+        )
+
+    monkeypatch.setattr(cli_module, "sync_account_auth", sync_with_concurrent_reauth)
+
+    assert main(["--config", str(config_path), "account", "auth-sync", "openai-1"]) == 0
+    raced = load_config(config_path).accounts[0]
+    assert raced.auth_sync_required is True
+    assert raced.auth_sync_generation == 2
+
+    monkeypatch.setattr(
+        cli_module,
+        "sync_account_auth",
+        lambda *_args: SimpleNamespace(
+            account_ref="remote-openai-7",
+            generation=6,
+            status="succeeded",
+        ),
+    )
+    assert main(["--config", str(config_path), "account", "auth-sync", "openai-1"]) == 0
+    retried = load_config(config_path).accounts[0]
+    assert retried.auth_sync_required is False
+    assert retried.auth_sync_generation == 2
+    assert "remote-openai-7" in capsys.readouterr().out
+
+
+def test_account_auth_sync_has_no_secret_path_or_provider_argv(monkeypatch, capsys):
+    called = []
+    monkeypatch.setattr(cli_module, "sync_account_auth", lambda *_args: called.append(True))
+
+    with pytest.raises(SystemExit) as caught:
+        main(["account", "auth-sync", "openai-1", "--auth-json", "top-secret"])
+
+    assert caught.value.code == 2
+    assert called == []
+    captured = capsys.readouterr()
+    assert "top-secret" not in captured.out
+    assert "top-secret" not in captured.err
+
+
+def test_account_auth_sync_without_productive_providers_fails_closed(
+    monkeypatch, capsys
+):
+    account = Account(
+        id="openai-1",
+        label="OpenAI",
+        profile_dir="/private/profile",
+        auth_json_path="/private/profile/codex-home/auth.json",
+    )
+    config = SimpleNamespace(masterjet=object())
+    client = object()
+    monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
+    monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: account)
+    monkeypatch.setattr(cli_module, "_new_masterjet_client", lambda *_args, **_kwargs: client)
+    monkeypatch.setattr(
+        cli_module,
+        "sync_account_auth",
+        lambda *_args: (_ for _ in ()).throw(
+            cli_module.AuthSyncError("control.authentication_required")
+        ),
+    )
+
+    assert main(["account", "auth-sync", "openai-1"]) == 2
+    assert capsys.readouterr().err.strip() == "Fehler: control.authentication_required"
+
+
+def test_account_auth_sync_json_error_is_redacted_for_bounded_runner(monkeypatch, capsys):
+    account = Account(
+        id="openai-1",
+        label="OpenAI",
+        profile_dir="/private/profile",
+        auth_json_path="/private/profile/codex-home/auth.json",
+    )
+    config = SimpleNamespace(masterjet=object())
+    monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
+    monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: account)
+    monkeypatch.setattr(
+        cli_module,
+        "_new_masterjet_client",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "sync_account_auth",
+        lambda *_args: (_ for _ in ()).throw(
+            cli_module.AuthSyncError("control.step_up_required")
+        ),
+    )
+
+    assert main(["account", "auth-sync", "openai-1", "--format", "json"]) == 2
+
+    output = capsys.readouterr()
+    assert json.loads(output.out) == {
+        "ok": False,
+        "code": "control.step_up_required",
+    }
+    assert output.err == ""
+
+
+def test_google_provision_apply_requires_confirm_before_config_or_request(
+    monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        cli_module,
+        "load_config",
+        lambda _path: (_ for _ in ()).throw(AssertionError("request started")),
+    )
+
+    assert main(["google", "provision-apply", "google-one", "plan-1", "--json"]) == 2
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "ok": False,
+        "code": "confirmation_required",
+    }
+    assert captured.err == ""
+
+
+def test_google_billing_apply_requires_confirm_before_config_or_request(monkeypatch, capsys):
+    monkeypatch.setattr(
+        cli_module,
+        "load_config",
+        lambda _path: (_ for _ in ()).throw(AssertionError("request started")),
+    )
+
+    assert (
+        main(
+            [
+                "google",
+                "billing-apply",
+                "google-one",
+                "project-one",
+                "billing-one",
+                "billing-plan-one",
+                "--expected-generation",
+                "4",
+                "--plan-digest",
+                "sha256:" + "a" * 64,
+                "--idempotency-key",
+                "idem-billing-one",
+                "--json",
+            ]
+        )
+        == 2
+    )
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "ok": False,
+        "code": "confirmation_required",
+    }
+    assert captured.err == ""
+
+
+def test_google_billing_cli_preserves_plan_generation_digest_and_idempotency(
+    monkeypatch, capsys
+) -> None:
+    calls = []
+
+    class Controller:
+        def billing_plan(self, account_ref, project_ref, billing_ref):
+            calls.append(("plan", account_ref, project_ref, billing_ref))
+            return SimpleNamespace(
+                account_ref=account_ref,
+                project_ref=project_ref,
+                billing_ref=billing_ref,
+                plan_id="billing-plan-one",
+                expected_generation=4,
+                plan_digest="sha256:" + "a" * 64,
+                expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=ZoneInfo("UTC")),
+                idempotency_key="idem-billing-one",
+            )
+
+        def billing_apply(self, plan_id, **values):
+            calls.append(("apply", plan_id, values))
+            return SimpleNamespace(
+                plan_id=plan_id,
+                state="succeeded",
+                attempted=1,
+                completed=1,
+                failed=0,
+                not_attempted=0,
+                reason_code="billing.binding_created",
+            )
+
+    monkeypatch.setattr(cli_module, "_new_google_controller_for_args", lambda _args: Controller())
+
+    assert (
+        main(
+            [
+                "google",
+                "billing-plan",
+                "google-one",
+                "project-one",
+                "billing-one",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    plan_payload = json.loads(capsys.readouterr().out)
+    assert plan_payload == {
+        "account_ref": "google-one",
+        "project_ref": "project-one",
+        "billing_ref": "billing-one",
+        "plan_id": "billing-plan-one",
+        "expected_generation": 4,
+        "plan_digest": "sha256:" + "a" * 64,
+        "expires_at": "2026-08-28T12:05:00Z",
+        "idempotency_key": "idem-billing-one",
+    }
+
+    assert (
+        main(
+            [
+                "google",
+                "billing-apply",
+                "google-one",
+                "project-one",
+                "billing-one",
+                "billing-plan-one",
+                "--expected-generation",
+                "4",
+                "--plan-digest",
+                "sha256:" + "a" * 64,
+                "--idempotency-key",
+                "idem-billing-one",
+                "--confirm",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["completed"] == 1
+    assert calls == [
+        ("plan", "google-one", "project-one", "billing-one"),
+        (
+            "apply",
+            "billing-plan-one",
+            {
+                "account_ref": "google-one",
+                "project_ref": "project-one",
+                "billing_ref": "billing-one",
+                "expected_generation": 4,
+                "plan_digest": "sha256:" + "a" * 64,
+                "idempotency_key": "idem-billing-one",
+            },
+        ),
+    ]
+
+
+def test_google_cli_fixed_commands_forward_only_redacted_values(monkeypatch, capsys):
+    calls = []
+
+    class Controller:
+        def account_details(self):
+            calls.append(("list",))
+            account = SimpleNamespace(
+                ref="google-one",
+                label="Google One",
+                enabled=True,
+                subject_bound=True,
+                oauth_state="ready",
+                inventory_generation=4,
+                quota_state="fresh",
+                project_count=1,
+                billing_count=0,
+                billing_refs=(),
+                reload_state="ready",
+                default_oauth_client_ref="oauth-client-one",
+                oauth_client_availability="available",
+            )
+            project = SimpleNamespace(
+                ref="hive-one", project_name="Amber Orchard", purpose="quota_probe",
+                key_name="Willow Meadow", billing_ref=None, status="ready",
+                probe_state="ready", quota_state="available",
+            )
+            return (SimpleNamespace(account=account, projects=(project,)),)
+
+        def oauth_authorize(self, account_ref, *, browser):
+            calls.append(("oauth_begin", account_ref, browser))
+            return SimpleNamespace(
+                account_ref=account_ref,
+                subject_bound=True,
+                refresh_token_stored=True,
+            )
+
+        def import_oauth_client(self, account_ref, path):
+            calls.append(("import", account_ref, path))
+            return SimpleNamespace(account_ref=account_ref, generation=5, status="succeeded")
+
+        def inventory_refresh(self, account_ref):
+            calls.append(("inventory", account_ref))
+            return SimpleNamespace(
+                id="refresh-1",
+                kind="google.inventory.refresh",
+                state="succeeded",
+                expected_generation=4,
+                resulting_generation=5,
+                plan_digest="sha256:" + "a" * 64,
+                expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=ZoneInfo("UTC")),
+            )
+
+        def provision_plan(self, account_ref):
+            calls.append(("plan", account_ref))
+            return SimpleNamespace(
+                account_ref=account_ref,
+                plan_id="plan-1",
+                expected_generation=4,
+                plan_digest="sha256:" + "a" * 64,
+                expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=ZoneInfo("UTC")),
+                step_count=1,
+                projects=(
+                    SimpleNamespace(project_name="Amber Orchard", key_name="Willow Meadow"),
+                ),
+            )
+
+        def provision_apply(self, plan_id, *, account_ref, plan_digest):
+            calls.append(("apply", account_ref, plan_id, plan_digest))
+            return SimpleNamespace(
+                id="apply-1",
+                kind="google.provision.apply",
+                state="succeeded",
+                expected_generation=4,
+                resulting_generation=5,
+                plan_digest="sha256:" + "a" * 64,
+                expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=ZoneInfo("UTC")),
+            )
+
+    monkeypatch.setattr(cli_module, "_new_google_controller", lambda _path: Controller())
+    monkeypatch.setattr(cli_module, "_save_google_projection", lambda _details: None)
+    monkeypatch.setattr(
+        cli_module, "_new_google_oauth_controller", lambda _path, **_kwargs: Controller()
+    )
+
+    assert main(["google", "accounts", "--json"]) == 0
+    assert (
+        main(
+            [
+                "google",
+                "oauth-begin",
+                "google-one",
+                "--browser",
+                "firefox",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert main(["google", "inventory-refresh", "google-one", "--json"]) == 0
+    assert main(["google", "provision-plan", "google-one", "--json"]) == 0
+    assert (
+        main(
+            [
+                "google",
+                "provision-apply",
+                "google-one",
+                "plan-1",
+                "--plan-digest",
+                "sha256:" + "a" * 64,
+                "--confirm",
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    assert calls == [
+        ("list",),
+        ("oauth_begin", "google-one", "firefox"),
+        ("inventory", "google-one"),
+        ("plan", "google-one"),
+        ("apply", "google-one", "plan-1", "sha256:" + "a" * 64),
+    ]
+    output = capsys.readouterr().out
+    assert "access_token" not in output
+    assert "client_secret" not in output
+
+
+def test_google_provision_apply_missing_digest_fails_before_controller(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "_new_google_controller",
+        lambda _path: (_ for _ in ()).throw(AssertionError("controller started")),
+    )
+
+    assert main(
+        [
+            "google",
+            "provision-apply",
+            "google-one",
+            "plan-1",
+            "--confirm",
+            "--json",
+        ]
+    ) == 2
+
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "code": "control.response_invalid",
+    }
+
+
+def test_google_add_keeps_oauth_client_path_local(monkeypatch, tmp_path, capsys):
+    source = tmp_path / "oauth-client.json"
+    source.write_text("private", encoding="utf-8")
+    seen = []
+
+    class Controller:
+        def register_account(self, account_ref, label):
+            seen.append(("register", account_ref, label))
+            return SimpleNamespace(
+                account_ref=account_ref, generation=4, status="succeeded"
+            )
+
+        def import_oauth_client(self, account_ref, path):
+            seen.append(("import", account_ref, path))
+            return SimpleNamespace(account_ref=account_ref, generation=5, status="succeeded")
+
+    monkeypatch.setattr(cli_module, "_new_google_controller", lambda _path: Controller())
+
+    assert (
+        main(
+            [
+                "google",
+                "add",
+                "google-one",
+                "--label",
+                "Google One",
+                "--oauth-client-json",
+                str(source),
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    assert seen == [
+        ("register", "google-one", "Google One"),
+        ("import", "google-one", source),
+    ]
+    output = json.loads(capsys.readouterr().out)
+    assert output == {
+        "account_ref": "google-one",
+        "generation": 5,
+        "status": "succeeded",
+        "ok": True,
+    }
+    assert str(source) not in repr(output)
+
+
+def test_google_add_rejects_browser_before_controller(monkeypatch, tmp_path, capsys):
+    source = tmp_path / "oauth-client.json"
+    source.write_text("private", encoding="utf-8")
+    monkeypatch.setattr(
+        cli_module,
+        "_new_google_controller",
+        lambda _path: (_ for _ in ()).throw(AssertionError("controller constructed")),
+    )
+
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "google",
+                "add",
+                "google-one",
+                "--label",
+                "Google One",
+                "--oauth-client-json",
+                str(source),
+                "--browser",
+                "firefox",
+            ]
+        )
+
+    assert caught.value.code == 2
+    assert "unrecognized arguments: --browser firefox" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("state", ["partial", "failed", "blocked"])
+def test_google_operation_terminal_failure_is_nonzero_structured_and_redacted(
+    monkeypatch, capsys, state
+):
+    operation = SimpleNamespace(
+        id="refresh-1",
+        kind="google.inventory.refresh",
+        state=state,
+        expected_generation=4,
+        resulting_generation=None,
+        plan_digest="sha256:" + "a" * 64,
+        expires_at=datetime(2026, 8, 28, 12, 5, tzinfo=ZoneInfo("UTC")),
+    )
+    controller = SimpleNamespace(inventory_refresh=lambda _account: operation)
+    monkeypatch.setattr(cli_module, "_new_google_controller", lambda _path: controller)
+
+    assert main(["google", "inventory-refresh", "google-one", "--json"]) == 2
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["ok"] is False
+    assert output["code"] == f"control.operation_{state}"
+    assert output["state"] == state
+    assert "secret" not in json.dumps(output).casefold()
+
+
+def test_google_inventory_challenge_has_no_process_retry_metadata(monkeypatch, capsys):
+    class Controller:
+        def inventory_refresh(self, _account):
+            raise cli_module.GoogleAccountsError("control.step_up_required")
+
+    monkeypatch.setattr(cli_module, "_new_google_controller_for_args", lambda _args: Controller())
+
+    assert main(["google", "inventory-refresh", "google-one", "--json"]) == 2
+
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "code": "control.step_up_required",
+    }
+
+
+@pytest.mark.parametrize(
+    ("command", "method"),
+    [
+        (
+            ["google", "oauth-begin", "google-one", "--browser", "firefox", "--json"],
+            "oauth_authorize",
+        ),
+        (["google", "provision-plan", "google-one", "--json"], "provision_plan"),
+        (
+            [
+                "google",
+                "provision-apply",
+                "google-one",
+                "plan-one",
+                "--plan-digest",
+                "sha256:" + "a" * 64,
+                "--confirm",
+                "--json",
+            ],
+            "provision_apply",
+        ),
+    ],
+)
+def test_google_single_mutation_challenges_have_no_process_retry_metadata(
+    monkeypatch, capsys, command, method
+):
+    class Controller:
+        def __getattr__(self, name):
+            if name != method:
+                raise AttributeError(name)
+            return lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                cli_module.GoogleAccountsError("control.step_up_required")
+            )
+
+    monkeypatch.setattr(cli_module, "_new_google_controller_for_args", lambda _args: Controller())
+    monkeypatch.setattr(
+        cli_module, "_new_google_oauth_controller", lambda _path, **_kwargs: Controller()
+    )
+
+    assert main(command) == 2
+
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "code": "control.step_up_required",
+    }
+
+
+@pytest.mark.parametrize("state", ["partial", "failed", "blocked"])
+def test_google_add_terminal_receipt_failure_is_nonzero_structured(
+    monkeypatch, tmp_path, capsys, state
+):
+    source = tmp_path / "oauth-client.json"
+    source.write_text("private", encoding="utf-8")
+    result = SimpleNamespace(account_ref="google-one", generation=4, status=state)
+    controller = SimpleNamespace(
+        register_account=lambda *_args: SimpleNamespace(
+            account_ref="google-one", generation=4, status="succeeded"
+        ),
+        import_oauth_client=lambda *_args: result,
+    )
+    monkeypatch.setattr(cli_module, "_new_google_controller", lambda _path: controller)
+
+    assert (
+        main(
+            [
+                "google",
+                "add",
+                "google-one",
+                "--label",
+                "Google One",
+                "--oauth-client-json",
+                str(source),
+                "--json",
+            ]
+        )
+        == 2
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output == {
+        "account_ref": "google-one",
+        "generation": 4,
+        "status": state,
+        "ok": False,
+        "code": f"control.operation_{state}",
+    }
+
+
+def test_google_json_flag_selects_json_instead_of_human_output(monkeypatch, capsys):
+    row = SimpleNamespace(
+        ref="google-one",
+        label="Google One",
+        enabled=True,
+        subject_bound=True,
+        oauth_state="ready",
+        inventory_generation=4,
+        quota_state="fresh",
+        project_count=1,
+        billing_count=0,
+        billing_refs=(),
+        reload_state="ready",
+        default_oauth_client_ref="oauth-client-one",
+        oauth_client_availability="available",
+    )
+    project = SimpleNamespace(
+        ref="hive-one", project_name="Amber Orchard", purpose="quota_probe",
+        key_name="Willow Meadow", billing_ref=None, status="ready",
+        probe_state="ready", quota_state="available",
+    )
+    controller = SimpleNamespace(
+        account_details=lambda: (SimpleNamespace(account=row, projects=(project,)),)
+    )
+    monkeypatch.setattr(cli_module, "_new_google_controller", lambda _path: controller)
+    monkeypatch.setattr(cli_module, "_save_google_projection", lambda _details: None)
+
+    assert main(["google", "accounts"]) == 0
+    human = capsys.readouterr().out
+    assert human.startswith("REF")
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(human)
+
+    assert main(["google", "accounts", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["accounts"][0]["ref"] == "google-one"
+
+
+def test_google_cli_rejects_secret_quota_and_provider_identifier_options(capsys):
+    for option in ("--token", "--secret", "--quota-remaining", "--provider-id"):
+        with pytest.raises(SystemExit) as caught:
+            main(["google", "accounts", option])
+        assert caught.value.code == 2
+
+    capsys.readouterr()
+
+
+def test_google_production_cli_sanitizes_client_construction_failure(monkeypatch, capsys):
+    monkeypatch.setattr(
+        cli_module,
+        "MasterjetControlClient",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("client constructed")),
+    )
+
+    assert main(["google", "accounts", "--json"]) == 2
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "ok": False,
+        "code": "control.transport_unavailable",
+    }
+    assert captured.err == ""
+
+
+def test_google_oauth_begin_sanitizes_productive_client_construction_failure(
+    monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        cli_module,
+        "MasterjetControlClient",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("client constructed")
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "google",
+                "oauth-begin",
+                "google-one",
+                "--browser",
+                "firefox",
+                "--json",
+            ]
+        )
+        == 2
+    )
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "ok": False,
+        "code": "control.transport_unavailable",
+    }
+    assert captured.err == ""
+
+
+def test_google_oauth_factory_wires_productive_loopback_and_browser(monkeypatch):
+    client = object()
+    monkeypatch.setattr(
+        cli_module,
+        "load_config",
+        lambda _path: SimpleNamespace(masterjet=object()),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_new_masterjet_client",
+        lambda _connection, **_kwargs: client,
+    )
+
+    controller = cli_module._new_google_oauth_controller(None, step_up_stdin=True)
+
+    assert controller._client is client
+    assert isinstance(
+        controller._callback_provider, cli_module.LoopbackOAuthCallbackProvider
+    )
+    assert callable(controller._browser_opener)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["google", "accounts", "--json"],
+        ["google", "inventory-refresh", "google-one", "--json"],
+        ["google", "provision-plan", "google-one", "--json"],
+    ],
+)
+def test_google_json_sanitizes_unexpected_controller_or_transport_error(
+    monkeypatch, capsys, command
+):
+    monkeypatch.setattr(
+        cli_module,
+        "_new_google_controller",
+        lambda _path: (_ for _ in ()).throw(RuntimeError("Bearer topsecret")),
+    )
+
+    assert main(command) == 2
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "ok": False,
+        "code": "control.transport_unavailable",
+    }
+    assert captured.err == ""
+    assert "topsecret" not in captured.out
+
+
+def test_masterjet_status_reports_invalid_default_endpoint_fail_closed(capsys):
+    assert main(["masterjet", "status", "--json"]) == 2
+
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "code": "control.endpoint_invalid",
+    }
+
+
+def test_masterjet_openai_routing_options_uses_control_client(monkeypatch, capsys):
+    config = AppConfig(
+        accounts=(
+            Account(
+                id="profile-one",
+                label="OpenAI One",
+                profile_dir="/private/profile-one",
+                series="A",
+            ),
+        )
+    )
+    remote = OpenAIControlAccount(
+        ref="openai-one",
+        label="OpenAI One",
+        enabled=True,
+        local_profile_ref="profile-one",
+        source_host_ref="host-one",
+        auth_state="ready",
+        access_expires_at=None,
+        credential_generation=4,
+        vault_projection_state="current",
+        usage_state="available",
+    )
+    calls = []
+
+    class _Client:
+        def call(self, operation, arguments):
+            calls.append((operation, arguments))
+            return (remote,)
+
+    monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
+    monkeypatch.setattr(
+        cli_module,
+        "MasterjetControlClient",
+        lambda _connection, **_kwargs: _Client(),
+    )
+
+    assert main(["masterjet", "openai-routing-options", "--json"]) == 0
+    assert calls == [("openai.accounts.list", {})]
+    assert json.loads(capsys.readouterr().out) == {
+        "stale": False,
+        "series": [
+            {"prefix": "A", "enabled": True, "provider": "openai_chatgpt"}
+        ]
+    }
+
+
+def test_masterjet_openai_routing_options_uses_fresh_control_cache_on_outage(
+    tmp_path, monkeypatch, capsys
+):
+    config = AppConfig(
+        accounts=(
+            Account(
+                id="profile-one",
+                label="OpenAI One",
+                profile_dir="/private/profile-one",
+                series="A",
+            ),
+        )
+    )
+    remote = OpenAIControlAccount(
+        ref="openai-one",
+        label="OpenAI One",
+        enabled=True,
+        local_profile_ref="profile-one",
+        source_host_ref="host-one",
+        auth_state="ready",
+        access_expires_at=None,
+        credential_generation=4,
+        vault_projection_state="current",
+        usage_state="available",
+    )
+    cached = CachedControlSnapshot(
+        snapshot=ControlSnapshot(openai_accounts=(remote,)),
+        observed_at=1.0,
+        stale=False,
+    )
+
+    class _UnavailableClient:
+        def call(self, _operation, _arguments):
+            raise cli_module.MasterjetClientError("control.transport_unavailable")
+
+    monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
+    monkeypatch.setattr(
+        cli_module,
+        "MasterjetControlClient",
+        lambda _connection, **_kwargs: _UnavailableClient(),
+    )
+    monkeypatch.setattr(cli_module, "default_state_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        cli_module,
+        "load_control_snapshot",
+        lambda _root, _max_age: cached,
+        raising=False,
+    )
+
+    assert main(["masterjet", "openai-routing-options", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "stale": True,
+        "series": [
+            {"prefix": "A", "enabled": True, "provider": "openai_chatgpt"}
+        ]
+    }
+
+
+def test_masterjet_openai_routing_options_rejects_stale_control_cache(
+    tmp_path, monkeypatch, capsys
+):
+    cached = CachedControlSnapshot(
+        snapshot=ControlSnapshot(),
+        observed_at=1.0,
+        stale=True,
+    )
+
+    class _UnavailableClient:
+        def call(self, _operation, _arguments):
+            raise cli_module.MasterjetClientError("control.transport_unavailable")
+
+    monkeypatch.setattr(cli_module, "load_config", lambda _path: AppConfig(accounts=()))
+    monkeypatch.setattr(
+        cli_module,
+        "MasterjetControlClient",
+        lambda _connection, **_kwargs: _UnavailableClient(),
+    )
+    monkeypatch.setattr(cli_module, "default_state_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        cli_module,
+        "load_control_snapshot",
+        lambda _root, _max_age: cached,
+    )
+
+    assert main(["masterjet", "openai-routing-options", "--json"]) == 2
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "code": "control.cache_unavailable",
     }
 
 
@@ -4796,8 +5859,31 @@ def test_profile_command_handlers_cover_text_errors_and_job_results(monkeypatch,
 
 def test_reactivation_and_account_handlers_cover_success_and_errors(monkeypatch, capsys):
     account = Account(id="alpha", label="Alpha", profile_dir="/tmp/alpha")
+    persisted = []
     monkeypatch.setattr(cli_module, "load_config", lambda _path: object())
     monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: account)
+    monkeypatch.setattr(
+        cli_module,
+        "mark_account_auth_sync_required",
+        lambda account_id, **kwargs: persisted.append((account_id, kwargs)),
+    )
+
+    monkeypatch.setattr(
+        cli_module,
+        "reactivate_account",
+        lambda *_args, **kwargs: {"ok": True, "browser": kwargs["browser"]},
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "sync_account_auth",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("must remain explicit")),
+    )
+    assert cli_module._cmd_reactivate(
+        SimpleNamespace(config=None, account="alpha", browser="firefox", format="table")
+    ) == 0
+    output = capsys.readouterr().out
+    assert "Account reaktiviert" in output
+    assert "sync_required" in output
 
     monkeypatch.setattr(
         cli_module,
@@ -4805,9 +5891,9 @@ def test_reactivation_and_account_handlers_cover_success_and_errors(monkeypatch,
         lambda *_args, **kwargs: {"ok": True, "browser": kwargs["browser"]},
     )
     assert cli_module._cmd_reactivate(
-        SimpleNamespace(config=None, account="alpha", browser="firefox", format="table")
+        SimpleNamespace(config=None, account="alpha", browser="firefox", format="json")
     ) == 0
-    assert "Account reaktiviert" in capsys.readouterr().out
+    assert json.loads(capsys.readouterr().out)["auth_sync_required"] is True
 
     monkeypatch.setattr(
         cli_module,
@@ -4820,6 +5906,10 @@ def test_reactivation_and_account_handlers_cover_success_and_errors(monkeypatch,
         SimpleNamespace(config=None, account="alpha", browser="auto", format="json")
     ) == 2
     assert json.loads(capsys.readouterr().out)["error"] == "reactivation failed"
+    assert persisted == [
+        ("alpha", {"path": None}),
+        ("alpha", {"path": None}),
+    ]
 
     monkeypatch.setattr(
         cli_module,
@@ -4958,3 +6048,232 @@ def test_policy_and_spark_health_commands_cover_validation_and_outputs(monkeypat
         cli_module._cmd_spark_health(
             SimpleNamespace(backend_account_id="backend", state=None, reason="oops")
         )
+
+
+def test_openai_accounts_command_returns_complete_live_projection(monkeypatch, capsys):
+    config = AppConfig(
+        accounts=(
+            Account(
+                id="profile-one",
+                label="OpenAI One",
+                profile_dir="/private/profile-one",
+                auth_json_path="/private/profile-one/codex-home/auth.json",
+                series="A",
+                series_active=True,
+                auth_sync_required=True,
+            ),
+        ),
+        masterjet=MasterjetConnection(
+            transport="https", endpoint="https://masterjet.example.test/control"
+        ),
+    )
+    remote = OpenAIControlAccount(
+        ref="openai-one", label="OpenAI One", enabled=True,
+        local_profile_ref="profile-one", source_host_ref="host-one",
+        auth_state="ready",
+        access_expires_at=datetime(2026, 8, 28, 18, tzinfo=UTC),
+        credential_generation=7, vault_projection_state="synced",
+        usage_state="available",
+    )
+    monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
+    monkeypatch.setattr(
+        cli_module,
+        "_new_masterjet_client",
+        lambda *_args, **_kwargs: SimpleNamespace(call=lambda operation, arguments: (remote,)),
+    )
+    monkeypatch.setattr(cli_module, "save_control_snapshot", lambda *_args, **_kwargs: None)
+
+    assert main(["masterjet", "openai-accounts", "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stale"] is False
+    assert payload["accounts"][0]["vault_projection_state"] == "synced"
+    assert payload["accounts"][0]["usage_state"] == "available"
+    assert payload["local_accounts"] == [{
+        "account": "profile-one", "label": "OpenAI One",
+        "local_auth_state": "missing", "auth_sync_required": True,
+        "series-active": True,
+    }]
+    assert "/private/profile-one" not in json.dumps(payload)
+
+
+def test_openai_accounts_command_preserves_live_error_when_cache_load_fails(
+    tmp_path, monkeypatch, capsys
+):
+    class _UnavailableClient:
+        def call(self, _operation, _arguments):
+            raise MasterjetClientError("control.authentication_required")
+
+    monkeypatch.setattr(cli_module, "load_config", lambda _path: AppConfig(accounts=()))
+    monkeypatch.setattr(
+        cli_module,
+        "_new_masterjet_client",
+        lambda *_args, **_kwargs: _UnavailableClient(),
+    )
+    monkeypatch.setattr(cli_module, "default_state_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        cli_module,
+        "load_control_snapshot",
+        lambda _root, _max_age: (_ for _ in ()).throw(
+            ControlCacheError("control.cache_unavailable")
+        ),
+    )
+
+    assert main(["masterjet", "openai-accounts", "--json"]) == 2
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "code": "control.authentication_required",
+    }
+
+
+def test_account_details_cli_returns_exact_live_projection_envelope(monkeypatch, capsys):
+    account = SimpleNamespace(
+        ref="google-one", label="Google One", enabled=True, subject_bound=True,
+        oauth_state="ready", inventory_generation=4, quota_state="fresh",
+        project_count=1, billing_count=0, billing_refs=(), reload_state="ready",
+        default_oauth_client_ref="oauth-client-one",
+        oauth_client_availability="available",
+    )
+    project = SimpleNamespace(
+        ref="hive-one", project_name="Amber Orchard", purpose="quota_probe",
+        key_name="Willow Meadow", billing_ref=None, status="ready",
+        probe_state="ready", quota_state="available",
+    )
+    controller = SimpleNamespace(
+        account_details=lambda: (SimpleNamespace(account=account, projects=(project,)),)
+    )
+    monkeypatch.setattr(cli_module, "_new_google_controller", lambda _path: controller)
+    monkeypatch.setattr(
+        cli_module, "_save_google_projection", lambda *_args, **_kwargs: None
+    )
+
+    assert main(["google", "accounts", "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stale"] is False
+    assert payload["accounts"] == [cli_module._google_account_json(account)]
+    assert payload["accounts"][0]["enabled"] is True
+    assert payload["accounts"][0]["oauth_state"] == "ready"
+    assert payload["accounts"][0]["quota_state"] == "fresh"
+    assert payload["accounts"][0]["reload_state"] == "ready"
+    assert payload["projects"]["google-one"][0]["project_name"] == "Amber Orchard"
+    assert payload["projects"]["google-one"][0]["key_name"] == "Willow Meadow"
+
+
+def test_live_projection_connection_commands_use_one_canonical_config(
+    tmp_path, monkeypatch, capsys
+):
+    config_path = tmp_path / "config.toml"
+    save_config(AppConfig(accounts=()), config_path)
+    assert main([
+        "--config", str(config_path), "masterjet", "connection-set",
+        "--transport", "https", "--endpoint",
+        "https://masterjet.example.test/control", "--timeout-seconds", "7", "--json",
+    ]) == 0
+    set_payload = json.loads(capsys.readouterr().out)
+    assert load_config(config_path).masterjet == MasterjetConnection(
+        transport="https", endpoint="https://masterjet.example.test/control",
+        timeout_seconds=7,
+    )
+
+    assert main(["--config", str(config_path), "masterjet", "connection-show", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == set_payload
+
+    calls = []
+
+    class Client:
+        def __init__(self, connection, **_kwargs):
+            calls.append(connection)
+
+        def call(self, operation, arguments):
+            calls.append((operation, arguments))
+            return ()
+
+    before = config_path.read_bytes()
+    monkeypatch.setattr(cli_module, "MasterjetControlClient", Client)
+    assert main(["--config", str(config_path), "masterjet", "connection-test", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+    assert config_path.read_bytes() == before
+    assert calls[-1] == ("openai.accounts.list", {})
+
+
+def test_masterjet_client_factory_wires_https_and_local_credentials(
+    tmp_path, monkeypatch
+):
+    credential_dir = tmp_path / "credentials"
+    credential_dir.mkdir(mode=0o700)
+    credential = credential_dir / "masterjet-control-bearer"
+    credential.write_text("remote-bearer", encoding="ascii")
+    credential.chmod(0o400)
+    attestation = credential_dir / "masterjet-local-attestation-key"
+    attestation.write_bytes(b"k" * 32)
+    attestation.chmod(0o400)
+    captured = []
+
+    class Client:
+        def __init__(self, connection, **kwargs):
+            captured.append((connection, kwargs))
+
+    monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(credential_dir))
+    monkeypatch.setattr(cli_module, "MasterjetControlClient", Client)
+
+    remote = cli_module._new_masterjet_client(
+        MasterjetConnection(transport="https", endpoint="https://masterjet.example.test/control"),
+        step_up_stdin=True,
+    )
+    local = cli_module._new_masterjet_client(
+        MasterjetConnection(transport="local", endpoint="/run/user/1000/masterjet.sock"),
+        step_up_stdin=True,
+    )
+
+    assert isinstance(remote, Client)
+    assert isinstance(local, Client)
+    assert set(captured[0][1]) == {"bearer_provider", "step_up_provider"}
+    assert captured[0][1]["bearer_provider"]() == "remote-bearer"
+    assert set(captured[1][1]) == {"local_attestation_verifier"}
+    assert callable(captured[1][1]["local_attestation_verifier"])
+
+
+def test_live_projection_connection_set_rejects_invalid_endpoint_before_write(
+    tmp_path, capsys
+):
+    config_path = tmp_path / "config.toml"
+    save_config(AppConfig(accounts=()), config_path)
+    before = config_path.read_bytes()
+
+    assert main([
+        "--config", str(config_path), "masterjet", "connection-set",
+        "--transport", "https", "--endpoint",
+        "https://user:secret@masterjet.example.test/control", "--json",
+    ]) == 2
+
+    assert config_path.read_bytes() == before
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False, "code": "control.endpoint_invalid"
+    }
+
+
+def test_full_plan_preview_cli_contains_every_visible_name_pair(monkeypatch, capsys):
+    plan = SimpleNamespace(
+        account_ref="google-one", plan_id="plan-one", expected_generation=4,
+        plan_digest="sha256:" + "a" * 64,
+        expires_at=datetime(2026, 8, 28, 18, tzinfo=ZoneInfo("UTC")),
+        step_count=5,
+        projects=(
+            SimpleNamespace(project_name="Amber Orchard", key_name="Willow Meadow"),
+            SimpleNamespace(project_name="Velvet Harbor", key_name="Silver Forest"),
+        ),
+    )
+    monkeypatch.setattr(
+        cli_module, "_new_google_controller",
+        lambda _path: SimpleNamespace(provision_plan=lambda _account: plan),
+    )
+
+    assert main(["google", "provision-plan", "google-one", "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["step_count"] == 5
+    assert payload["projects"] == [
+        {"project_name": "Amber Orchard", "key_name": "Willow Meadow"},
+        {"project_name": "Velvet Harbor", "key_name": "Silver Forest"},
+    ]

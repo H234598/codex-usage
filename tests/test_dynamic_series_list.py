@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 APPLET_DIR = ROOT / "files" / "codex-usage@H234598"
 sys.path.insert(0, str(APPLET_DIR))
@@ -13,6 +15,33 @@ sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings/bin")
 
 from dynamic_series_list import DynamicSeriesList  # noqa: E402
 from TreeListWidgets import List  # noqa: E402
+
+_MISSING = object()
+_MASTERJET_CACHE_FIELDS = (
+    "_masterjet_cache",
+    "_masterjet_cache_at",
+    "_masterjet_cache_key",
+)
+
+
+@pytest.fixture(autouse=True)
+def _restore_dynamic_series_class_cache():
+    original = {
+        field: getattr(DynamicSeriesList, field, _MISSING)
+        for field in _MASTERJET_CACHE_FIELDS
+    }
+    for field in _MASTERJET_CACHE_FIELDS:
+        if hasattr(DynamicSeriesList, field):
+            delattr(DynamicSeriesList, field)
+    try:
+        yield
+    finally:
+        for field, value in original.items():
+            if value is _MISSING:
+                if hasattr(DynamicSeriesList, field):
+                    delattr(DynamicSeriesList, field)
+            else:
+                setattr(DynamicSeriesList, field, value)
 
 
 class _SeriesTable:
@@ -176,12 +205,70 @@ def test_series_options_keep_conflicting_current_assignment_editable() -> None:
     }
 
 
-def test_masterjet_series_filters_provider_state_and_caches_result(tmp_path, monkeypatch) -> None:
-    command = tmp_path / "masterjet-series"
+def test_masterjet_series_uses_only_codex_usage_control_cli(
+    tmp_path, monkeypatch
+) -> None:
+    class _Stream:
+        def fileno(self):
+            return 17
+
+    class _Process:
+        pid = 123
+
+        def __init__(self):
+            self.stdout = _Stream()
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    process = _Process()
+    chunks = iter([
+        json.dumps({
+            "stale": False,
+            "series": [
+                {"prefix": "a", "enabled": True, "provider": "openai_chatgpt"}
+            ]
+        }).encode("utf-8"),
+        b"",
+    ])
+    captured = {}
+
+    def _popen(argv, **kwargs):
+        captured["argv"] = argv
+        return process
+
+    monkeypatch.setenv("CODEX_MASTER_MCP", str(tmp_path / "codex-master-mcp"))
+    monkeypatch.setattr("dynamic_series_list.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("dynamic_series_list.subprocess.Popen", _popen)
+    monkeypatch.setattr(
+        "dynamic_series_list.select.select",
+        lambda *_args: ([process.stdout], [], []),
+    )
+    monkeypatch.setattr("dynamic_series_list.os.read", lambda *_args: next(chunks))
+    series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
+    assert DynamicSeriesList._masterjet_series(series_widget) == ("A",)
+    assert series_widget._masterjet_projection_ready is True
+    assert captured["argv"] == [
+        str(tmp_path / ".local/bin/codex-usage"),
+        "masterjet",
+        "openai-routing-options",
+        "--json",
+    ]
+    assert all("codex-master-mcp" not in argument for argument in captured["argv"])
+
+
+def test_masterjet_series_rechecks_projection_instead_of_offering_cached_routing(
+    tmp_path, monkeypatch
+) -> None:
+    command = tmp_path / ".local/bin/codex-usage"
+    command.parent.mkdir(parents=True)
     command.write_text(
         "#!/usr/bin/env python3\n"
         "import json\n"
-        "print(json.dumps({'series': ["
+        "print(json.dumps({'stale': False, 'series': ["
         "{'prefix': 'a', 'enabled': True, 'provider': 'openai_chatgpt'},"
         "{'prefix': 'b', 'enabled': False, 'provider': 'openai_chatgpt'},"
         "{'prefix': 'g', 'enabled': True, 'provider': 'gemini'},"
@@ -191,57 +278,22 @@ def test_masterjet_series_filters_provider_state_and_caches_result(tmp_path, mon
         encoding="utf-8",
     )
     command.chmod(0o700)
-    monkeypatch.setenv("CODEX_MASTER_MCP", str(command))
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
-
+    monkeypatch.setattr("dynamic_series_list.Path.home", lambda: tmp_path)
     series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
     assert DynamicSeriesList._masterjet_series(series_widget) == ("A",)
 
-    # A second call must use the bounded cache rather than executing again.
+    # Routing mutation must recheck current projection instead of trusting cache.
     command.write_text("raise SystemExit(7)\n", encoding="utf-8")
-    assert DynamicSeriesList._masterjet_series(series_widget) == ("A",)
-
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
-
-
-def test_masterjet_series_cache_follows_command_path(tmp_path, monkeypatch) -> None:
-    commands = []
-    for name, prefix in (("first", "a"), ("second", "b")):
-        command = tmp_path / name
-        payload = {
-            "series": [{"prefix": prefix, "enabled": True, "provider": "openai_chatgpt"}]
-        }
-        command.write_text(
-            "#!/usr/bin/env python3\n"
-            f"print({json.dumps(payload)!r})\n",
-            encoding="utf-8",
-        )
-        command.chmod(0o700)
-        commands.append(command)
-
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
-    DynamicSeriesList._masterjet_cache_key = None
-    series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
-    try:
-        monkeypatch.setenv("CODEX_MASTER_MCP", str(commands[0]))
-        assert DynamicSeriesList._masterjet_series(series_widget) == ("A",)
-        monkeypatch.setenv("CODEX_MASTER_MCP", str(commands[1]))
-        assert DynamicSeriesList._masterjet_series(series_widget) == ("B",)
-    finally:
-        DynamicSeriesList._masterjet_cache = None
-        DynamicSeriesList._masterjet_cache_at = 0.0
-        DynamicSeriesList._masterjet_cache_key = None
-
+    assert DynamicSeriesList._masterjet_series(series_widget) == ()
+    assert series_widget._masterjet_projection_ready is False
 
 def test_masterjet_series_keeps_ascii_hyphen_and_underscore_prefixes(tmp_path, monkeypatch) -> None:
-    command = tmp_path / "masterjet-prefixed-series"
+    command = tmp_path / ".local/bin/codex-usage"
+    command.parent.mkdir(parents=True)
     command.write_text(
         "#!/usr/bin/env python3\n"
         "import json\n"
-        "print(json.dumps({'series': ["
+        "print(json.dumps({'stale': False, 'series': ["
         "{'prefix': 'q-inplace', 'enabled': True, 'provider': 'openai_chatgpt'},"
         "{'prefix': 'a_b', 'enabled': True, 'provider': 'openai_chatgpt'},"
         "{'prefix': '9bad', 'enabled': True, 'provider': 'openai_chatgpt'},"
@@ -250,21 +302,73 @@ def test_masterjet_series_keeps_ascii_hyphen_and_underscore_prefixes(tmp_path, m
         encoding="utf-8",
     )
     command.chmod(0o700)
-    monkeypatch.setenv("CODEX_MASTER_MCP", str(command))
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
-
+    monkeypatch.setattr("dynamic_series_list.Path.home", lambda: tmp_path)
     series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
     assert DynamicSeriesList._masterjet_series(series_widget) == ("A_B", "Q-INPLACE")
 
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
+def test_stale_routing_projection_is_not_offered_or_editable(tmp_path, monkeypatch) -> None:
+    command = tmp_path / ".local/bin/codex-usage"
+    command.parent.mkdir(parents=True)
+    command.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "print(json.dumps({'stale': True, 'series': ["
+        "{'prefix': 'a', 'enabled': True, 'provider': 'openai_chatgpt'}]}))\n",
+        encoding="utf-8",
+    )
+    command.chmod(0o700)
+    monkeypatch.setattr("dynamic_series_list.Path.home", lambda: tmp_path)
+    series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
+
+    assert DynamicSeriesList._masterjet_series(series_widget) == ()
+    assert series_widget._masterjet_projection_ready is False
+
+    series_widget.columns = [
+        {"id": "account"},
+        {"id": "series"},
+        {"id": "series-active"},
+    ]
+    series_widget.model = [["alpha", "A", True]]
+    series_widget._series_column_index = 1
+    series_widget._active_column_index = 2
+    monkeypatch.setattr(
+        "dynamic_series_list.List.open_add_edit_dialog",
+        lambda *_args: "mutation-dialog-opened",
+    )
+
+    assert DynamicSeriesList.open_add_edit_dialog(series_widget, series_widget.model[0]) is None
+
+
+def test_stale_routing_projection_cannot_persist_series_active_change() -> None:
+    writes = []
+    reloads = []
+    widget = DynamicSeriesList.__new__(DynamicSeriesList)
+    widget.model = [["alpha", "A", True]]
+    widget.columns = [
+        {"id": "account"},
+        {"id": "series"},
+        {"id": "series-active"},
+    ]
+    widget.set_value = lambda value: writes.append(value)
+    widget.update_button_sensitivity = lambda: None
+    widget.on_setting_changed = lambda: reloads.append("reloaded")
+
+    def stale_projection():
+        widget._masterjet_projection_ready = False
+        return ()
+
+    widget._masterjet_series = stale_projection
+    DynamicSeriesList.list_changed(widget)
+
+    assert writes == []
+    assert reloads == ["reloaded"]
 
 
 def test_masterjet_series_fails_closed_when_child_closes_stdout_but_hangs(
     tmp_path, monkeypatch
 ) -> None:
-    command = tmp_path / "masterjet-hanging-series"
+    command = tmp_path / ".local/bin/codex-usage"
+    command.parent.mkdir(parents=True)
     command.write_text(
         "#!/usr/bin/env python3\n"
         "import os\n"
@@ -274,10 +378,7 @@ def test_masterjet_series_fails_closed_when_child_closes_stdout_but_hangs(
         encoding="utf-8",
     )
     command.chmod(0o700)
-    monkeypatch.setenv("CODEX_MASTER_MCP", str(command))
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
-
+    monkeypatch.setattr("dynamic_series_list.Path.home", lambda: tmp_path)
     series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
     series_widget._MASTERJET_TIMEOUT_SECONDS = 0.1
     assert DynamicSeriesList._masterjet_series(series_widget) == ()
@@ -316,9 +417,6 @@ def test_masterjet_cleanup_ignores_child_exit_race(monkeypatch) -> None:
         "dynamic_series_list.os.killpg",
         lambda *_args: (_ for _ in ()).throw(ProcessLookupError("group gone")),
     )
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
-
     series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
     assert DynamicSeriesList._masterjet_series(series_widget) == ()
 
@@ -355,8 +453,6 @@ def test_masterjet_cleanup_reaps_after_second_kill(monkeypatch) -> None:
     monkeypatch.setattr("dynamic_series_list.os.read", lambda *_args: b"")
     monkeypatch.setattr("dynamic_series_list.os.killpg", lambda *_args: None)
 
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
     series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
 
     assert DynamicSeriesList._masterjet_series(series_widget) == ()
@@ -401,8 +497,6 @@ def test_masterjet_cleanup_ignores_wait_reaping_race(monkeypatch) -> None:
         lambda *_args: (_ for _ in ()).throw(ProcessLookupError("group gone")),
     )
 
-    DynamicSeriesList._masterjet_cache = None
-    DynamicSeriesList._masterjet_cache_at = 0.0
     series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
 
     assert DynamicSeriesList._masterjet_series(series_widget) == ()
@@ -499,7 +593,7 @@ def test_settings_read_error_keeps_series_table_open() -> None:
             widget.destroy()
 
 
-def test_settings_write_error_resets_saving_and_keeps_listener_active() -> None:
+def test_settings_write_error_resets_saving_and_keeps_listener_active(monkeypatch) -> None:
     settings = _WriteErrorSettings()
     settings.values["account-series-settings"] = [{
         "account": "alpha",
@@ -517,6 +611,11 @@ def test_settings_write_error_resets_saving_and_keeps_listener_active() -> None:
         },
         "account-series-settings",
         settings,
+    )
+    monkeypatch.setattr(
+        DynamicSeriesList,
+        "_masterjet_series",
+        lambda self: setattr(self, "_masterjet_projection_ready", True) or ("A",),
     )
 
     try:
@@ -609,6 +708,7 @@ def test_open_dialog_filters_series_column_and_restores_schema(monkeypatch) -> N
     ]
     widget.columns = original_columns
     widget._series_options_for = lambda _info: {"Keine Serie": "", "A": "A"}
+    widget._masterjet_projection_ready = True
     captured = []
 
     def fake_open_add_edit_dialog(self, info=None):
@@ -639,3 +739,14 @@ def test_open_dialog_survives_base_editor_error_and_restores_schema(monkeypatch)
 
     assert DynamicSeriesList.open_add_edit_dialog(widget, ["alpha", ""]) is None
     assert widget.columns is original_columns
+
+
+@pytest.mark.parametrize("iteration", range(2))
+def test_dynamic_series_cache_state_is_order_independent(iteration: int) -> None:
+    assert iteration in (0, 1)
+    assert not hasattr(DynamicSeriesList, "_masterjet_cache")
+    assert not hasattr(DynamicSeriesList, "_masterjet_cache_at")
+    assert not hasattr(DynamicSeriesList, "_masterjet_cache_key")
+    DynamicSeriesList._masterjet_cache = ("must-not-leak",)
+    DynamicSeriesList._masterjet_cache_at = 99.0
+    DynamicSeriesList._masterjet_cache_key = "must-not-leak"
