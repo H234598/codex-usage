@@ -150,7 +150,9 @@ def load_config(path: Path | None = None) -> AppConfig:
     if not isinstance(raw_accounts, list):
         raise ValueError("accounts must be a list of TOML tables")
     if len(raw_accounts) > MAX_CONFIG_ACCOUNTS:
-        raise ValueError(f"accounts must contain at most {MAX_CONFIG_ACCOUNTS} entries")
+        raise ValueError(
+            f"accounts must contain at most {MAX_CONFIG_ACCOUNTS} entries"
+        )
     accounts = tuple(_account_from_data(item) for item in raw_accounts)
     _validate_unique_accounts(accounts)
     pool_authority = _pool_authority_from_data(
@@ -160,7 +162,9 @@ def load_config(path: Path | None = None) -> AppConfig:
     interval = _strict_int(data.get("interval_seconds", 300), "interval_seconds")
     if interval < 60:
         raise ValueError("interval_seconds must be at least 60")
-    analytics_url = data.get("analytics_url", "https://chatgpt.com/codex/cloud/settings/analytics")
+    analytics_url = data.get(
+        "analytics_url", "https://chatgpt.com/codex/cloud/settings/analytics"
+    )
     if not isinstance(analytics_url, str):
         raise ValueError("analytics_url must be an https://chatgpt.com URL")
     _validate_analytics_url(analytics_url)
@@ -324,10 +328,16 @@ def add_or_update_account(
     _pool_authority_owner_api("recover_pool_authority_pending")(config_path=config_path)
     from .account_lock import account_lock
 
-    account_guard = nullcontext() if _all_accounts_lock_held else account_lock("__all_accounts__")
+    account_guard = (
+        nullcontext()
+        if _all_accounts_lock_held
+        else account_lock("__all_accounts__")
+    )
     pending = None
     previous_config = None
-    with account_guard, private_path_lock(config_path, label="config lock"):
+    with account_guard, private_path_lock(
+        config_path, label="config lock"
+    ):
         config = load_config(config_path)
         existing = next((item for item in config.accounts if item.id == account_id), None)
         selected_profile_dir = profile_dir or (
@@ -343,7 +353,11 @@ def add_or_update_account(
             else (existing.auth_json_path if existing else None)
         )
         source_auth_json: Path | None = None
-        if test_home and selected_auth_json_path is not None and selected_auth_json_path != "":
+        if (
+            test_home
+            and selected_auth_json_path is not None
+            and selected_auth_json_path != ""
+        ):
             try:
                 source_auth_json = Path(selected_auth_json_path).expanduser()
             except RuntimeError as exc:
@@ -354,7 +368,9 @@ def add_or_update_account(
                 canonical_profile_dir = Path(selected_profile_dir).expanduser()
             except RuntimeError as exc:
                 raise ValueError("profile_dir must be an absolute path") from exc
-            canonical_auth_json = str(canonical_profile_dir / "codex-home" / "auth.json")
+            canonical_auth_json = str(
+                canonical_profile_dir / "codex-home" / "auth.json"
+            )
         else:
             canonical_auth_json = selected_auth_json_path
         account = Account(
@@ -378,12 +394,16 @@ def add_or_update_account(
                 else (existing.series_active if existing else False)
             ),
             auth_sync_required=(existing.auth_sync_required if existing else False),
-            auth_sync_generation=(existing.auth_sync_generation if existing else 0),
+            auth_sync_generation=(
+                existing.auth_sync_generation if existing else 0
+            ),
         )
 
         accounts = [item for item in config.accounts if item.id != account_id]
         accounts.append(account)
-        authority = config.pool_authority if existing is not None else PoolAuthorityConfig()
+        authority = (
+            config.pool_authority if existing is not None else PoolAuthorityConfig()
+        )
         updated = AppConfig(
             accounts=tuple(accounts),
             interval_seconds=config.interval_seconds,
@@ -511,14 +531,14 @@ def add_or_update_account(
                     [original_error, *(error for _, error in state_rollback_errors)],
                 ) from None
             raise original_error
-    if pending is not None:
-        assert previous_config is not None
-        finish_account_set_invalidation = _pool_authority_owner_api(
-            "finish_account_set_invalidation"
-        )
-        finish_account_set_invalidation(
-            previous=previous_config, updated=updated, config_path=config_path
-        )
+        if pending is not None:
+            assert previous_config is not None
+            finish_account_set_invalidation = _pool_authority_owner_api(
+                "finish_account_set_invalidation"
+            )
+            finish_account_set_invalidation(
+                previous=previous_config, updated=updated, config_path=config_path
+            )
     return updated, account
 
 
@@ -532,7 +552,9 @@ def mark_account_auth_sync_required(
     _prepare_config_directory(config_path.parent)
     from .account_lock import account_lock
 
-    with account_lock("__all_accounts__"), private_path_lock(config_path, label="config lock"):
+    with account_lock("__all_accounts__"), private_path_lock(
+        config_path, label="config lock"
+    ):
         config = load_config(config_path)
         existing = next(
             (account for account in config.accounts if account.id == account_id),
@@ -561,7 +583,9 @@ def compare_and_clear_account_auth_sync_required(
     _prepare_config_directory(config_path.parent)
     from .account_lock import account_lock
 
-    with account_lock("__all_accounts__"), private_path_lock(config_path, label="config lock"):
+    with account_lock("__all_accounts__"), private_path_lock(
+        config_path, label="config lock"
+    ):
         config = load_config(config_path)
         existing = next(
             (account for account in config.accounts if account.id == snapshot.id),
@@ -591,7 +615,8 @@ def _save_auth_sync_account(
 ) -> None:
     updated = AppConfig(
         accounts=tuple(
-            account if existing.id == account.id else existing for existing in config.accounts
+            account if existing.id == account.id else existing
+            for existing in config.accounts
         ),
         interval_seconds=config.interval_seconds,
         analytics_url=config.analytics_url,
@@ -613,7 +638,11 @@ def remove_account(
     _recovery = _pool_authority_owner_api("recover_pool_authority_pending")
     _recovery(config_path=config_path)
     _prepare_config_directory(config_path.parent)
-    with private_path_lock(config_path, label="config lock"):
+    from .account_lock import account_lock
+
+    with account_lock("__all_accounts__"), private_path_lock(
+        config_path, label="config lock"
+    ):
         config = load_config(config_path)
         account = resolve_account(config, account_ref)
         if expected is not None and account != expected:
@@ -633,11 +662,13 @@ def remove_account(
                 previous=config, updated=updated, config_path=config_path
             )
         _save_config_unlocked(updated, config_path)
-    if pending is not None:
-        finish_account_set_invalidation = _pool_authority_owner_api(
-            "finish_account_set_invalidation"
-        )
-        finish_account_set_invalidation(previous=config, updated=updated, config_path=config_path)
+        if pending is not None:
+            finish_account_set_invalidation = _pool_authority_owner_api(
+                "finish_account_set_invalidation"
+            )
+            finish_account_set_invalidation(
+                previous=config, updated=updated, config_path=config_path
+            )
     return updated, account
 
 
@@ -656,18 +687,28 @@ def restore_account(
     _recovery = _pool_authority_owner_api("recover_pool_authority_pending")
     _recovery(config_path=config_path)
     _prepare_config_directory(config_path.parent)
-    with private_path_lock(config_path, label="config lock"):
+    from .account_lock import account_lock
+
+    with account_lock("__all_accounts__"), private_path_lock(
+        config_path, label="config lock"
+    ):
         config = load_config(config_path)
         existing_index = next(
             (position for position, item in enumerate(config.accounts) if item.id == account.id),
             None,
         )
-        existing = config.accounts[existing_index] if existing_index is not None else None
+        existing = (
+            config.accounts[existing_index]
+            if existing_index is not None
+            else None
+        )
         if existing is not None:
             if existing == account:
                 return config
             if expected is None or existing != expected:
-                raise ValueError(f"account {account.id} was recreated with different settings")
+                raise ValueError(
+                    f"account {account.id} was recreated with different settings"
+                )
             accounts = list(config.accounts)
             assert existing_index is not None
             accounts[existing_index] = account
@@ -692,11 +733,13 @@ def restore_account(
                 previous=config, updated=restored, config_path=config_path
             )
         _save_config_unlocked(restored, config_path)
-    if pending is not None:
-        finish_account_set_invalidation = _pool_authority_owner_api(
-            "finish_account_set_invalidation"
-        )
-        finish_account_set_invalidation(previous=config, updated=restored, config_path=config_path)
+        if pending is not None:
+            finish_account_set_invalidation = _pool_authority_owner_api(
+                "finish_account_set_invalidation"
+            )
+            finish_account_set_invalidation(
+                previous=config, updated=restored, config_path=config_path
+            )
     return restored
 
 
@@ -804,7 +847,9 @@ def _account_from_data(item: object) -> Account:
         item.get("auth_sync_required", False),
         "auth_sync_required",
     )
-    auth_sync_generation = _auth_sync_generation(item.get("auth_sync_generation", 0))
+    auth_sync_generation = _auth_sync_generation(
+        item.get("auth_sync_generation", 0)
+    )
     return Account(
         id=account_id,
         label=label,
@@ -894,7 +939,9 @@ def _validate_account_id(account_id: object) -> None:
         raise ValueError("account id must be a string")
     if account_id == "__all_accounts__":
         raise ValueError("account id is reserved for internal coordination")
-    if account_id in {".", ".."} or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", account_id):
+    if account_id in {".", ".."} or not re.fullmatch(
+        r"[A-Za-z0-9_.-]{1,64}", account_id
+    ):
         raise ValueError("account id must be 1-64 chars: letters, digits, underscore, dot, dash")
 
 
@@ -979,7 +1026,9 @@ def _prepare_test_codex_home(
             )
     try:
         environment = {
-            key: value for key, value in os.environ.items() if key in _CODEX_HELP_ENV_NAMES
+            key: value
+            for key, value in os.environ.items()
+            if key in _CODEX_HELP_ENV_NAMES
         }
         environment["CODEX_HOME"] = str(codex_home)
         subprocess.run(
@@ -1034,7 +1083,9 @@ def _cleanup_created_test_home(
     for path, device, inode in reversed(created_directories):
         if not path.exists():
             if path.is_symlink():
-                raise ValueError(f"created test CODEX_HOME directory became a symlink: {path}")
+                raise ValueError(
+                    f"created test CODEX_HOME directory became a symlink: {path}"
+                )
             continue
         _assert_created_directory_identity(path, (path, device, inode))
         path.rmdir()
@@ -1247,7 +1298,9 @@ def _validate_unique_accounts(accounts: tuple[Account, ...]) -> None:
         if account.id in seen:
             raise ValueError(f"duplicate account id: {account.id}")
         if account.label in ids and account.label != account.id:
-            raise ValueError(f"account label conflicts with another account id: {account.label}")
+            raise ValueError(
+                f"account label conflicts with another account id: {account.label}"
+            )
         seen.add(account.id)
 
 
@@ -1296,7 +1349,9 @@ def _validate_config(config: AppConfig) -> None:
     if not isinstance(config.accounts, tuple):
         raise ValueError("accounts must be a tuple of Account entries")
     if len(config.accounts) > MAX_CONFIG_ACCOUNTS:
-        raise ValueError(f"accounts must contain at most {MAX_CONFIG_ACCOUNTS} entries")
+        raise ValueError(
+            f"accounts must contain at most {MAX_CONFIG_ACCOUNTS} entries"
+        )
 
     interval = _strict_int(config.interval_seconds, "interval_seconds")
     if interval < 60:
@@ -1404,7 +1459,10 @@ def _validate_account(account: object) -> None:
     if type(account.auth_sync_required) is not bool:
         raise ValueError("auth_sync_required must be boolean")
     _auth_sync_generation(account.auth_sync_generation)
-    if account.auth_sync_generation == MAX_AUTH_SYNC_GENERATION and not account.auth_sync_required:
+    if (
+        account.auth_sync_generation == MAX_AUTH_SYNC_GENERATION
+        and not account.auth_sync_required
+    ):
         raise ValueError("auth_sync_generation exhaustion must remain sync_required")
     if account.series_active and not account.series:
         raise ValueError("active series requires a series name")
@@ -1528,7 +1586,10 @@ def _strict_bool(value: object, name: str) -> bool:
 
 
 def _auth_sync_generation(value: object) -> int:
-    if type(value) is not int or not 0 <= value <= MAX_AUTH_SYNC_GENERATION:
+    if (
+        type(value) is not int
+        or not 0 <= value <= MAX_AUTH_SYNC_GENERATION
+    ):
         raise ValueError("auth_sync_generation must be a bounded integer")
     return value
 
@@ -1566,10 +1627,12 @@ def _to_toml(config: AppConfig) -> str:
                     f"pool_id = {_quote(authority.pool_id)}",
                     f"provider = {_quote(authority.provider)}",
                     f"hive_available = {'true' if authority.hive_available else 'false'}",
-                    "allowed_model_families = " + _quote_list(authority.allowed_model_families),
+                    "allowed_model_families = "
+                    + _quote_list(authority.allowed_model_families),
                     f"reasoning_minimum = {_quote(authority.reasoning_minimum)}",
                     f"reasoning_maximum = {_quote(authority.reasoning_maximum)}",
-                    "allowed_lifecycles = " + _quote_list(authority.allowed_lifecycles),
+                    "allowed_lifecycles = "
+                    + _quote_list(authority.allowed_lifecycles),
                     "persistent_leadership_eligible = "
                     + ("true" if authority.persistent_leadership_eligible else "false"),
                     "long_running_leadership_eligible = "
@@ -1611,7 +1674,9 @@ def _quote(value: str) -> str:
         .replace("\r", "\\r")
         .replace("\t", "\\t")
     )
-    escaped = "".join(char if ord(char) >= 0x20 else f"\\u{ord(char):04x}" for char in escaped)
+    escaped = "".join(
+        char if ord(char) >= 0x20 else f"\\u{ord(char):04x}" for char in escaped
+    )
     return f'"{escaped}"'
 
 

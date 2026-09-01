@@ -10,6 +10,7 @@ import pytest
 
 from codex_usage.config import (
     AppConfig,
+    PoolAuthorityConfig,
     add_or_update_account,
     load_config,
     remove_account,
@@ -850,3 +851,348 @@ def test_public_save_config_cannot_remove_materialized_authority(tmp_path: Path)
 
     assert source_path.read_bytes() == old_source
     assert load_config(config_path).pool_authority.configured is True
+
+
+def test_public_save_config_allows_other_changes_with_unchanged_authority(
+    tmp_path: Path,
+) -> None:
+    config_path, state_home, saved = _save_complete_authority(tmp_path)
+    source_path = _source_path(state_home)
+    source_before = source_path.read_bytes()
+    updated = replace(load_config(config_path), interval_seconds=301)
+
+    save_config(updated, config_path)
+
+    assert load_config(config_path) == updated
+    assert load_config(config_path).pool_authority == PoolAuthorityConfig(
+        saved.generation, saved.authorities, True
+    )
+    assert source_path.read_bytes() == source_before
+
+
+def test_public_save_config_rejects_initial_configured_authority(tmp_path: Path) -> None:
+    config_path = tmp_path / "config" / "config.toml"
+
+    with pytest.raises(ValueError, match="owner API"):
+        save_config(
+            AppConfig(
+                accounts=(_account("alpha", tmp_path),),
+                pool_authority=PoolAuthorityConfig(1, (_authority("alpha"),), True),
+            ),
+            config_path,
+        )
+
+    assert not config_path.exists()
+
+
+def test_two_custom_configs_never_overwrite_the_global_pending_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = tmp_path / "first" / "config.toml"
+    second = tmp_path / "second" / "config.toml"
+    state_home = tmp_path / "state"
+    save_config(AppConfig(accounts=(_account("alpha", tmp_path),)), first)
+    save_config(AppConfig(accounts=(_account("bravo", tmp_path),)), second)
+    import codex_usage.pool_authority_owner as owner_module
+
+    original_prepare = owner_module._prepare_config_directory
+    original_save = owner_module._save_config_unlocked
+    inserted_second_marker = False
+
+    def create_second_marker_after_first_recovery(path: Path) -> None:
+        nonlocal inserted_second_marker
+        original_prepare(path)
+        if path != first.parent or inserted_second_marker:
+            return
+        inserted_second_marker = True
+
+        def fail_second_config_write(config: AppConfig, target: Path) -> None:
+            if target == second:
+                raise OSError("synthetic second-config crash after pending")
+            original_save(config, target)
+
+        monkeypatch.setattr(owner_module, "_save_config_unlocked", fail_second_config_write)
+        with pytest.raises(OSError, match="second-config crash"):
+            save_pool_authority_owner(
+                (_authority("bravo"),),
+                expected_generation=0,
+                config_path=second,
+                state_home=state_home,
+            )
+        monkeypatch.setattr(owner_module, "_save_config_unlocked", original_save)
+
+    monkeypatch.setattr(
+        owner_module,
+        "_prepare_config_directory",
+        create_second_marker_after_first_recovery,
+    )
+    with pytest.raises(ValueError, match="must not overwrite"):
+        save_pool_authority_owner(
+            (_authority("alpha"),),
+            expected_generation=0,
+            config_path=first,
+            state_home=state_home,
+        )
+
+    pending = owner_module.pool_authority_pending_path(state_home)
+    assert owner_module._parse_pending(pending.read_text(encoding="utf-8"), second)[
+        "operation"
+    ] == "publish"
+    assert load_config(first).pool_authority == PoolAuthorityConfig()
+    assert load_config(second).pool_authority == PoolAuthorityConfig()
+    assert not _source_path(state_home).exists()
+
+
+@pytest.mark.parametrize("phase", ["old", "new"])
+def test_invalidation_recovery_requires_the_exact_full_config_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    config_path, state_home, _saved = _save_complete_authority(tmp_path)
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    import codex_usage.pool_authority_owner as owner_module
+
+    source_path = _source_path(state_home)
+    source_before = source_path.read_bytes()
+    previous = load_config(config_path)
+    updated = replace(
+        previous,
+        accounts=(),
+        pool_authority=PoolAuthorityConfig(),
+    )
+    pending = owner_module.begin_account_set_invalidation(
+        previous=previous,
+        updated=updated,
+        config_path=config_path,
+    )
+    pending_before = pending.read_bytes()
+    unexpected = replace(previous if phase == "old" else updated, interval_seconds=301)
+    owner_module._save_config_unlocked(unexpected, config_path)
+
+    with pytest.raises(ValueError, match="does not match config"):
+        owner_module.recover_pool_authority_pending(config_path=config_path, state_home=state_home)
+
+    assert load_config(config_path) == unexpected
+    assert source_path.read_bytes() == source_before
+    assert pending.read_bytes() == pending_before
+
+
+def test_pending_swap_after_read_before_mutation_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = tmp_path / "config" / "config.toml"
+    state_home = tmp_path / "state"
+    save_config(AppConfig(accounts=(_account("alpha", tmp_path),)), config_path)
+    import codex_usage.pool_authority_owner as owner_module
+
+    source_path = _source_path(state_home)
+    owner_module._prepare_source_directory(source_path)
+    pending = owner_module.pool_authority_pending_path(state_home)
+    owner_module._write_pending_publish(
+        pending,
+        PoolAuthorityConfig(1, (_authority("alpha"),), True),
+        expected_generation=0,
+        config_path=config_path,
+    )
+    replacement = replace(_authority("alpha"), pool_id="pool-swapped")
+    original_load = owner_module.load_config
+    swapped = False
+
+    def swap_marker_after_preflight(path: Path | None = None) -> AppConfig:
+        nonlocal swapped
+        loaded = original_load(path)
+        if not swapped:
+            swapped = True
+            alternate = pending.with_name("pool-authority-pending-replacement.json")
+            owner_module._write_pending_publish(
+                alternate,
+                PoolAuthorityConfig(1, (replacement,), True),
+                expected_generation=0,
+                config_path=config_path,
+            )
+            os.replace(alternate, pending)
+        return loaded
+
+    monkeypatch.setattr(owner_module, "load_config", swap_marker_after_preflight)
+    with pytest.raises(ValueError, match="changed"):
+        owner_module.recover_pool_authority_pending(config_path=config_path, state_home=state_home)
+
+    assert load_config(config_path).pool_authority == PoolAuthorityConfig()
+    assert not source_path.exists()
+    assert pending.exists()
+    assert owner_module._parse_pending(pending.read_text(encoding="utf-8"), config_path)[
+        "authorities"
+    ] == (replacement,)
+
+
+@pytest.mark.parametrize("operation", ["add", "remove", "restore"])
+def test_public_account_invalidation_holds_all_accounts_lock_through_finish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    from codex_usage.account_lock import AccountLockError, account_lock
+
+    config_path, state_home, _saved = _save_complete_authority(tmp_path)
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    import codex_usage.pool_authority_owner as owner_module
+
+    original_remove_source = owner_module._remove_source
+    observed: list[bool] = []
+
+    def assert_transaction_locks(path: Path) -> None:
+        with pytest.raises(AccountLockError):
+            with account_lock("__all_accounts__", timeout_seconds=0):
+                pass
+        observed.append(True)
+        original_remove_source(path)
+
+    monkeypatch.setattr(owner_module, "_remove_source", assert_transaction_locks)
+    if operation == "add":
+        add_or_update_account(
+            "bravo",
+            profile_dir=str(tmp_path / "profiles" / "bravo"),
+            path=config_path,
+        )
+    elif operation == "remove":
+        remove_account("alpha", config_path)
+    else:
+        restore_account(_account("bravo", tmp_path), config_path)
+
+    assert observed == [True]
+    assert load_config(config_path).pool_authority == PoolAuthorityConfig()
+
+
+@pytest.mark.parametrize("operation", ["add", "remove", "restore"])
+def test_public_account_config_write_failure_keeps_pending_recoverable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    config_path, state_home, saved = _save_complete_authority(tmp_path)
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    source_path = _source_path(state_home)
+    source_before = source_path.read_bytes()
+    import codex_usage.config as config_module
+    import codex_usage.pool_authority_owner as owner_module
+
+    original_save = config_module._save_config_unlocked
+
+    def fail_unconfigured_config(config: AppConfig, path: Path) -> None:
+        if config.pool_authority == PoolAuthorityConfig():
+            raise OSError("synthetic invalidation config failure")
+        original_save(config, path)
+
+    monkeypatch.setattr(config_module, "_save_config_unlocked", fail_unconfigured_config)
+    with pytest.raises(OSError, match="invalidation config failure"):
+        if operation == "add":
+            add_or_update_account(
+                "bravo",
+                profile_dir=str(tmp_path / "profiles" / "bravo"),
+                path=config_path,
+            )
+        elif operation == "remove":
+            remove_account("alpha", config_path)
+        else:
+            restore_account(_account("bravo", tmp_path), config_path)
+
+    pending = owner_module.pool_authority_pending_path(state_home)
+    assert pending.exists()
+    assert source_path.read_bytes() == source_before
+    monkeypatch.setattr(config_module, "_save_config_unlocked", original_save)
+    owner_module.recover_pool_authority_pending(config_path=config_path, state_home=state_home)
+    assert load_config(config_path).pool_authority == PoolAuthorityConfig(
+        saved.generation,
+        saved.authorities,
+        True,
+    )
+    assert source_path.read_bytes() == source_before
+    assert not pending.exists()
+
+
+@pytest.mark.parametrize("failure", ["callback", "state"])
+def test_public_add_rolls_back_callback_state_profile_and_auth_before_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    config_path, state_home, saved = _save_complete_authority(tmp_path)
+    home = tmp_path / "home"
+    incoming_auth = tmp_path / "incoming" / "auth.json"
+    incoming_auth.parent.mkdir()
+    incoming_auth.write_text('{"tokens": {}}\n', encoding="utf-8")
+    incoming_auth.chmod(0o600)
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setattr(Path, "home", lambda: home)
+    source_path = _source_path(state_home)
+    source_before = source_path.read_bytes()
+    import codex_usage.pool_authority_owner as owner_module
+
+    callback_events: list[str] = []
+
+    def callback(_config: AppConfig) -> None:
+        callback_events.append("changed")
+        if failure == "callback":
+            raise OSError("synthetic callback failure")
+
+    def rollback_callback(_config: AppConfig) -> None:
+        callback_events.append("restored")
+
+    if failure == "state":
+        monkeypatch.setattr(
+            "codex_usage.state.remove_account_state",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("synthetic state failure")),
+        )
+
+    with pytest.raises(OSError, match=f"synthetic {failure} failure"):
+        add_or_update_account(
+            "bravo",
+            auth_json_path=str(incoming_auth),
+            test_home=True,
+            path=config_path,
+            before_state_cleanup=callback,
+            rollback_callback=rollback_callback,
+        )
+
+    pending = owner_module.pool_authority_pending_path(state_home)
+    assert callback_events == ["changed", "restored"]
+    assert incoming_auth.exists()
+    assert not (home / ".codex-test" / "bravo").exists()
+    assert load_config(config_path).pool_authority == PoolAuthorityConfig(
+        saved.generation, saved.authorities, True
+    )
+    assert source_path.read_bytes() == source_before
+    owner_module.recover_pool_authority_pending(config_path=config_path, state_home=state_home)
+    assert not pending.exists()
+    assert load_pool_authority_owner(config_path=config_path) == saved
+
+
+@pytest.mark.parametrize("failure", ["source", "pending"])
+def test_public_finish_remove_failure_keeps_pending_for_exact_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    config_path, state_home, _saved = _save_complete_authority(tmp_path)
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    source_path = _source_path(state_home)
+    source_before = source_path.read_bytes()
+    import codex_usage.pool_authority_owner as owner_module
+
+    name = "_remove_source" if failure == "source" else "_remove_pending"
+    original_remove = getattr(owner_module, name)
+
+    def fail_finish_remove(path: Path) -> None:
+        raise OSError(f"synthetic {failure} remove failure")
+
+    monkeypatch.setattr(owner_module, name, fail_finish_remove)
+    with pytest.raises(OSError, match=f"{failure} remove failure"):
+        add_or_update_account(
+            "bravo",
+            profile_dir=str(tmp_path / "profiles" / "bravo"),
+            path=config_path,
+        )
+
+    pending = owner_module.pool_authority_pending_path(state_home)
+    assert pending.exists()
+    assert load_config(config_path).pool_authority == PoolAuthorityConfig()
+    if failure == "source":
+        assert source_path.read_bytes() == source_before
+    else:
+        assert not source_path.exists()
+    monkeypatch.setattr(owner_module, name, original_remove)
+    owner_module.recover_pool_authority_pending(config_path=config_path, state_home=state_home)
+    assert not pending.exists()
+    assert load_config(config_path).pool_authority == PoolAuthorityConfig()
+    assert not source_path.exists()

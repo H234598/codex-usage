@@ -48,7 +48,9 @@ def _source_copy(tmp_path: Path) -> Path:
         shutil.copyfile(source, destination)
         if relative_text == "src/codex_usage/integration_entrypoint.py":
             destination.write_text(
-                "from __future__ import annotations\n\ndef main(argv=None):\n    return 0\n",
+                "from __future__ import annotations\n\n"
+                "def main(argv=None):\n"
+                "    return 0\n",
                 encoding="utf-8",
             )
         destination.chmod(0o600)
@@ -79,8 +81,15 @@ def evidence_layout(tmp_path):
         data_home=data_home,
         expected_entrypoint_path=release.entrypoint_path,
     )
-    authority_source = state_home / "codex-usage" / "integration" / "pool-authority-source-v2.json"
-    authority_source.write_bytes(b'{"authorities":[],"pool_authority_source_schema_version":2}\n')
+    authority_source = (
+        state_home
+        / "codex-usage"
+        / "integration"
+        / "pool-authority-source-v2.json"
+    )
+    authority_source.write_bytes(
+        b'{"authorities":[],"pool_authority_source_schema_version":2}\n'
+    )
     authority_source.chmod(0o600)
     payload = serialize_schema2_document(
         {
@@ -151,7 +160,9 @@ def replace_active_json_inode_after_payload_build(state_home, _data_home, _verif
     document["source_manifest_sha256"] = "f" * 64
     replacement = active.with_name("active.replacement.json")
     replacement.write_bytes(
-        (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        (
+            json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode()
     )
     replacement.chmod(0o600)
     os.replace(replacement, active)
@@ -203,6 +214,198 @@ def test_publish_evidence_rechecks_pending_created_during_source_read(
         )
 
 
+def test_publisher_commits_before_owner_can_withdraw_the_verified_authority(
+    staged_evidence_layout, monkeypatch
+) -> None:
+    """Would fail if an owner withdrawal could interleave before Current."""
+    from codex_usage import integration_evidence
+    from codex_usage.config import (
+        AppConfig,
+        PoolAuthorityConfig,
+        load_config,
+        remove_account,
+        save_config,
+    )
+    from codex_usage.models import Account
+    from codex_usage.pool_authority_owner import (
+        PoolAuthorityOwner,
+        pool_authority_source_path,
+        save_pool_authority_owner,
+    )
+
+    state_home, data_home, _entrypoint, _payload, verified = staged_evidence_layout
+    fixture_root = Path(__file__).parent / "fixtures" / "pool_authority_v2"
+    source_record = json.loads(
+        (fixture_root / "source-v2-positive.json").read_bytes()
+    )["authorities"][0]
+    authority = PoolAuthorityOwner(
+        account_id=source_record["account_id"],
+        pool_id=source_record["pool_id"],
+        provider=source_record["provider"],
+        hive_available=source_record["hive_available"],
+        allowed_model_families=tuple(source_record["allowed_model_families"]),
+        reasoning_minimum=source_record["reasoning_minimum"],
+        reasoning_maximum=source_record["reasoning_maximum"],
+        allowed_lifecycles=tuple(source_record["allowed_lifecycles"]),
+        persistent_leadership_eligible=source_record["persistent_leadership_eligible"],
+        long_running_leadership_eligible=source_record["long_running_leadership_eligible"],
+    )
+    config_path = state_home / "owner" / "config.toml"
+    account = Account(
+        id=authority.account_id,
+        label=authority.account_id,
+        profile_dir=str(state_home / "profiles" / authority.account_id),
+    )
+    save_config(AppConfig(accounts=(account,)), config_path)
+    save_pool_authority_owner(
+        (authority,),
+        expected_generation=0,
+        config_path=config_path,
+        state_home=state_home,
+    )
+    payload = integration_evidence.serialize_schema2_document(
+        json.loads((fixture_root / "usage-v2-positive.json").read_bytes())
+    )
+    withdrawal_started = threading.Event()
+    withdrawal_finished = threading.Event()
+    current_committed = threading.Event()
+    withdrawal_errors: list[BaseException] = []
+
+    def withdraw_owner_authority() -> None:
+        withdrawal_started.set()
+        try:
+            remove_account(authority.account_id, config_path)
+        except BaseException as exc:  # surfaced in the parent assertion
+            withdrawal_errors.append(exc)
+        finally:
+            withdrawal_finished.set()
+
+    owner_thread = threading.Thread(target=withdraw_owner_authority)
+    real_staging_hook = integration_evidence._before_publish_staging
+    real_replace_current = integration_evidence._atomic_replace_current
+
+    def start_withdrawal_after_verified_source_read() -> None:
+        real_staging_hook()
+        owner_thread.start()
+        assert withdrawal_started.wait(timeout=5)
+        assert not withdrawal_finished.wait(timeout=0.25)
+
+    def commit_current(integration_fd: int, pointer_bytes: bytes, **kwargs):
+        assert not withdrawal_finished.is_set()
+        result = real_replace_current(integration_fd, pointer_bytes, **kwargs)
+        current_committed.set()
+        return result
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setattr(
+        integration_evidence,
+        "_before_publish_staging",
+        start_withdrawal_after_verified_source_read,
+    )
+    monkeypatch.setattr(integration_evidence, "_atomic_replace_current", commit_current)
+    try:
+        pointer = integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+    finally:
+        if owner_thread.is_alive():
+            owner_thread.join(timeout=10)
+
+    assert current_committed.is_set()
+    assert not owner_thread.is_alive()
+    assert withdrawal_errors == []
+    assert integration_evidence.parse_pointer(
+        (state_home / "codex-usage/integration/current.json").read_bytes()
+    ) == pointer
+    assert load_config(config_path).pool_authority == PoolAuthorityConfig()
+    assert not pool_authority_source_path(state_home).exists()
+
+
+def test_publisher_returns_committed_pointer_when_source_lock_release_fails(
+    staged_evidence_layout, monkeypatch
+) -> None:
+    """Would fail if a post-Current source-lock release made publish retryable."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, payload, verified = staged_evidence_layout
+    real_private_path_lock = integration_evidence.private_path_lock
+
+    class FailingRelease:
+        def __init__(self, context) -> None:
+            self._context = context
+
+        def __enter__(self):
+            return self._context.__enter__()
+
+        def __exit__(self, *args) -> bool:
+            self._context.__exit__(*args)
+            raise OSError("synthetic source lock release failure")
+
+    def source_lock_with_failing_release(path: Path, **kwargs):
+        context = real_private_path_lock(path, **kwargs)
+        if kwargs.get("label") == "pool authority source lock":
+            return FailingRelease(context)
+        return context
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "private_path_lock",
+        source_lock_with_failing_release,
+    )
+    pointer = integration_evidence.publish_evidence_generation(
+        payload,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified,
+    )
+
+    assert integration_evidence.parse_pointer(
+        (state_home / "codex-usage/integration/current.json").read_bytes()
+    ) == pointer
+
+
+def test_publisher_does_not_release_an_unacquired_source_lock(
+    staged_evidence_layout, monkeypatch
+) -> None:
+    """Would fail if failed source-lock acquisition ran its release path."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, payload, verified = staged_evidence_layout
+    real_private_path_lock = integration_evidence.private_path_lock
+    released: list[tuple[object, ...]] = []
+
+    class FailingAcquire:
+        def __enter__(self):
+            raise OSError("synthetic source lock acquire failure")
+
+        def __exit__(self, *args) -> bool:
+            released.append(args)
+            return False
+
+    def source_lock_with_failing_acquire(path: Path, **kwargs):
+        if kwargs.get("label") == "pool authority source lock":
+            return FailingAcquire()
+        return real_private_path_lock(path, **kwargs)
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "private_path_lock",
+        source_lock_with_failing_acquire,
+    )
+    with pytest.raises(integration_evidence.IntegrationEvidenceUnavailable):
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+
+    assert released == []
+
+
 def _replace_named_file(parent_fd: int, name: str, payload: bytes) -> None:
     old_name = f"old-{name}"
     os.rename(name, old_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
@@ -233,7 +436,9 @@ def _create_complete_generations(
     generations = integration / "generations"
     generations_fd = os.open(
         generations,
-        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
     )
     generation_ids: list[str] = []
     binding_digests: list[str] = []
@@ -256,7 +461,9 @@ def _create_complete_generations(
                     }
                 )
                 binding = integration_evidence.EvidenceBinding(
-                    active_manifest_sha256=(verified_active_manifest.active_manifest_sha256),
+                    active_manifest_sha256=(
+                        verified_active_manifest.active_manifest_sha256
+                    ),
                     binding_schema_version=2,
                     generation_id=generation_id,
                     payload_filename="account-usage-v2.json",
@@ -265,7 +472,9 @@ def _create_complete_generations(
                     published_at=published_at,
                     producer_version="0.6.537",
                     release_id=verified_active_manifest.release_id,
-                    source_manifest_sha256=(verified_active_manifest.source_manifest_sha256),
+                    source_manifest_sha256=(
+                        verified_active_manifest.source_manifest_sha256
+                    ),
                     usage_binding_schema_version=2,
                     pool_authority_filename="pool-authority-v2.json",
                     pool_authority_sha256="0" * 64,
@@ -294,7 +503,9 @@ def _create_complete_generations(
                 )
                 binding = replace(
                     binding,
-                    pool_authority_sha256=hashlib.sha256(pool_authority_bytes).hexdigest(),
+                    pool_authority_sha256=hashlib.sha256(
+                        pool_authority_bytes
+                    ).hexdigest(),
                     pool_authority_size_bytes=len(pool_authority_bytes),
                 )
                 binding_bytes = integration_evidence.serialize_binding(binding)
@@ -334,7 +545,9 @@ def _create_complete_generations(
     )
     integration_fd = os.open(
         integration,
-        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
     )
     try:
         private_io.write_private_bytes_at(
@@ -389,7 +602,9 @@ def create_seventeen_staging_directories(evidence_layout) -> int:
     generations = state_home / "codex-usage/integration/generations"
     generations_fd = os.open(
         generations,
-        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
     )
     for index in range(17):
         os.mkdir(f".tmp-{index:032x}", mode=0o700, dir_fd=generations_fd)
@@ -405,13 +620,18 @@ def _write_pointer_temp(
     name = f".tmp-current.json-{index:032x}"
     integration_fd = os.open(
         integration,
-        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
     )
     fd = -1
     try:
         fd = os.open(
             name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0),
             0o600,
             dir_fd=integration_fd,
         )
@@ -449,7 +669,9 @@ def _rewrite_complete_generation(
 ) -> None:
     from codex_usage import integration_evidence
 
-    generation = state_home / "codex-usage/integration/generations" / generation_id
+    generation = (
+        state_home / "codex-usage/integration/generations" / generation_id
+    )
     payload_path = generation / "account-usage-v2.json"
     payload = payload_path.read_bytes()
     binding_path = generation / "account-usage-v2.binding.json"
@@ -481,13 +703,9 @@ def _rewrite_complete_generation(
     authority = parse_pool_authority_projection(authority_path.read_bytes())
     authority["issued_at"] = binding.published_at
     authority["expires_at"] = (
-        (
-            datetime.fromisoformat(binding.published_at.replace("Z", "+00:00"))
-            + timedelta(minutes=15)
-        )
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+        datetime.fromisoformat(binding.published_at.replace("Z", "+00:00"))
+        + timedelta(minutes=15)
+    ).isoformat().replace("+00:00", "Z")
     authority["release_id"] = binding.release_id
     authority["usage_payload_sha256"] = binding.payload_sha256
     authority["usage_binding_sha256"] = hashlib.sha256(
@@ -513,7 +731,9 @@ def test_rollback_swaps_current_and_previous_in_one_pointer_rename(
     """Would fail if rollback changed generations instead of swapping one pointer."""
     from codex_usage import integration_evidence
 
-    state_home, data_home, _entrypoint, payload_bytes, verified = staged_evidence_layout
+    state_home, data_home, _entrypoint, payload_bytes, verified = (
+        staged_evidence_layout
+    )
     integration_evidence.publish_evidence_generation(
         payload_bytes,
         state_home=state_home,
@@ -544,12 +764,9 @@ def test_rollback_swaps_current_and_previous_in_one_pointer_rename(
 
     assert after.current_generation_id == second.previous_generation_id
     assert after.previous_generation_id == second.current_generation_id
-    assert (
-        integration_evidence.parse_pointer(
-            (state_home / "codex-usage/integration/current.json").read_bytes()
-        )
-        == after
-    )
+    assert integration_evidence.parse_pointer(
+        (state_home / "codex-usage/integration/current.json").read_bytes()
+    ) == after
     assert len(current_replaces) == 1
     assert current_replaces[0][1] == "current.json"
     assert count_complete_generation_directories(state_home) == 2
@@ -736,7 +953,9 @@ def test_gc_reclaims_valid_history_from_prior_active_manifest(
     )
 
     assert count_complete_generation_directories(state_home) == 256
-    assert not (state_home / "codex-usage/integration/generations" / historical).exists()
+    assert not (
+        state_home / "codex-usage/integration/generations" / historical
+    ).exists()
 
 
 def test_active_release_rotation_keeps_publication_reader_and_gc_live(
@@ -747,7 +966,9 @@ def test_active_release_rotation_keeps_publication_reader_and_gc_live(
     from codex_usage import integration_evidence
     from codex_usage.private_io import IntegrationEvidenceInvalid
 
-    state_home, data_home, entrypoint_a, payload_a, verified_a = staged_evidence_layout
+    state_home, data_home, entrypoint_a, payload_a, verified_a = (
+        staged_evidence_layout
+    )
     pointer_a = integration_evidence.publish_evidence_generation(
         payload_a,
         state_home=state_home,
@@ -836,12 +1057,9 @@ def test_active_release_rotation_keeps_publication_reader_and_gc_live(
             data_home=data_home,
             verified_active_manifest=verified_b,
         )
-    assert (
-        integration_evidence.parse_pointer(
-            (state_home / "codex-usage/integration/current.json").read_bytes()
-        )
-        == pointer_b2
-    )
+    assert integration_evidence.parse_pointer(
+        (state_home / "codex-usage/integration/current.json").read_bytes()
+    ) == pointer_b2
     assert entrypoint_a != release_b.entrypoint_path
 
 
@@ -854,7 +1072,9 @@ def test_rotated_publisher_and_gc_reject_malformed_historical_current(
     from codex_usage import integration_evidence
     from codex_usage.private_io import IntegrationEvidenceInvalid
 
-    state_home, data_home, _entrypoint, payload, verified_a = staged_evidence_layout
+    state_home, data_home, _entrypoint, payload, verified_a = (
+        staged_evidence_layout
+    )
     pointer_a = integration_evidence.publish_evidence_generation(
         payload,
         state_home=state_home,
@@ -867,7 +1087,9 @@ def test_rotated_publisher_and_gc_reject_malformed_historical_current(
         data_home=data_home,
     )
     generation = (
-        state_home / "codex-usage/integration/generations" / pointer_a.current_generation_id
+        state_home
+        / "codex-usage/integration/generations"
+        / pointer_a.current_generation_id
     )
     if mutation == "malformed_binding":
         _rewrite_reader_file(
@@ -908,7 +1130,9 @@ def test_rollback_rejects_previous_from_prior_active_release(
     from codex_usage import integration_evidence
     from codex_usage.private_io import IntegrationEvidenceUnavailable
 
-    state_home, data_home, _entrypoint, payload_a, verified_a = staged_evidence_layout
+    state_home, data_home, _entrypoint, payload_a, verified_a = (
+        staged_evidence_layout
+    )
     pointer_a = integration_evidence.publish_evidence_generation(
         payload_a,
         state_home=state_home,
@@ -999,7 +1223,11 @@ def test_gc_recovery_cleans_interrupted_temporary_victim(
 
     def fail_after_victim_rename(fd):
         nonlocal injected
-        if not injected and _crash_fd_name(fd) == "generations" and temporary.is_dir():
+        if (
+            not injected
+            and _crash_fd_name(fd) == "generations"
+            and temporary.is_dir()
+        ):
             injected = True
             raise OSError("synthetic crash after victim rename")
         return real_fsync(fd)
@@ -1108,7 +1336,11 @@ def test_rollback_rejects_invalid_previous_without_pointer_change(
     current = state_home / "codex-usage/integration/current.json"
     current_bytes = current.read_bytes()
     assert pointer.previous_generation_id is not None
-    previous = state_home / "codex-usage/integration/generations" / pointer.previous_generation_id
+    previous = (
+        state_home
+        / "codex-usage/integration/generations"
+        / pointer.previous_generation_id
+    )
     _rewrite_reader_file(previous, "account-usage-v2.json", b"{}")
 
     with pytest.raises(IntegrationEvidenceUnavailable):
@@ -1143,19 +1375,27 @@ def test_gc_rejects_258_complete_generations_without_deletion(
 
 
 @pytest.mark.parametrize("scenario", ("seventeenth", "unsafe"))
-def test_recovery_rejects_seventeenth_or_unsafe_staging_directory(staged_evidence_layout, scenario):
+def test_recovery_rejects_seventeenth_or_unsafe_staging_directory(
+    staged_evidence_layout, scenario
+):
     """Would fail if recovery enumerated or removed an over-limit staging set."""
     from codex_usage import integration_evidence
     from codex_usage.private_io import IntegrationEvidenceInvalid
 
-    state_home, _data_home, _entrypoint, _payload, _verified = staged_evidence_layout
+    state_home, _data_home, _entrypoint, _payload, _verified = (
+        staged_evidence_layout
+    )
     if scenario == "seventeenth":
-        generations_fd = create_seventeen_staging_directories(staged_evidence_layout)
+        generations_fd = create_seventeen_staging_directories(
+            staged_evidence_layout
+        )
     else:
         generations = state_home / "codex-usage/integration/generations"
         generations_fd = os.open(
             generations,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
         )
         staging_name = f".tmp-{0:032x}"
         os.mkdir(staging_name, mode=0o700, dir_fd=generations_fd)
@@ -1247,7 +1487,9 @@ def test_recovery_rechecks_each_name_before_unlink(
     generations = state_home / "codex-usage/integration/generations"
     generations_fd = os.open(
         generations,
-        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
     )
     staging_name = f".tmp-{0:032x}"
     os.mkdir(staging_name, mode=0o700, dir_fd=generations_fd)
@@ -1360,7 +1602,9 @@ def test_pointer_temp_recovery_rejects_sixty_fifth_empty_artifact_without_deleti
 
     state_home, _data_home, _entrypoint, _payload, _verified = staged_evidence_layout
     integration = state_home / "codex-usage/integration"
-    artifacts = [_write_pointer_temp(integration, index, payload=b"") for index in range(65)]
+    artifacts = [
+        _write_pointer_temp(integration, index, payload=b"") for index in range(65)
+    ]
 
     with pytest.raises(IntegrationEvidenceInvalid):
         integration_evidence.recover_evidence_staging(state_home=state_home)
@@ -1401,7 +1645,9 @@ def test_pointer_temp_root_scan_stops_at_129th_entry(tmp_path, monkeypatch):
     monkeypatch.setattr(integration_evidence.os, "scandir", lambda _fd: Entries())
     try:
         with pytest.raises(IntegrationEvidenceInvalid):
-            integration_evidence._scan_integration_recovery_namespace(integration_fd)
+            integration_evidence._scan_integration_recovery_namespace(
+                integration_fd
+            )
     finally:
         os.close(integration_fd)
 
@@ -1610,7 +1856,8 @@ def _publish_until_crash(
         if (
             scenario == "staging_fsync"
             and name.startswith(".tmp-")
-            and sys._getframe(1).f_code.co_name == "_publish_evidence_generation_locked"
+            and sys._getframe(1).f_code.co_name
+            == "_publish_evidence_generation_locked"
         ):
             wait_then_exit_after(lambda: real_fsync(fd))
         if scenario == "generations_fsync" and name == "generations":
@@ -1671,7 +1918,9 @@ def _recover_and_read_after_crash(
 ) -> None:
     from codex_usage import integration_evidence
 
-    state_home, data_home, entrypoint, payload, verified, old_current = published_evidence_layout
+    state_home, data_home, entrypoint, payload, verified, old_current = (
+        published_evidence_layout
+    )
     context = multiprocessing.get_context("fork")
     ready = context.Event()
     proceed = context.Event()
@@ -1698,16 +1947,24 @@ def _recover_and_read_after_crash(
 
     generations = state_home / "codex-usage/integration/generations"
     if scenario == "staging_fsync":
-        debris = [entry for entry in os.scandir(generations) if entry.name.startswith(".tmp-")]
+        debris = [
+            entry
+            for entry in os.scandir(generations)
+            if entry.name.startswith(".tmp-")
+        ]
         assert len(debris) == 1
-        assert {entry.name for entry in os.scandir(generations / debris[0].name)} == {
+        assert {
+            entry.name for entry in os.scandir(generations / debris[0].name)
+        } == {
             "account-usage-v2.json",
             "account-usage-v2.binding.json",
             "pool-authority-v2.json",
         }
     integration = state_home / "codex-usage/integration"
     pointer_debris = [
-        entry for entry in os.scandir(integration) if entry.name.startswith(".tmp-current.json-")
+        entry
+        for entry in os.scandir(integration)
+        if entry.name.startswith(".tmp-current.json-")
     ]
     if scenario in {"pointer_temp_create_before_write", "pointer_temp_fsync"}:
         assert len(pointer_debris) == 1
@@ -1723,9 +1980,14 @@ def _recover_and_read_after_crash(
     if scenario == "pointer_temp_create_before_write":
         integration_evidence.recover_evidence_staging(state_home=state_home)
 
-    assert not any(entry.name.startswith(".tmp-current.json-") for entry in os.scandir(integration))
+    assert not any(
+        entry.name.startswith(".tmp-current.json-")
+        for entry in os.scandir(integration)
+    )
     if scenario == "staging_fsync":
-        assert not any(entry.name.startswith(".tmp-") for entry in os.scandir(generations))
+        assert not any(
+            entry.name.startswith(".tmp-") for entry in os.scandir(generations)
+        )
 
     document, status = integration_evidence.read_current_evidence(
         state_home=state_home,
@@ -1755,7 +2017,9 @@ def _recover_and_read_after_crash(
 
 
 class TestCrashRecovery:
-    def test_recovery_after_payload_write_before_fsync(self, published_evidence_layout):
+    def test_recovery_after_payload_write_before_fsync(
+        self, published_evidence_layout
+    ):
         _recover_and_read_after_crash(
             published_evidence_layout,
             "payload_write_before_fsync",
@@ -1764,7 +2028,9 @@ class TestCrashRecovery:
     def test_recovery_after_payload_fsync(self, published_evidence_layout):
         _recover_and_read_after_crash(published_evidence_layout, "payload_fsync")
 
-    def test_recovery_after_binding_write_before_fsync(self, published_evidence_layout):
+    def test_recovery_after_binding_write_before_fsync(
+        self, published_evidence_layout
+    ):
         _recover_and_read_after_crash(
             published_evidence_layout,
             "binding_write_before_fsync",
@@ -1782,13 +2048,17 @@ class TestCrashRecovery:
     def test_recovery_after_generations_fsync(self, published_evidence_layout):
         _recover_and_read_after_crash(published_evidence_layout, "generations_fsync")
 
-    def test_pointer_temp_short_write_uses_normal_cleanup(self, published_evidence_layout):
+    def test_pointer_temp_short_write_uses_normal_cleanup(
+        self, published_evidence_layout
+    ):
         _recover_and_read_after_crash(
             published_evidence_layout,
             "pointer_temp_short_write_cleanup",
         )
 
-    def test_recovery_after_pointer_temp_create_before_write(self, published_evidence_layout):
+    def test_recovery_after_pointer_temp_create_before_write(
+        self, published_evidence_layout
+    ):
         _recover_and_read_after_crash(
             published_evidence_layout,
             "pointer_temp_create_before_write",
@@ -1820,7 +2090,11 @@ def test_publish_creates_immutable_generation_then_one_current_pointer(
         data_home=data_home,
         verified_active_manifest=verified,
     )
-    generation = state_home / "codex-usage/integration/generations" / pointer.current_generation_id
+    generation = (
+        state_home
+        / "codex-usage/integration/generations"
+        / pointer.current_generation_id
+    )
     assert generation.is_dir()
     assert {path.name for path in generation.iterdir()} == {
         "account-usage-v2.json",
@@ -1837,19 +2111,15 @@ def test_publish_creates_immutable_generation_then_one_current_pointer(
     assert authority["generation_id"] == pointer.current_generation_id
     assert authority["release_id"] == verified.release_id
     assert authority["usage_payload_sha256"] == hashlib.sha256(payload_bytes).hexdigest()
-    assert (
-        authority["usage_binding_sha256"]
-        == hashlib.sha256(integration_evidence.serialize_usage_binding(binding)).hexdigest()
-    )
+    assert authority["usage_binding_sha256"] == hashlib.sha256(
+        integration_evidence.serialize_usage_binding(binding)
+    ).hexdigest()
     assert binding.pool_authority_sha256 == hashlib.sha256(authority_bytes).hexdigest()
     assert pointer.current_binding_sha256 == hashlib.sha256(binding_bytes).hexdigest()
     assert pointer.previous_generation_id is None
-    assert (
-        integration_evidence.parse_pointer(
-            (state_home / "codex-usage/integration/current.json").read_bytes()
-        )
-        == pointer
-    )
+    assert integration_evidence.parse_pointer(
+        (state_home / "codex-usage/integration/current.json").read_bytes()
+    ) == pointer
 
 
 def test_publish_missing_or_partial_authority_source_never_commits_current(
@@ -1872,7 +2142,8 @@ def test_publish_missing_or_partial_authority_source_never_commits_current(
     assert not (integration / "current.json").exists()
 
     source.write_bytes(
-        b'{"authorities":[{"account_id":"unknown"}],"pool_authority_source_schema_version":2}\n'
+        b'{"authorities":[{"account_id":"unknown"}],'
+        b'"pool_authority_source_schema_version":2}\n'
     )
     source.chmod(0o600)
     with pytest.raises(IntegrationEvidenceError):
@@ -1910,12 +2181,16 @@ def test_publish_does_not_swap_current_when_second_active_digest_changes(
     assert (state_home / "codex-usage/integration/current.json").read_bytes() == current_bytes
 
 
-def test_publish_rejects_current_pointer_parent_swap(published_evidence_layout, monkeypatch):
+def test_publish_rejects_current_pointer_parent_swap(
+    published_evidence_layout, monkeypatch
+):
     """Would fail if pointer rename escaped captured integration parent FD."""
     from codex_usage import integration_evidence
     from codex_usage.private_io import IntegrationEvidenceInvalid
 
-    state_home, data_home, _entrypoint, payload, verified, current_bytes = published_evidence_layout
+    state_home, data_home, _entrypoint, payload, verified, current_bytes = (
+        published_evidence_layout
+    )
     integration = state_home / "codex-usage/integration"
 
     def swap_parent(_state_home, _integration_fd):
@@ -1928,7 +2203,9 @@ def test_publish_rejects_current_pointer_parent_swap(published_evidence_layout, 
         (integration / "current.json").chmod(0o600)
         (integration / "generations").mkdir(mode=0o700)
 
-    monkeypatch.setattr(integration_evidence, "_before_publish_pointer_parent_recheck", swap_parent)
+    monkeypatch.setattr(
+        integration_evidence, "_before_publish_pointer_parent_recheck", swap_parent
+    )
     with pytest.raises(IntegrationEvidenceInvalid):
         integration_evidence.publish_evidence_generation(
             payload,
@@ -1946,7 +2223,9 @@ def test_publish_rejects_generations_parent_swap_before_current_commit(
     from codex_usage import integration_evidence
     from codex_usage.private_io import IntegrationEvidenceInvalid
 
-    state_home, data_home, _entrypoint, payload, verified, current_bytes = published_evidence_layout
+    state_home, data_home, _entrypoint, payload, verified, current_bytes = (
+        published_evidence_layout
+    )
     integration = state_home / "codex-usage/integration"
     generations = integration / "generations"
 
@@ -1979,7 +2258,9 @@ def test_publish_rebinds_generations_after_pointer_temp_validation(
     from codex_usage import integration_evidence
     from codex_usage.private_io import IntegrationEvidenceInvalid
 
-    state_home, data_home, _entrypoint, payload, verified, current_bytes = published_evidence_layout
+    state_home, data_home, _entrypoint, payload, verified, current_bytes = (
+        published_evidence_layout
+    )
     integration = state_home / "codex-usage/integration"
     generations = integration / "generations"
     real_verify = integration_evidence._verify_named_file
@@ -2012,12 +2293,16 @@ def test_publish_rebinds_generations_after_pointer_temp_validation(
     assert (integration / "current.json").read_bytes() == current_bytes
 
 
-def test_publish_rejects_generation_directory_swap(published_evidence_layout, monkeypatch):
+def test_publish_rejects_generation_directory_swap(
+    published_evidence_layout, monkeypatch
+):
     """Would fail if immutable generation name could be rebound before Current."""
     from codex_usage import integration_evidence
     from codex_usage.private_io import IntegrationEvidenceInvalid
 
-    state_home, data_home, _entrypoint, payload, verified, current_bytes = published_evidence_layout
+    state_home, data_home, _entrypoint, payload, verified, current_bytes = (
+        published_evidence_layout
+    )
 
     def swap_generation(generations_fd, generation_id, _generation_fd):
         old_name = f".old-{generation_id}"
@@ -2029,7 +2314,9 @@ def test_publish_rejects_generation_directory_swap(published_evidence_layout, mo
         )
         os.mkdir(generation_id, mode=0o700, dir_fd=generations_fd)
 
-    monkeypatch.setattr(integration_evidence, "_before_publish_generation_recheck", swap_generation)
+    monkeypatch.setattr(
+        integration_evidence, "_before_publish_generation_recheck", swap_generation
+    )
     with pytest.raises(IntegrationEvidenceInvalid):
         integration_evidence.publish_evidence_generation(
             payload,
@@ -2055,7 +2342,9 @@ def test_publish_rejects_staged_file_inode_swap(
     from codex_usage import integration_evidence
     from codex_usage.private_io import IntegrationEvidenceInvalid
 
-    state_home, data_home, _entrypoint, payload, verified, current_bytes = published_evidence_layout
+    state_home, data_home, _entrypoint, payload, verified, current_bytes = (
+        published_evidence_layout
+    )
 
     def swap_file(parent_fd, name, held_fd):
         assert name == target_name
@@ -2168,7 +2457,9 @@ def test_publish_pointer_parent_fsync_failure_returns_committed_pointer(
     """Would fail if post-rename durability error made committed Current retryable."""
     from codex_usage import integration_evidence
 
-    state_home, data_home, _entrypoint, payload, verified, old_current = published_evidence_layout
+    state_home, data_home, _entrypoint, payload, verified, old_current = (
+        published_evidence_layout
+    )
     current = state_home / "codex-usage/integration/current.json"
     real_fsync = integration_evidence.os.fsync
 
@@ -2195,7 +2486,9 @@ def test_older_concurrent_invocation_cannot_replace_newer_current(
     from codex_usage import integration_evidence
     from codex_usage.private_io import IntegrationEvidenceInvalid
 
-    state_home, data_home, _entrypoint, _payload, verified, _old_current = published_evidence_layout
+    state_home, data_home, _entrypoint, _payload, verified, _old_current = (
+        published_evidence_layout
+    )
     newer_payload = integration_evidence.serialize_schema2_document(
         {
             "accounts": [],
@@ -2245,11 +2538,14 @@ def test_older_concurrent_invocation_cannot_replace_newer_current(
         (state_home / "codex-usage/integration/current.json").read_bytes()
     )
     assert current == newer_pointer
-    generation = state_home / "codex-usage/integration/generations" / current.current_generation_id
-    assert (
-        json.loads((generation / "account-usage-v2.json").read_bytes())["generated_at"]
-        == "2026-08-25T10:02:00Z"
+    generation = (
+        state_home
+        / "codex-usage/integration/generations"
+        / current.current_generation_id
     )
+    assert json.loads((generation / "account-usage-v2.json").read_bytes())[
+        "generated_at"
+    ] == "2026-08-25T10:02:00Z"
 
 
 def test_publish_teardown_failures_return_committed_pointer_and_attempt_all_cleanup(
@@ -2259,7 +2555,9 @@ def test_publish_teardown_failures_return_committed_pointer_and_attempt_all_clea
     """Would fail if one teardown failure stopped cleanup or masked commit."""
     from codex_usage import integration_evidence
 
-    state_home, data_home, _entrypoint, payload, verified, old_current = published_evidence_layout
+    state_home, data_home, _entrypoint, payload, verified, old_current = (
+        published_evidence_layout
+    )
     current = state_home / "codex-usage/integration/current.json"
     real_close = integration_evidence.os.close
     real_flock = integration_evidence.fcntl.flock
@@ -2475,7 +2773,9 @@ def test_v2_contract_allows_only_three_windows():
     """Would fail if a non-approved quota window entered V2 validation."""
     from codex_usage import integration_evidence
 
-    assert integration_evidence.ALLOWED_WINDOW_SECONDS == frozenset((18_000, 604_800, 2_592_000))
+    assert integration_evidence.ALLOWED_WINDOW_SECONDS == frozenset(
+        (18_000, 604_800, 2_592_000)
+    )
 
 
 def test_pointer_positional_constructor_round_trips_canonical_fields():
@@ -2491,17 +2791,18 @@ def test_pointer_positional_constructor_round_trips_canonical_fields():
         "d" * 64,
     )
 
-    assert (
-        integration_evidence.parse_pointer(integration_evidence.serialize_pointer(pointer))
-        == pointer
-    )
+    assert integration_evidence.parse_pointer(
+        integration_evidence.serialize_pointer(pointer)
+    ) == pointer
 
 
 def test_v2_contract_exposes_private_exact_window_allowlist():
     """Would fail if implementation drifted from shared private contract constant."""
     from codex_usage import integration_evidence
 
-    assert integration_evidence._ALLOWED_WINDOW_SECONDS == frozenset((18_000, 604_800, 2_592_000))
+    assert integration_evidence._ALLOWED_WINDOW_SECONDS == frozenset(
+        (18_000, 604_800, 2_592_000)
+    )
 
 
 def _complete_reader_account() -> dict[str, object]:
@@ -2576,7 +2877,12 @@ def test_atomic_publish_keeps_fresh_account_authority_when_peer_is_partial(
                 "reasoning_minimum": "medium",
             }
         )
-    authority_source = state_home / "codex-usage" / "integration" / "pool-authority-source-v2.json"
+    authority_source = (
+        state_home
+        / "codex-usage"
+        / "integration"
+        / "pool-authority-source-v2.json"
+    )
     authority_source.write_bytes(
         (
             json.dumps(
@@ -2606,11 +2912,12 @@ def test_atomic_publish_keeps_fresh_account_authority_when_peer_is_partial(
     assert status == "partial"
     assert bundle is not None
     assert pointer.current_generation_id == bundle.binding.generation_id
-    assert (
-        {account["account_id"] for account in bundle.usage["accounts"]}
-        == {authority["account_id"] for authority in bundle.pool_authority["authorities"]}
-        == {"account-1", "account-2"}
-    )
+    assert {
+        account["account_id"] for account in bundle.usage["accounts"]
+    } == {
+        authority["account_id"]
+        for authority in bundle.pool_authority["authorities"]
+    } == {"account-1", "account-2"}
     decision_arguments = {
         "now": datetime(2026, 8, 25, 10, 5, tzinfo=UTC),
         "expected_release_id": bundle.binding.release_id,
@@ -2923,7 +3230,9 @@ def test_reader_rejects_current_pointer_inode_swap(published_evidence_layout, mo
     assert status in {"unavailable", "invalid"}
 
 
-def test_reader_rejects_current_pointer_parent_swap(published_evidence_layout, monkeypatch):
+def test_reader_rejects_current_pointer_parent_swap(
+    published_evidence_layout, monkeypatch
+):
     """Would fail if reader escaped captured Current parent directory."""
     from codex_usage import integration_evidence
 
@@ -2957,7 +3266,9 @@ def test_reader_rejects_current_pointer_parent_swap(published_evidence_layout, m
     assert status in {"unavailable", "invalid"}
 
 
-def test_reader_rejects_generation_directory_swap(published_evidence_layout, monkeypatch):
+def test_reader_rejects_generation_directory_swap(
+    published_evidence_layout, monkeypatch
+):
     """Would fail if generation name rebound while reader held its FD."""
     from codex_usage import integration_evidence
 
@@ -3000,7 +3311,9 @@ def _assert_reader_rejects_file_inode_swap(
     state_home, data_home, entrypoint, _payload, _verified, _current_bytes = (
         published_evidence_layout
     )
-    monkeypatch.setattr(integration_evidence, hook_name, _reader_swap_hook, raising=False)
+    monkeypatch.setattr(
+        integration_evidence, hook_name, _reader_swap_hook, raising=False
+    )
     document, status = integration_evidence.read_current_evidence(
         state_home=state_home,
         data_home=data_home,
@@ -3029,7 +3342,9 @@ def test_reader_rejects_binding_inode_swap(published_evidence_layout, monkeypatc
     )
 
 
-def test_reader_rejects_pool_authority_inode_swap(published_evidence_layout, monkeypatch):
+def test_reader_rejects_pool_authority_inode_swap(
+    published_evidence_layout, monkeypatch
+):
     _assert_reader_rejects_file_inode_swap(
         published_evidence_layout,
         monkeypatch,
@@ -3060,7 +3375,9 @@ def _assert_reader_rejects_late_file_swap(
     """Would fail if final reader phase trusted first file validation."""
     from codex_usage import integration_evidence
 
-    state_home, data_home, entrypoint, payload, verified, _current_bytes = published_evidence_layout
+    state_home, data_home, entrypoint, payload, verified, _current_bytes = (
+        published_evidence_layout
+    )
     if previous:
         integration_evidence.publish_evidence_generation(
             payload,
@@ -3071,7 +3388,9 @@ def _assert_reader_rejects_late_file_swap(
 
     def late_swap(generations_fd, pointer):
         generation_id = (
-            pointer.previous_generation_id if previous else pointer.current_generation_id
+            pointer.previous_generation_id
+            if previous
+            else pointer.current_generation_id
         )
         assert generation_id is not None
         _late_reader_file_swap(generations_fd, generation_id, name)
@@ -3092,7 +3411,9 @@ def _assert_reader_rejects_late_file_swap(
     assert status in {"unavailable", "invalid"}
 
 
-def test_reader_rejects_late_payload_inode_swap(published_evidence_layout, monkeypatch):
+def test_reader_rejects_late_payload_inode_swap(
+    published_evidence_layout, monkeypatch
+):
     _assert_reader_rejects_late_file_swap(
         published_evidence_layout,
         monkeypatch,
@@ -3100,7 +3421,9 @@ def test_reader_rejects_late_payload_inode_swap(published_evidence_layout, monke
     )
 
 
-def test_reader_rejects_late_binding_inode_swap(published_evidence_layout, monkeypatch):
+def test_reader_rejects_late_binding_inode_swap(
+    published_evidence_layout, monkeypatch
+):
     _assert_reader_rejects_late_file_swap(
         published_evidence_layout,
         monkeypatch,
@@ -3108,7 +3431,9 @@ def test_reader_rejects_late_binding_inode_swap(published_evidence_layout, monke
     )
 
 
-def test_reader_rejects_late_pool_authority_inode_swap(published_evidence_layout, monkeypatch):
+def test_reader_rejects_late_pool_authority_inode_swap(
+    published_evidence_layout, monkeypatch
+):
     _assert_reader_rejects_late_file_swap(
         published_evidence_layout,
         monkeypatch,
@@ -3116,7 +3441,9 @@ def test_reader_rejects_late_pool_authority_inode_swap(published_evidence_layout
     )
 
 
-def test_reader_rejects_late_previous_binding_inode_swap(published_evidence_layout, monkeypatch):
+def test_reader_rejects_late_previous_binding_inode_swap(
+    published_evidence_layout, monkeypatch
+):
     _assert_reader_rejects_late_file_swap(
         published_evidence_layout,
         monkeypatch,
@@ -3226,12 +3553,9 @@ def test_reader_fresh_until_expiration_is_stale_after_deadline(
             )
         ),
     )
-    assert (
-        integration_evidence.read_current_evidence(
-            state_home=state_home,
-            data_home=data_home,
-            expected_entrypoint_path=entrypoint,
-            now=datetime(2026, 8, 25, 10, 15, 1, tzinfo=UTC),
-        )[1]
-        == "stale"
-    )
+    assert integration_evidence.read_current_evidence(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=entrypoint,
+        now=datetime(2026, 8, 25, 10, 15, 1, tzinfo=UTC),
+    )[1] == "stale"

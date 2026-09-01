@@ -36,10 +36,13 @@ from .integration_pool_authority import (
     serialize_pool_authority_source,
 )
 from .private_io import (
+    FileIdentity,
     assert_no_symlink_ancestors,
     ensure_private_directory,
+    open_private_dir_at,
+    open_verified_state_home,
     private_path_lock,
-    read_private_text,
+    read_private_bytes_at,
     write_private_text,
 )
 from .private_io import (
@@ -282,12 +285,14 @@ def finish_account_set_invalidation(
     pending_file = pool_authority_pending_path()
     with private_path_lock(config_path, label="config lock"):
         with private_path_lock(source_file, label="pool authority source lock"):
-            marker = _load_pending(pending_file, config_path)
+            marker, payload, identity = _load_pending(pending_file, config_path)
             if not _matches_invalidation(marker, previous, updated):
                 raise ValueError("pool authority pending is invalid")
             if load_config(config_path) != updated:
                 raise ValueError("pool authority pending does not match config")
+            _recheck_pending_private(pending_file, payload, identity)
             _remove_source(source_file)
+            _recheck_pending_private(pending_file, payload, identity)
             _remove_pending(pending_file)
 
 
@@ -299,29 +304,25 @@ def recover_pool_authority_pending(
         pending_file.lstat()
     except FileNotFoundError:
         return
-    try:
-        payload, pending_stat = _read_pending_private(pending_file)
-    except FileNotFoundError:
-        return
     config_file = _select_config_path(config_path)
     source_file = pool_authority_source_path(state_home)
-    marker = _parse_pending(payload, config_file)
     _prepare_config_directory(config_file.parent)
     with private_path_lock(config_file, label="config lock"):
         with private_path_lock(source_file, label="pool authority source lock"):
-            current = pending_file.lstat()
-            if (current.st_dev, current.st_ino) != (
-                pending_stat.st_dev,
-                pending_stat.st_ino,
-            ):
-                raise ValueError("pool authority pending changed")
+            try:
+                payload, identity = _read_pending_private(pending_file)
+            except FileNotFoundError:
+                return
+            marker = _parse_pending(payload, config_file)
             config = load_config(config_file)
             if marker["operation"] == "invalidate":
                 if _config_digest(config) == marker["old_config_digest"]:
+                    _recheck_pending_private(pending_file, payload, identity)
                     _remove_pending(pending_file)
                     return
                 if _config_digest(config) != marker["new_config_digest"]:
                     raise ValueError("pool authority pending does not match config")
+                _recheck_pending_private(pending_file, payload, identity)
                 _remove_source(source_file)
             else:
                 records = marker["authorities"]
@@ -335,14 +336,17 @@ def recover_pool_authority_pending(
                     pass
                 elif config.pool_authority.generation == expected_generation:
                     _validate_account_inventory(config, records)
+                    _recheck_pending_private(pending_file, payload, identity)
                     _save_config_unlocked(replace(config, pool_authority=expected), config_file)
                 else:
                     raise ValueError("pool authority pending does not match config")
                 _prepare_source_directory(source_file)
                 _assert_safe_source_target(source_file)
+                _recheck_pending_private(pending_file, payload, identity)
                 write_private_text(
                     source_file, _source_text(records), label="pool authority source", mode=0o600
                 )
+            _recheck_pending_private(pending_file, payload, identity)
             _remove_pending(pending_file)
 
 
@@ -416,28 +420,46 @@ def _config_digest(config: AppConfig) -> str:
     return hashlib.sha256(_to_toml(config).encode("utf-8")).hexdigest()
 
 
-def _load_pending(path: Path, config_path: Path) -> dict[str, object]:
-    payload, _ = _read_pending_private(path)
-    return _parse_pending(payload, config_path)
+def _load_pending(
+    path: Path, config_path: Path
+) -> tuple[dict[str, object], str, FileIdentity]:
+    payload, identity = _read_pending_private(path)
+    return _parse_pending(payload, config_path), payload, identity
 
 
-def _read_pending_private(path: Path):
-    payload, item = read_private_text(
-        path,
-        regular_label="pool authority pending",
-        read_label="pool authority pending",
-        max_bytes=POOL_AUTHORITY_SOURCE_MAX_BYTES,
-        too_large_label="pool authority pending",
-        invalid_utf8_label="pool authority pending",
-    )
-    if (
-        not stat.S_ISREG(item.st_mode)
-        or item.st_uid != os.geteuid()
-        or stat.S_IMODE(item.st_mode) != 0o600
-        or item.st_nlink != 1
-    ):
-        raise ValueError("pool authority pending must be a private regular file")
-    return payload, item
+def _read_pending_private(path: Path) -> tuple[str, FileIdentity]:
+    assert_no_symlink_ancestors(path, label="pool authority pending")
+    state_fd = app_fd = integration_fd = -1
+    try:
+        state_fd = open_verified_state_home(path.parents[2])
+        app_fd = open_private_dir_at(state_fd, "codex-usage")
+        integration_fd = open_private_dir_at(app_fd, "integration")
+        payload, identity = read_private_bytes_at(
+            integration_fd,
+            path.name,
+            maximum=POOL_AUTHORITY_SOURCE_MAX_BYTES,
+            mode=0o600,
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "pool authority pending must be a private regular file"
+        ) from exc
+    finally:
+        for descriptor in (integration_fd, app_fd, state_fd):
+            if descriptor >= 0:
+                os.close(descriptor)
+    try:
+        return payload.decode("utf-8"), identity
+    except UnicodeDecodeError as exc:
+        raise ValueError("pool authority pending is not valid UTF-8") from exc
+
+
+def _recheck_pending_private(
+    path: Path, expected_payload: str, expected_identity: FileIdentity
+) -> None:
+    payload, identity = _read_pending_private(path)
+    if payload != expected_payload or identity != expected_identity:
+        raise ValueError("pool authority pending changed")
 
 
 def _config_binding(path: Path) -> str:
