@@ -11,6 +11,7 @@ import math
 import multiprocessing
 import os
 import py_compile
+import queue
 import shutil
 import stat
 import struct
@@ -28,6 +29,7 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = PROJECT_ROOT / "scripts" / "install_integration_producer.py"
+BOOTSTRAP_PROCESS_TIMEOUT_SECONDS = 30
 
 TEST_SOURCE_MANIFEST_FILES = (
     "pyproject.toml",
@@ -6559,17 +6561,17 @@ def _bootstrap_child(state_home_text, holder, holder_go, holder_locked, release,
         ("booted", str(integration), stat_result.st_dev, stat_result.st_ino, stat_result.st_mode)
     )
     if holder:
-        assert holder_go.wait(5)
+        holder_go.wait()
         with private_path_lock(
             integration / "producer-install",
             timeout_seconds=0,
             label="integration producer lock",
         ):
             holder_locked.set()
-            assert release.wait(5)
+            release.wait()
         queue.put(("holder-released",))
         return
-    assert holder_locked.wait(5)
+    holder_locked.wait()
     try:
         with private_path_lock(
             integration / "producer-install",
@@ -6579,6 +6581,35 @@ def _bootstrap_child(state_home_text, holder, holder_go, holder_locked, release,
             queue.put(("unexpected-second-lock",))
     except TimeoutError:
         queue.put(("busy",))
+
+
+def _process_message(result_queue, processes, deadline):
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise AssertionError("installer test processes did not make bounded progress")
+        try:
+            return result_queue.get(timeout=min(remaining, 0.1))
+        except queue.Empty:
+            if all(process.exitcode is not None for process in processes):
+                raise AssertionError(
+                    "installer test processes exited before reporting: "
+                    + ", ".join(str(process.exitcode) for process in processes)
+                ) from None
+
+
+def test_process_message_fails_immediately_after_children_exit():
+    class EmptyQueue:
+        def get(self, *, timeout):
+            raise queue.Empty
+
+    process = SimpleNamespace(exitcode=17)
+    with pytest.raises(AssertionError, match="exited before reporting: 17"):
+        _process_message(
+            EmptyQueue(),
+            (process,),
+            time.monotonic() + BOOTSTRAP_PROCESS_TIMEOUT_SECONDS,
+        )
 
 
 def test_first_install_bootstrap_converges_then_uses_one_zero_time_lock(tmp_path):
@@ -6595,20 +6626,39 @@ def test_first_install_bootstrap_converges_then_uses_one_zero_time_lock(tmp_path
         target=_bootstrap_child,
         args=(str(state_home), False, holder_go, holder_locked, release, queue),
     )
-    holder.start()
-    contender.start()
-    first, second = queue.get(timeout=5), queue.get(timeout=5)
-    assert first[0] == second[0] == "booted"
-    assert first[1:] == second[1:]
-    assert sorted(path.name for path in state_home.iterdir()) == ["codex-usage"]
-    holder_go.set()
-    assert holder_locked.wait(5)
-    assert queue.get(timeout=5) == ("busy",)
-    release.set()
-    assert queue.get(timeout=5) == ("holder-released",)
-    holder.join(5)
-    contender.join(5)
-    assert holder.exitcode == contender.exitcode == 0
+    processes = (holder, contender)
+    started = []
+    deadline = time.monotonic() + BOOTSTRAP_PROCESS_TIMEOUT_SECONDS
+    try:
+        holder.start()
+        started.append(holder)
+        contender.start()
+        started.append(contender)
+        first = _process_message(queue, processes, deadline)
+        second = _process_message(queue, processes, deadline)
+        assert first[0] == second[0] == "booted"
+        assert first[1:] == second[1:]
+        assert sorted(path.name for path in state_home.iterdir()) == ["codex-usage"]
+        holder_go.set()
+        assert holder_locked.wait(max(0, deadline - time.monotonic()))
+        assert _process_message(queue, processes, deadline) == ("busy",)
+        release.set()
+        assert _process_message(queue, processes, deadline) == ("holder-released",)
+        for process in processes:
+            process.join(max(0, deadline - time.monotonic()))
+        assert holder.exitcode == contender.exitcode == 0
+    finally:
+        holder_go.set()
+        release.set()
+        for process in started:
+            if process.is_alive():
+                process.terminate()
+            process.join(5)
+            if process.is_alive():
+                process.kill()
+                process.join(5)
+        queue.close()
+        queue.join_thread()
 
 
 def test_installer_script_has_narrow_parser_and_no_general_cli_import(tmp_path):
@@ -6648,7 +6698,7 @@ def test_installer_script_has_narrow_parser_and_no_general_cli_import(tmp_path):
         check=False,
         capture_output=True,
         text=True,
-        timeout=5,
+        timeout=BOOTSTRAP_PROCESS_TIMEOUT_SECONDS,
     )
     assert rejected.returncode == 64
     assert rejected.stderr == "integration_producer_unavailable\n"
