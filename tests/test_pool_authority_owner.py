@@ -800,3 +800,53 @@ def test_owner_source_path_requires_absolute_state_home(tmp_path: Path) -> None:
             config_path=config_path,
             state_home=Path("relative-state"),
         )
+
+
+@pytest.mark.parametrize("untrusted", ["mode", "hardlink"])
+def test_valid_but_untrusted_pending_cannot_start_recovery_mutation(
+    tmp_path: Path, untrusted: str
+) -> None:
+    config_path = tmp_path / "config" / "config.toml"
+    state_home = tmp_path / "state"
+    save_config(AppConfig(accounts=(_account("alpha", tmp_path),)), config_path)
+    import codex_usage.pool_authority_owner as owner_module
+
+    source_path = _source_path(state_home)
+    owner_module._prepare_source_directory(source_path)
+    owner_module._write_pending_publish(
+        owner_module.pool_authority_pending_path(state_home),
+        owner_module.PoolAuthorityConfig(1, (_authority("alpha"),), True),
+        expected_generation=0,
+        config_path=config_path,
+    )
+    pending = owner_module.pool_authority_pending_path(state_home)
+    if untrusted == "mode":
+        pending.chmod(0o644)
+    else:
+        os.link(pending, tmp_path / "second-pending-link")
+
+    with pytest.raises(ValueError, match="private regular"):
+        owner_module.recover_pool_authority_pending(
+            config_path=config_path, state_home=state_home
+        )
+
+    assert load_config(config_path).pool_authority.configured is False
+    assert not source_path.exists()
+    assert pending.exists()
+
+
+def test_public_save_config_cannot_remove_materialized_authority(tmp_path: Path) -> None:
+    config_path, state_home, _saved = _save_complete_authority(tmp_path)
+    source_path = _source_path(state_home)
+    old_source = source_path.read_bytes()
+
+    with pytest.raises(ValueError, match="owner API"):
+        save_config(
+            replace(load_config(config_path), pool_authority=__import__(
+                "codex_usage.config", fromlist=["PoolAuthorityConfig"]
+            ).PoolAuthorityConfig()),
+            config_path,
+        )
+
+    assert source_path.read_bytes() == old_source
+    assert load_config(config_path).pool_authority.configured is True

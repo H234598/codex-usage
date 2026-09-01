@@ -2489,6 +2489,7 @@ def _publish_evidence_generation_locked(
     published_instant = datetime.fromisoformat(published_at.replace("Z", "+00:00")).astimezone(UTC)
     payload_digest = hashlib.sha256(payload).hexdigest()
     state_fd = app_fd = integration_fd = generations_fd = generation_fd = -1
+    source_lock = None
     try:
         state_fd, app_fd, integration_fd, generations_fd = _open_evidence_parents(state_home)
         held_state_identity = _fd_identity(state_fd)
@@ -2505,13 +2506,14 @@ def _publish_evidence_generation_locked(
         source_lock_path = (
             state_home / "codex-usage" / "integration" / POOL_AUTHORITY_SOURCE_FILENAME
         )
-        with private_path_lock(source_lock_path, label="pool authority source lock"):
-            authority_source_bytes, _authority_source_identity = _read_verified_evidence_file(
-                integration_fd,
-                POOL_AUTHORITY_SOURCE_FILENAME,
-                maximum=POOL_AUTHORITY_SOURCE_MAX_BYTES,
-                hook=_before_publish_pool_authority_source_recheck,
-            )
+        source_lock = private_path_lock(source_lock_path, label="pool authority source lock")
+        source_lock.__enter__()
+        authority_source_bytes, _authority_source_identity = _read_verified_evidence_file(
+            integration_fd,
+            POOL_AUTHORITY_SOURCE_FILENAME,
+            maximum=POOL_AUTHORITY_SOURCE_MAX_BYTES,
+            hook=_before_publish_pool_authority_source_recheck,
+        )
         authority_source = parse_pool_authority_source(authority_source_bytes)
 
         namespace = _recover_evidence_staging_from_fds(
@@ -2745,6 +2747,8 @@ def _publish_evidence_generation_locked(
     except OSError as exc:
         raise IntegrationEvidenceUnavailable() from exc
     finally:
+        if source_lock is not None:
+            source_lock.__exit__(None, None, None)
         _close_fds(
             generation_fd,
             generations_fd,

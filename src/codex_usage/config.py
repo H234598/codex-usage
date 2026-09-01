@@ -208,6 +208,11 @@ def save_config(config: AppConfig, path: Path | None = None) -> Path:
     _recovery = _pool_authority_owner_api("recover_pool_authority_pending")
     _recovery(config_path=config_path)
     with private_path_lock(config_path, label="config lock"):
+        existing = load_config(config_path)
+        if config.pool_authority.configured and not existing.pool_authority.configured:
+            raise ValueError("configured pool_authority must be saved through the owner API")
+        if config.pool_authority != existing.pool_authority:
+            raise ValueError("pool_authority changes must be saved through the owner API")
         _save_config_unlocked(config, config_path)
     return config_path
 

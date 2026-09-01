@@ -8,6 +8,7 @@ beyond the configured account-ID inventory required for parity checking.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
@@ -21,6 +22,7 @@ from .config import (
     PoolAuthorityOwner,
     _prepare_config_directory,
     _save_config_unlocked,
+    _to_toml,
     _validate_config,
     _validate_pool_authority_config,
     default_config_path,
@@ -298,14 +300,7 @@ def recover_pool_authority_pending(
     except FileNotFoundError:
         return
     try:
-        payload, _ = read_private_text(
-            pending_file,
-            regular_label="pool authority pending",
-            read_label="pool authority pending",
-            max_bytes=POOL_AUTHORITY_SOURCE_MAX_BYTES,
-            too_large_label="pool authority pending",
-            invalid_utf8_label="pool authority pending",
-        )
+        payload, pending_stat = _read_pending_private(pending_file)
     except FileNotFoundError:
         return
     config_file = _select_config_path(config_path)
@@ -314,18 +309,18 @@ def recover_pool_authority_pending(
     _prepare_config_directory(config_file.parent)
     with private_path_lock(config_file, label="config lock"):
         with private_path_lock(source_file, label="pool authority source lock"):
+            current = pending_file.lstat()
+            if (current.st_dev, current.st_ino) != (
+                pending_stat.st_dev,
+                pending_stat.st_ino,
+            ):
+                raise ValueError("pool authority pending changed")
             config = load_config(config_file)
             if marker["operation"] == "invalidate":
-                if (
-                    _account_ids(config) == marker["old_account_ids"]
-                    and config.pool_authority == marker["old_authority"]
-                ):
+                if _config_digest(config) == marker["old_config_digest"]:
                     _remove_pending(pending_file)
                     return
-                if (
-                    _account_ids(config) != marker["new_account_ids"]
-                    or config.pool_authority.configured
-                ):
+                if _config_digest(config) != marker["new_config_digest"]:
                     raise ValueError("pool authority pending does not match config")
                 _remove_source(source_file)
             else:
@@ -373,7 +368,13 @@ def _write_pending_publish(
 
 def _write_pending(path: Path, marker: dict[str, object]) -> None:
     text = json.dumps(marker, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n"
-    _write_pending_text(path, text, label="pool authority pending", mode=0o600)
+    _write_pending_text(
+        path,
+        text,
+        label="pool authority pending",
+        mode=0o600,
+        replace_existing=False,
+    )
 
 
 def _account_ids(config: AppConfig) -> tuple[str, ...]:
@@ -393,6 +394,8 @@ def _invalidation_marker(
         "old_authorities": [
             item.to_source_record() for item in previous.pool_authority.authorities
         ],
+        "old_config_digest": _config_digest(previous),
+        "new_config_digest": _config_digest(updated),
     }
 
 
@@ -404,11 +407,22 @@ def _matches_invalidation(
         and marker.get("old_account_ids") == _account_ids(previous)
         and marker.get("new_account_ids") == _account_ids(updated)
         and marker.get("old_authority") == previous.pool_authority
+        and marker.get("old_config_digest") == _config_digest(previous)
+        and marker.get("new_config_digest") == _config_digest(updated)
     )
 
 
+def _config_digest(config: AppConfig) -> str:
+    return hashlib.sha256(_to_toml(config).encode("utf-8")).hexdigest()
+
+
 def _load_pending(path: Path, config_path: Path) -> dict[str, object]:
-    payload, _ = read_private_text(
+    payload, _ = _read_pending_private(path)
+    return _parse_pending(payload, config_path)
+
+
+def _read_pending_private(path: Path):
+    payload, item = read_private_text(
         path,
         regular_label="pool authority pending",
         read_label="pool authority pending",
@@ -416,7 +430,14 @@ def _load_pending(path: Path, config_path: Path) -> dict[str, object]:
         too_large_label="pool authority pending",
         invalid_utf8_label="pool authority pending",
     )
-    return _parse_pending(payload, config_path)
+    if (
+        not stat.S_ISREG(item.st_mode)
+        or item.st_uid != os.geteuid()
+        or stat.S_IMODE(item.st_mode) != 0o600
+        or item.st_nlink != 1
+    ):
+        raise ValueError("pool authority pending must be a private regular file")
+    return payload, item
 
 
 def _config_binding(path: Path) -> str:
@@ -450,15 +471,22 @@ def _parse_pending(payload: str, config_path: Path) -> dict[str, object]:
         "new_account_ids",
         "old_generation",
         "old_authorities",
+        "old_config_digest",
+        "new_config_digest",
     }
     if operation == "invalidate" and set(marker) == invalidation_fields:
         old_ids, new_ids = marker["old_account_ids"], marker["new_account_ids"]
         generation, raw = marker["old_generation"], marker["old_authorities"]
+        old_digest, new_digest = marker["old_config_digest"], marker["new_config_digest"]
         if (
             type(old_ids) is not list
             or type(new_ids) is not list
             or type(generation) is not int
             or type(raw) is not list
+            or type(old_digest) is not str
+            or type(new_digest) is not str
+            or len(old_digest) != 64
+            or len(new_digest) != 64
         ):
             raise ValueError("pool authority pending is invalid")
         old_authorities = _records_from_pending(raw, generation)
@@ -471,6 +499,8 @@ def _parse_pending(payload: str, config_path: Path) -> dict[str, object]:
             "old_account_ids": tuple(old_ids),
             "new_account_ids": tuple(new_ids),
             "old_authority": PoolAuthorityConfig(generation, old_authorities, True),
+            "old_config_digest": old_digest,
+            "new_config_digest": new_digest,
         }
     required = {
         "schema_version",
