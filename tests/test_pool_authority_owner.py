@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from codex_usage.config import AppConfig, load_config, save_config
+from codex_usage.config import (
+    AppConfig,
+    add_or_update_account,
+    load_config,
+    save_config,
+)
 from codex_usage.integration_pool_authority import parse_pool_authority_source
 from codex_usage.models import Account
 from codex_usage.pool_authority_owner import (
@@ -266,6 +271,47 @@ def test_config_rejects_missing_or_additional_owner_field(
         load_config(config_path)
 
 
+def test_config_rejects_handwritten_authority_account_parity_mismatch(tmp_path: Path) -> None:
+    config_path = tmp_path / "config" / "config.toml"
+    save_config(AppConfig(accounts=(_account("alpha", tmp_path),)), config_path)
+    fields = _authority("bravo").to_source_record()
+    rendered = "\n".join(
+        f"{name} = {json.dumps(value)}"
+        if type(value) is not bool
+        else f"{name} = {'true' if value else 'false'}"
+        for name, value in fields.items()
+    )
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        + "\n[pool_authority]\ngeneration = 1\n\n[[pool_authority.authorities]]\n"
+        + rendered,
+        encoding="utf-8",
+    )
+    config_path.chmod(0o600)
+
+    with pytest.raises(ValueError, match="account inventory"):
+        load_config(config_path)
+
+
+def test_account_set_change_invalidates_configured_authority_but_same_id_update_keeps_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path, state_home, saved = _save_complete_authority(tmp_path)
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    add_or_update_account(
+        "alpha",
+        label="changed-only-metadata",
+        profile_dir=str(tmp_path / "profiles" / "alpha"),
+        path=config_path,
+    )
+    assert load_config(config_path).pool_authority.generation == saved.generation
+    add_or_update_account(
+        "bravo", profile_dir=str(tmp_path / "profiles" / "bravo"), path=config_path
+    )
+    assert load_config(config_path).pool_authority.configured is False
+    assert not _source_path(state_home).exists()
+
+
 def test_owner_values_are_never_derived_from_account_metadata(tmp_path: Path) -> None:
     config_path = tmp_path / "config" / "config.toml"
     state_home = tmp_path / "state"
@@ -451,9 +497,7 @@ def test_save_rejects_untrusted_existing_source_before_config_generation(
 ) -> None:
     config_path = tmp_path / "config" / "config.toml"
     state_home = tmp_path / "state"
-    source_path = (
-        state_home / "codex-usage" / "integration" / "pool-authority-source-v2.json"
-    )
+    source_path = state_home / "codex-usage" / "integration" / "pool-authority-source-v2.json"
     source_path.parent.mkdir(parents=True, mode=0o700)
     source_path.parent.chmod(0o700)
     source_path.write_text("old synthetic source\n", encoding="utf-8")

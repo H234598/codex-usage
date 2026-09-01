@@ -8,6 +8,7 @@ beyond the configured account-ID inventory required for parity checking.
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 from dataclasses import dataclass, replace
@@ -27,6 +28,7 @@ from .config import (
 )
 from .integration_pool_authority import (
     POOL_AUTHORITY_SOURCE_FILENAME,
+    POOL_AUTHORITY_SOURCE_MAX_BYTES,
     PoolAuthorityInvalid,
     serialize_pool_authority_source,
 )
@@ -34,8 +36,14 @@ from .private_io import (
     assert_no_symlink_ancestors,
     ensure_private_directory,
     private_path_lock,
+    read_private_text,
     write_private_text,
 )
+from .private_io import (
+    write_private_text as _write_pending_text,
+)
+
+POOL_AUTHORITY_PENDING_FILENAME = "pool-authority-owner-pending-v2.json"
 
 
 @dataclass(frozen=True)
@@ -62,10 +70,15 @@ def pool_authority_source_path(state_home: Path | None = None) -> Path:
     return root / "codex-usage" / "integration" / POOL_AUTHORITY_SOURCE_FILENAME
 
 
+def pool_authority_pending_path(state_home: Path | None = None) -> Path:
+    return pool_authority_source_path(state_home).with_name(POOL_AUTHORITY_PENDING_FILENAME)
+
+
 def load_pool_authority_owner(
     *,
     config_path: Path | None = None,
 ) -> PoolAuthorityOwnerSnapshot:
+    recover_pool_authority_pending(config_path=config_path)
     config = load_config(_select_config_path(config_path))
     owner = config.pool_authority
     return PoolAuthorityOwnerSnapshot(
@@ -93,6 +106,8 @@ def save_pool_authority_owner(
     _validate_expected_generation(expected_generation)
     config_file = _select_config_path(config_path)
     source_file = pool_authority_source_path(state_home)
+    pending_file = pool_authority_pending_path(state_home)
+    recover_pool_authority_pending(config_path=config_file, state_home=state_home)
     # The unlocked pass is only a no-mutation preflight. The same checks run
     # again under the config lock before either target is prepared or replaced.
     _updated_config(
@@ -117,6 +132,7 @@ def save_pool_authority_owner(
         _prepare_source_directory(source_file)
         with private_path_lock(source_file, label="pool authority source lock"):
             _assert_safe_source_target(source_file)
+            _write_pending_publish(pending_file, updated.pool_authority)
             _save_config_unlocked(updated, config_file)
             try:
                 write_private_text(
@@ -133,7 +149,9 @@ def save_pool_authority_owner(
                         "pool authority save rollback failed",
                         [source_error, rollback_error],
                     ) from None
+                _remove_pending(pending_file)
                 raise ValueError("could not materialize pool authority source") from source_error
+            _remove_pending(pending_file)
 
     return PoolAuthorityOwnerSnapshot(
         generation=updated.pool_authority.generation,
@@ -236,6 +254,117 @@ def _prepare_source_directory(source_file: Path) -> None:
         if path.is_symlink():
             raise ValueError(f"{label} must not be a symlink")
         ensure_private_directory(path, label=label)
+
+
+def begin_account_set_invalidation() -> Path:
+    source_file = pool_authority_source_path()
+    pending_file = pool_authority_pending_path()
+    _prepare_source_directory(source_file)
+    with private_path_lock(source_file, label="pool authority source lock"):
+        _write_pending(pending_file, {"operation": "invalidate"})
+        _remove_source(source_file)
+    return pending_file
+
+
+def finish_account_set_invalidation(pending_file: Path) -> None:
+    _remove_pending(pending_file)
+
+
+def recover_pool_authority_pending(
+    *, config_path: Path | None = None, state_home: Path | None = None
+) -> None:
+    pending_file = pool_authority_pending_path(state_home)
+    try:
+        pending_file.lstat()
+    except FileNotFoundError:
+        return
+    try:
+        payload, _ = read_private_text(
+            pending_file,
+            regular_label="pool authority pending",
+            read_label="pool authority pending",
+            max_bytes=POOL_AUTHORITY_SOURCE_MAX_BYTES,
+            too_large_label="pool authority pending",
+            invalid_utf8_label="pool authority pending",
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        if not pending_file.exists():
+            return
+        if isinstance(exc, ValueError):
+            raise
+        return
+    try:
+        marker = json.loads(payload)
+    except (TypeError, ValueError):
+        raise ValueError("pool authority pending is invalid") from None
+    if (
+        type(marker) is not dict
+        or set(marker) not in ({"operation"}, {"operation", "generation", "authorities"})
+        or marker.get("operation") not in {"invalidate", "publish"}
+    ):
+        raise ValueError("pool authority pending is invalid")
+    config_file = _select_config_path(config_path)
+    source_file = pool_authority_source_path(state_home)
+    _prepare_config_directory(config_file.parent)
+    with private_path_lock(config_file, label="config lock"):
+        with private_path_lock(source_file, label="pool authority source lock"):
+            config = load_config(config_file)
+            if marker["operation"] == "invalidate":
+                if config.pool_authority.configured:
+                    _save_config_unlocked(
+                        replace(config, pool_authority=PoolAuthorityConfig()), config_file
+                    )
+                _remove_source(source_file)
+            else:
+                authorities = marker.get("authorities")
+                generation = marker.get("generation")
+                if type(generation) is not int or type(authorities) is not list:
+                    raise ValueError("pool authority pending is invalid")
+                records = tuple(
+                    PoolAuthorityOwner(**record) for record in authorities if type(record) is dict
+                )
+                if len(records) != len(authorities):
+                    raise ValueError("pool authority pending is invalid")
+                expected = PoolAuthorityConfig(
+                    generation=generation, authorities=records, configured=True
+                )
+                _validate_pool_authority_config(expected)
+                if config.pool_authority != expected:
+                    raise ValueError("pool authority pending does not match config")
+                _prepare_source_directory(source_file)
+                _assert_safe_source_target(source_file)
+                write_private_text(
+                    source_file, _source_text(records), label="pool authority source", mode=0o600
+                )
+            _remove_pending(pending_file)
+
+
+def _write_pending_publish(path: Path, authority: PoolAuthorityConfig) -> None:
+    _write_pending(
+        path,
+        {
+            "operation": "publish",
+            "generation": authority.generation,
+            "authorities": [item.to_source_record() for item in authority.authorities],
+        },
+    )
+
+
+def _write_pending(path: Path, marker: dict[str, object]) -> None:
+    text = json.dumps(marker, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n"
+    _write_pending_text(path, text, label="pool authority pending", mode=0o600)
+
+
+def _remove_source(path: Path) -> None:
+    _assert_safe_source_target(path)
+    if path.exists():
+        path.unlink()
+
+
+def _remove_pending(path: Path) -> None:
+    if path.exists():
+        _assert_safe_source_target(path)
+        path.unlink()
 
 
 def _assert_safe_source_target(source_file: Path) -> None:
