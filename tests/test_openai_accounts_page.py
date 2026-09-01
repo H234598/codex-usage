@@ -59,16 +59,21 @@ def _masterjet_accounts():
     ]
 
 
-def test_account_navigation_contains_openai_and_google_only() -> None:
+def test_account_navigation_contains_openai_google_and_pool_authority() -> None:
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
     layout = schema["layout"]
     account_pages = [
         page for page in layout["pages"] if layout[page]["title"].startswith("Accounts")
     ]
 
-    assert account_pages == ["openai-accounts-page", "google-accounts-page"]
+    assert account_pages == [
+        "openai-accounts-page",
+        "google-accounts-page",
+        "pool-authority-accounts-page",
+    ]
     assert layout["openai-accounts-page"]["title"] == "Accounts · OpenAI"
     assert layout["google-accounts-page"]["title"] == "Accounts · Google"
+    assert layout["pool-authority-accounts-page"]["title"] == "Accounts · Pool Authority"
     assert "ollama-accounts-page" not in layout["pages"]
 
 

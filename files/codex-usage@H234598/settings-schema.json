@@ -8,6 +8,7 @@
       "status-page",
       "openai-accounts-page",
       "google-accounts-page",
+      "pool-authority-accounts-page",
       "routing-page",
       "alerts-page",
       "help-page"
@@ -59,6 +60,13 @@
       "title": "Accounts · Google",
       "sections": [
         "google-accounts-section"
+      ]
+    },
+    "pool-authority-accounts-page": {
+      "type": "page",
+      "title": "Accounts · Pool Authority",
+      "sections": [
+        "pool-authority-section"
       ]
     },
     "alerts-page": {
@@ -134,6 +142,13 @@
       "title": "Google-Control",
       "keys": [
         "google-account-control"
+      ]
+    },
+    "pool-authority-section": {
+      "type": "section",
+      "title": "PoolAuthority Owner",
+      "keys": [
+        "pool-authority-owner"
       ]
     },
     "masterjet-connection-section": {
@@ -446,6 +461,14 @@
     "widget": "GoogleAccountsPage",
     "description": "Google-Accounts, Projekte und Control-Aktionen",
     "tooltip": "Zeigt redigierte Account- und Projektzustände. Jede Mutation läuft begrenzt im Hintergrund; Apply folgt erst auf eine sichtbare Planbestätigung.",
+    "default": ""
+  },
+  "pool-authority-owner": {
+    "type": "custom",
+    "file": "pool_authority_page.py",
+    "widget": "PoolAuthorityOwnerPage",
+    "description": "PoolAuthority-Ownerwerte je Account",
+    "tooltip": "Bearbeitet nur die kanonische config.toml-Authority. Ohne vollständige, gültige Account-Parität wird nicht gespeichert oder publiziert.",
     "default": ""
   },
   "masterjet-connection": {

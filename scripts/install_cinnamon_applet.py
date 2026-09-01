@@ -26,6 +26,7 @@ REQUIRED_FILES = (
     "help_page.py",
     "openai_accounts_page.py",
     "google_accounts_page.py",
+    "pool_authority_page.py",
     "panel_settings_list.py",
 )
 VERSION_CHECK_ATTEMPTS = 10

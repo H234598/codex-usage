@@ -64,9 +64,10 @@ def test_source_and_version_validation(tmp_path) -> None:
         installer._read_applet_version(source)
 
 
-def test_installer_requires_and_installs_openai_and_google_account_pages(tmp_path) -> None:
+def test_installer_requires_and_installs_account_pages(tmp_path) -> None:
     assert "openai_accounts_page.py" in installer.REQUIRED_FILES
     assert "google_accounts_page.py" in installer.REQUIRED_FILES
+    assert "pool_authority_page.py" in installer.REQUIRED_FILES
 
     source = _source(tmp_path / "source-root")
     target_root = tmp_path / "target-root"
@@ -77,6 +78,7 @@ def test_installer_requires_and_installs_openai_and_google_account_pages(tmp_pat
 
     assert (target / "openai_accounts_page.py").is_file()
     assert (target / "google_accounts_page.py").is_file()
+    assert (target / "pool_authority_page.py").is_file()
 
 
 def test_source_validation_rejects_symlink_member(tmp_path) -> None:
