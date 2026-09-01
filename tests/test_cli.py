@@ -4942,7 +4942,8 @@ def test_history_commands_cover_table_query_and_prune(monkeypatch, capsys):
             return 2 if dry_run else 1
 
     monkeypatch.setattr(cli_module, "HistoryStore", Store)
-    assert cli_module._cmd_history_status(SimpleNamespace(path=Path("history"), format="table")) == 0
+    status_args = SimpleNamespace(path=Path("history"), format="table")
+    assert cli_module._cmd_history_status(status_args) == 0
     assert "Samples: 1" in capsys.readouterr().out
 
     query_args = SimpleNamespace(
@@ -5065,19 +5066,34 @@ def test_history_json_output_and_profile_create_optional_fields(monkeypatch, cap
             return 0
 
     monkeypatch.setattr(cli_module, "HistoryStore", Store)
-    assert cli_module._cmd_history_query(
-        SimpleNamespace(
-            path=Path("history"), account="alpha", pool=None, window_seconds=None,
-            since=None, until=None, format="json",
+    assert (
+        cli_module._cmd_history_query(
+            SimpleNamespace(
+                path=Path("history"),
+                account="alpha",
+                pool=None,
+                window_seconds=None,
+                since=None,
+                until=None,
+                format="json",
+            )
         )
-    ) == 0
+        == 0
+    )
     assert json.loads(capsys.readouterr().out)["samples"] == []
-    assert cli_module._cmd_history_prune(
-        SimpleNamespace(
-            path=Path("history"), dry_run=True, apply=False, days=30,
-            before="2026-08-16T10:00:00Z", format="json",
+    assert (
+        cli_module._cmd_history_prune(
+            SimpleNamespace(
+                path=Path("history"),
+                dry_run=True,
+                apply=False,
+                days=30,
+                before="2026-08-16T10:00:00Z",
+                format="json",
+            )
         )
-    ) == 0
+        == 0
+    )
     assert json.loads(capsys.readouterr().out)["dry_run"] is True
 
     captured = {}
@@ -5087,13 +5103,25 @@ def test_history_json_output_and_profile_create_optional_fields(monkeypatch, cap
         "create_profile_job",
         lambda **kwargs: captured.update(kwargs) or {"ok": True},
     )
-    assert cli_module._cmd_profile_create(
-        SimpleNamespace(
-            account_id="new", label="New", browser="firefox", backend="direct",
-            profile_dir=None, reactivation_browser="auto", expected_backend_account_id=None,
-            config=None, json_events=False, tag="tag", series="pool", series_active=True,
+    assert (
+        cli_module._cmd_profile_create(
+            SimpleNamespace(
+                account_id="new",
+                label="New",
+                browser="firefox",
+                backend="direct",
+                profile_dir=None,
+                reactivation_browser="auto",
+                expected_backend_account_id=None,
+                config=None,
+                json_events=False,
+                tag="tag",
+                series="pool",
+                series_active=True,
+            )
         )
-    ) == 0
+        == 0
+    )
     capsys.readouterr()
     assert captured["tag"] == "tag"
     assert captured["series"] == "pool"
@@ -5109,27 +5137,36 @@ def test_reactivation_and_account_handlers_print_error_tables(monkeypatch, capsy
         "reactivate_account",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(cli_module.ReactivationError("bad")),
     )
-    assert cli_module._cmd_reactivate(
-        SimpleNamespace(config=None, account="alpha", browser="auto", format="table")
-    ) == 2
+    assert (
+        cli_module._cmd_reactivate(
+            SimpleNamespace(config=None, account="alpha", browser="auto", format="table")
+        )
+        == 2
+    )
     assert "Reaktivierung fehlgeschlagen" in capsys.readouterr().out
     monkeypatch.setattr(
         cli_module,
         "open_account_in_reactivation_browser",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(cli_module.ReactivationError("bad")),
     )
-    assert cli_module._cmd_account_manage(
-        SimpleNamespace(config=None, account="alpha", browser=None, format="table")
-    ) == 2
+    assert (
+        cli_module._cmd_account_manage(
+            SimpleNamespace(config=None, account="alpha", browser=None, format="table")
+        )
+        == 2
+    )
     assert "konnte nicht geöffnet" in capsys.readouterr().out
     monkeypatch.setattr(
         cli_module,
         "start_account_terminal",
         lambda _account: (_ for _ in ()).throw(cli_module.TerminalError("bad")),
     )
-    assert cli_module._cmd_account_terminal(
-        SimpleNamespace(config=None, account="alpha", format="table")
-    ) == 2
+    assert (
+        cli_module._cmd_account_terminal(
+            SimpleNamespace(config=None, account="alpha", format="table")
+        )
+        == 2
+    )
     assert "konnte nicht gestartet" in capsys.readouterr().out
 
 
@@ -5138,10 +5175,15 @@ def test_probe_diagnose_latest_health_service_and_paths(monkeypatch, capsys, tmp
     config = SimpleNamespace(accounts=(account,))
     monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
     monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: account)
-    monkeypatch.setattr(cli_module, "probe_account", lambda *_args, **kwargs: {"headed": kwargs["headed"]})
-    assert cli_module._cmd_probe(
-        SimpleNamespace(config=None, account="alpha", headless=True, save_dir=None)
-    ) == 0
+    monkeypatch.setattr(
+        cli_module, "probe_account", lambda *_args, **kwargs: {"headed": kwargs["headed"]}
+    )
+    assert (
+        cli_module._cmd_probe(
+            SimpleNamespace(config=None, account="alpha", headless=True, save_dir=None)
+        )
+        == 0
+    )
     assert json.loads(capsys.readouterr().out)["headed"] is False
 
     called = {}
@@ -5150,16 +5192,36 @@ def test_probe_diagnose_latest_health_service_and_paths(monkeypatch, capsys, tmp
         "diagnose_account",
         lambda *_args, **kwargs: called.update(kwargs) or {"ok": True},
     )
-    assert cli_module._cmd_diagnose(
-        SimpleNamespace(config=None, account="alpha", headed=True, screenshot=True, save_dir=None, auth_json=None)
-    ) == 0
+    assert (
+        cli_module._cmd_diagnose(
+            SimpleNamespace(
+                config=None,
+                account="alpha",
+                headed=True,
+                screenshot=True,
+                save_dir=None,
+                auth_json=None,
+            )
+        )
+        == 0
+    )
     assert called["screenshot_dir"] == Path("diagnose-output")
     assert called["auth_json_path"] is None
     capsys.readouterr()
     monkeypatch.setattr(cli_module, "diagnose_account", lambda *_args, **_kwargs: {"error": "bad"})
-    assert cli_module._cmd_diagnose(
-        SimpleNamespace(config=None, account="alpha", headed=False, screenshot=False, save_dir=tmp_path, auth_json=None)
-    ) == 2
+    assert (
+        cli_module._cmd_diagnose(
+            SimpleNamespace(
+                config=None,
+                account="alpha",
+                headed=False,
+                screenshot=False,
+                save_dir=tmp_path,
+                auth_json=None,
+            )
+        )
+        == 2
+    )
     capsys.readouterr()
 
     monkeypatch.setattr(cli_module, "load_latest_usages", lambda _config: [])
@@ -5176,27 +5238,58 @@ def test_probe_diagnose_latest_health_service_and_paths(monkeypatch, capsys, tmp
         "load_health",
         lambda: {"event_count": 1, "event_counts": {"watch:cycle": 1}},
     )
-    assert cli_module._cmd_health(
-        SimpleNamespace(
-            record_component=None, record_event=None, clear=False, account=None,
-            duration_ms=None, error_class=None, format="table",
+    assert (
+        cli_module._cmd_health(
+            SimpleNamespace(
+                record_component=None,
+                record_event=None,
+                clear=False,
+                account=None,
+                duration_ms=None,
+                error_class=None,
+                format="table",
+            )
         )
-    ) == 0
+        == 0
+    )
     assert "watch:cycle: 1" in capsys.readouterr().out
     with pytest.raises(ValueError, match="requires component"):
         cli_module._cmd_health(
             SimpleNamespace(
-                record_component="watch", record_event=None, clear=False, account=None,
-                duration_ms=None, error_class=None, format="json",
+                record_component="watch",
+                record_event=None,
+                clear=False,
+                account=None,
+                duration_ms=None,
+                error_class=None,
+                format="json",
             )
         )
 
     service_calls = []
-    monkeypatch.setattr(cli_module, "service_status", lambda: {"installed": True, "enabled": False, "active": True})
-    monkeypatch.setattr(cli_module, "service_disable", lambda: service_calls.append("disable") or {"installed": True})
-    monkeypatch.setattr(cli_module, "service_uninstall", lambda: service_calls.append("uninstall") or {"installed": False})
-    monkeypatch.setattr(cli_module, "service_install", lambda *_args: service_calls.append("install") or {"installed": True})
-    monkeypatch.setattr(cli_module, "service_enable", lambda *_args: service_calls.append("enable") or {"installed": True})
+    monkeypatch.setattr(
+        cli_module, "service_status", lambda: {"installed": True, "enabled": False, "active": True}
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "service_disable",
+        lambda: service_calls.append("disable") or {"installed": True},
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "service_uninstall",
+        lambda: service_calls.append("uninstall") or {"installed": False},
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "service_install",
+        lambda *_args: service_calls.append("install") or {"installed": True},
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "service_enable",
+        lambda *_args: service_calls.append("enable") or {"installed": True},
+    )
     monkeypatch.setattr(cli_module, "render_service_json", lambda result: json.dumps(result))
     for action in ("status", "disable", "uninstall", "install", "enable"):
         args = SimpleNamespace(action=action, config=None, format="json")
@@ -5211,27 +5304,48 @@ def test_bridge_server_validation_and_service_sync_guards(monkeypatch, capsys, t
     monkeypatch.setattr(cli_module, "load_config", lambda _path: object())
     monkeypatch.setattr(cli_module, "run_bridge_server", lambda *_args, **_kwargs: None)
     base = dict(
-        config=tmp_path / "config.toml", port=8787, host="127.0.0.1", allow_remote=False,
-        tls_cert=None, tls_key=None,
+        config=tmp_path / "config.toml",
+        port=8787,
+        host="127.0.0.1",
+        allow_remote=False,
+        tls_cert=None,
+        tls_key=None,
     )
     with pytest.raises(ValueError, match="TLS requires"):
         cli_module._cmd_bridge_server(SimpleNamespace(**{**base, "tls_cert": Path("cert")}))
     with pytest.raises(ValueError, match="remote bridge"):
-        cli_module._cmd_bridge_server(SimpleNamespace(**{**base, "host": "0.0.0.0", "allow_remote": True}))
-    assert cli_module._cmd_bridge_server(
-        SimpleNamespace(**{**base, "host": "0.0.0.0", "allow_remote": True, "tls_cert": Path("cert"), "tls_key": Path("key")})
-    ) == 0
+        cli_module._cmd_bridge_server(
+            SimpleNamespace(**{**base, "host": "0.0.0.0", "allow_remote": True})
+        )
+    assert (
+        cli_module._cmd_bridge_server(
+            SimpleNamespace(
+                **{
+                    **base,
+                    "host": "0.0.0.0",
+                    "allow_remote": True,
+                    "tls_cert": Path("cert"),
+                    "tls_key": Path("key"),
+                }
+            )
+        )
+        == 0
+    )
 
     monkeypatch.setattr(cli_module, "service_status", lambda: {"installed": False})
     assert cli_module._managed_service_sync_required(tmp_path / "config.toml") is False
-    monkeypatch.setattr(cli_module, "service_status", lambda: (_ for _ in ()).throw(OSError("unknown")))
+    monkeypatch.setattr(
+        cli_module, "service_status", lambda: (_ for _ in ()).throw(OSError("unknown"))
+    )
     assert cli_module._managed_service_sync_required(tmp_path / "config.toml") is True
     monkeypatch.setattr(cli_module, "service_status", lambda: {"installed": True})
     monkeypatch.setattr(cli_module, "managed_service_config_path", lambda: tmp_path / "other.toml")
     assert cli_module._managed_service_sync_required(tmp_path / "config.toml") is False
     monkeypatch.setattr(cli_module, "managed_service_config_path", lambda: tmp_path / "config.toml")
     with pytest.raises(OSError):
-        monkeypatch.setattr(cli_module, "service_install", lambda *_args: (_ for _ in ()).throw(OSError("sync")))
+        monkeypatch.setattr(
+            cli_module, "service_install", lambda *_args: (_ for _ in ()).throw(OSError("sync"))
+        )
         cli_module._sync_managed_service(object(), tmp_path / "config.toml", strict=True)
     cli_module._sync_managed_service(object(), tmp_path / "config.toml", strict=False)
     assert "Warnung: systemd-Konfiguration" in capsys.readouterr().err
@@ -5241,8 +5355,11 @@ def test_account_delete_staging_and_rollback_error_paths(monkeypatch, tmp_path):
     account = Account(id="alpha", label="Alpha", profile_dir=str(tmp_path / "profile"))
     config = SimpleNamespace(accounts=(account,))
     args = SimpleNamespace(
-        config=tmp_path / "config.toml", account="alpha", delete_profile=False,
-        force_delete_profile=False, format="table",
+        config=tmp_path / "config.toml",
+        account="alpha",
+        delete_profile=False,
+        force_delete_profile=False,
+        format="table",
     )
     monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
     monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: account)
@@ -5251,10 +5368,14 @@ def test_account_delete_staging_and_rollback_error_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(cli_module, "_cancel_account_profile_jobs", lambda _account: None)
     monkeypatch.setattr(cli_module, "_managed_service_sync_required", lambda _path: False)
     monkeypatch.setattr(cli_module, "_sync_managed_service", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(cli_module, "remove_account", lambda *_args, **_kwargs: (SimpleNamespace(accounts=()), None))
+    monkeypatch.setattr(
+        cli_module, "remove_account", lambda *_args, **_kwargs: (SimpleNamespace(accounts=()), None)
+    )
     monkeypatch.setattr(cli_module, "restore_account", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli_module, "_delete_profile_dir", lambda *_args, **_kwargs: "fehlt")
-    monkeypatch.setattr(cli_module, "_validate_profile_delete_target", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        cli_module, "_validate_profile_delete_target", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(cli_module, "remove_account_state", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli_module, "revoke_bridge_token", lambda _account: None)
     args.delete_profile = True
@@ -5273,7 +5394,11 @@ def test_account_delete_staging_and_rollback_error_paths(monkeypatch, tmp_path):
 
     args.delete_profile = False
     monkeypatch.setattr(cli_module, "remove_account_state", lambda *_args, **_kwargs: RollbackTx())
-    monkeypatch.setattr(cli_module, "revoke_bridge_token", lambda _account: (_ for _ in ()).throw(OSError("revoke failed")))
+    monkeypatch.setattr(
+        cli_module,
+        "revoke_bridge_token",
+        lambda _account: (_ for _ in ()).throw(OSError("revoke failed")),
+    )
     with pytest.raises(ExceptionGroup, match="state deletion rollback failed"):
         cli_module._cmd_account_delete(args)
 
@@ -5293,17 +5418,27 @@ def test_account_delete_staging_and_rollback_error_paths(monkeypatch, tmp_path):
     args.delete_profile = True
     monkeypatch.setattr(cli_module, "_delete_profile_dir", lambda *_args, **_kwargs: ProfileTx())
     monkeypatch.setattr(cli_module, "remove_account_state", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(cli_module, "revoke_bridge_token", lambda _account: (_ for _ in ()).throw(OSError("revoke failed")))
+    monkeypatch.setattr(
+        cli_module,
+        "revoke_bridge_token",
+        lambda _account: (_ for _ in ()).throw(OSError("revoke failed")),
+    )
     with pytest.raises(ExceptionGroup, match="profile deletion rollback failed"):
         cli_module._cmd_account_delete(args)
 
     monkeypatch.setattr(cli_module, "revoke_bridge_token", lambda _account: None)
-    monkeypatch.setattr(cli_module, "remove_account_state", lambda *_args, **_kwargs: RollbackTx(commit_error=True))
+    monkeypatch.setattr(
+        cli_module, "remove_account_state", lambda *_args, **_kwargs: RollbackTx(commit_error=True)
+    )
     monkeypatch.setattr(cli_module, "_delete_profile_dir", lambda *_args, **_kwargs: ProfileTx())
     with pytest.raises(ExceptionGroup, match="profile deletion rollback failed"):
         cli_module._cmd_account_delete(args)
 
-    monkeypatch.setattr(cli_module, "remove_account_state", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("state failed")))
+    monkeypatch.setattr(
+        cli_module,
+        "remove_account_state",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("state failed")),
+    )
     monkeypatch.setattr(cli_module, "_delete_profile_dir", lambda *_args, **_kwargs: ProfileTx())
     with pytest.raises(ExceptionGroup, match="profile deletion rollback failed"):
         cli_module._cmd_account_delete(args)
@@ -5313,8 +5448,11 @@ def test_account_delete_restore_failures_are_reported(monkeypatch, tmp_path):
     account = Account(id="alpha", label="Alpha", profile_dir=str(tmp_path / "profile"))
     config = SimpleNamespace(accounts=(account,))
     args = SimpleNamespace(
-        config=tmp_path / "config.toml", account="alpha", delete_profile=False,
-        force_delete_profile=False, format="table",
+        config=tmp_path / "config.toml",
+        account="alpha",
+        delete_profile=False,
+        force_delete_profile=False,
+        format="table",
     )
     monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
     monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: account)
@@ -5322,34 +5460,61 @@ def test_account_delete_restore_failures_are_reported(monkeypatch, tmp_path):
     monkeypatch.setattr(cli_module, "profile_job_creation_lock", lambda: nullcontext())
     monkeypatch.setattr(cli_module, "_cancel_account_profile_jobs", lambda _account: None)
     monkeypatch.setattr(cli_module, "_managed_service_sync_required", lambda _path: False)
-    monkeypatch.setattr(cli_module, "remove_account", lambda *_args, **_kwargs: (SimpleNamespace(accounts=()), None))
-    monkeypatch.setattr(cli_module, "restore_account", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("restore failed")))
+    monkeypatch.setattr(
+        cli_module, "remove_account", lambda *_args, **_kwargs: (SimpleNamespace(accounts=()), None)
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "restore_account",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("restore failed")),
+    )
     monkeypatch.setattr(cli_module, "remove_account_state", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli_module, "revoke_bridge_token", lambda _account: None)
-    monkeypatch.setattr(cli_module, "_sync_managed_service", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("sync failed")))
+    monkeypatch.setattr(
+        cli_module,
+        "_sync_managed_service",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("sync failed")),
+    )
     with pytest.raises(ValueError, match="restore account config after service sync failure"):
         cli_module._cmd_account_delete(args)
 
     monkeypatch.setattr(cli_module, "_sync_managed_service", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(cli_module, "remove_account_state", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("cleanup failed")))
+    monkeypatch.setattr(
+        cli_module,
+        "remove_account_state",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("cleanup failed")),
+    )
     with pytest.raises(ValueError, match="restore account config after cleanup failure"):
         cli_module._cmd_account_delete(args)
 
 
 def test_cli_policy_and_routing_helper_edges(monkeypatch, tmp_path):
-    account = Account(id="alpha", label="Alpha", profile_dir="/tmp/alpha", auth_json_path="configured.json")
+    account = Account(
+        id="alpha", label="Alpha", profile_dir="/tmp/alpha", auth_json_path="configured.json"
+    )
     no_auth_account = Account(id="beta", label="Beta", profile_dir="/tmp/beta")
     policy_config = AppConfig(accounts=(account,))
 
-    assert cli_module._validate_single_account_auth_override(no_auth_account, Path("override.json")) is None
+    assert (
+        cli_module._validate_single_account_auth_override(no_auth_account, Path("override.json"))
+        is None
+    )
     monkeypatch.setattr(cli_module, "auth_identity_for_account", lambda _account: (None, None))
     with pytest.raises(ValueError, match="no canonical identity"):
         cli_module._validate_single_account_auth_override(account, Path("override.json"))
-    monkeypatch.setattr(cli_module, "auth_identity_for_account", lambda _account: ("user", "account"))
-    monkeypatch.setattr(cli_module, "auth_identity_from_file", lambda _path: (_ for _ in ()).throw(cli_module.DirectAuthError("bad auth")))
+    monkeypatch.setattr(
+        cli_module, "auth_identity_for_account", lambda _account: ("user", "account")
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "auth_identity_from_file",
+        lambda _path: (_ for _ in ()).throw(cli_module.DirectAuthError("bad auth")),
+    )
     assert cli_module._validate_single_account_auth_override(account, Path("override.json")) is None
     with pytest.raises(ValueError, match="cannot be combined"):
-        cli_module._backend_override(SimpleNamespace(backend="app-server", direct=False, auth_json=Path("auth")))
+        cli_module._backend_override(
+            SimpleNamespace(backend="app-server", direct=False, auth_json=Path("auth"))
+        )
     with pytest.raises(ValueError, match="ACCOUNT"):
         cli_module._resolve_policy_account(policy_config, None, None)
 
@@ -5357,14 +5522,18 @@ def test_cli_policy_and_routing_helper_edges(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match="canonical backend"):
         cli_module._resolve_policy_account(policy_config, None, Path("auth"))
     monkeypatch.setattr(cli_module, "auth_identity_from_file", lambda _path: ("user", "backend"))
-    monkeypatch.setattr(cli_module, "auth_identity_for_account", lambda _account: (_ for _ in ()).throw(OSError("read")))
+    monkeypatch.setattr(
+        cli_module,
+        "auth_identity_for_account",
+        lambda _account: (_ for _ in ()).throw(OSError("read")),
+    )
     with pytest.raises(ValueError, match="exactly one"):
         cli_module._resolve_policy_account(policy_config, None, Path("auth"))
 
-    monkeypatch.setattr(cli_module, "auth_identity_for_account", lambda _account: ("user", "backend"))
-    assert cli_module._resolve_policy_account(
-        policy_config, "alpha", Path("auth")
-    ) is account
+    monkeypatch.setattr(
+        cli_module, "auth_identity_for_account", lambda _account: ("user", "backend")
+    )
+    assert cli_module._resolve_policy_account(policy_config, "alpha", Path("auth")) is account
     monkeypatch.setattr(cli_module, "resolve_account", lambda _config, _ref: no_auth_account)
     with pytest.raises(ValueError, match="different accounts"):
         cli_module._resolve_policy_account(policy_config, "beta", Path("auth"))
@@ -5373,12 +5542,20 @@ def test_cli_policy_and_routing_helper_edges(monkeypatch, tmp_path):
     monkeypatch.setattr(cli_module, "load_usage_snapshot", lambda _id: None)
     assert _usage_for_policy(no_auth_account).error == "no usage snapshot"
     usage = AccountUsage(
-        account_id="beta", label="Beta", captured_at=datetime.now(ZoneInfo("UTC")),
-        status=AccountStatus.OK, backend_configured="direct", backend_used="direct",
+        account_id="beta",
+        label="Beta",
+        captured_at=datetime.now(ZoneInfo("UTC")),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
     )
     monkeypatch.setattr(cli_module, "load_usage_snapshot", lambda _id: usage)
     assert _usage_for_policy(no_auth_account) is usage
-    monkeypatch.setattr(cli_module, "auth_identity_from_file", lambda _path: (_ for _ in ()).throw(OSError("missing")))
+    monkeypatch.setattr(
+        cli_module,
+        "auth_identity_from_file",
+        lambda _path: (_ for _ in ()).throw(OSError("missing")),
+    )
     assert _usage_for_policy(account).error == "auth.json identity unavailable"
 
 
@@ -5389,7 +5566,9 @@ def test_cli_validation_and_usage_result_helper_edges(monkeypatch):
     with pytest.raises(ValueError, match="absolute HTTP"):
         cli_module._bridge_endpoint("http://[invalid", 8787)
     with pytest.raises(ValueError, match="--auth-json"):
-        cli_module._validate_direct_auth_mapping((Account("a", "A", "/tmp/a"), Account("b", "B", "/tmp/b")), Path("auth"))
+        cli_module._validate_direct_auth_mapping(
+            (Account("a", "A", "/tmp/a"), Account("b", "B", "/tmp/b")), Path("auth")
+        )
 
     config = SimpleNamespace(accounts=(Account("a", "A", "/tmp/a"),))
     monkeypatch.setattr(cli_module, "fetch_all", lambda *_args, **_kwargs: [object()])
@@ -5402,25 +5581,49 @@ def test_cli_validation_and_usage_result_helper_edges(monkeypatch):
             raise ValueError("broken main")
 
     usage = AccountUsage(
-        account_id="a", label="A", captured_at=datetime.now(ZoneInfo("UTC")),
-        status=AccountStatus.OK, backend_configured="direct", backend_used="direct", main=BrokenMain(),
+        account_id="a",
+        label="A",
+        captured_at=datetime.now(ZoneInfo("UTC")),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        main=BrokenMain(),
     )
     assert _is_successful_usage(usage) is False
     assert cli_module._has_valid_usage_provenance(object()) is False
-    monkeypatch.setattr(cli_module, "backend_provenance_matches_configured", lambda *_args: (_ for _ in ()).throw(ValueError("bad")))
-    assert cli_module._has_valid_usage_provenance(
-        AccountUsage(
-            account_id="a", label="A", captured_at=datetime.now(ZoneInfo("UTC")),
-            backend_configured="direct", backend_used="direct",
+    monkeypatch.setattr(
+        cli_module,
+        "backend_provenance_matches_configured",
+        lambda *_args: (_ for _ in ()).throw(ValueError("bad")),
+    )
+    assert (
+        cli_module._has_valid_usage_provenance(
+            AccountUsage(
+                account_id="a",
+                label="A",
+                captured_at=datetime.now(ZoneInfo("UTC")),
+                backend_configured="direct",
+                backend_used="direct",
+            )
         )
-    ) is False
-    assert cli_module._is_safe_watchdog_usage(
-        AccountUsage(
-            account_id="a", label="A", captured_at=datetime.now(ZoneInfo("UTC")),
-            status=AccountStatus.BLOCKED, backend_configured="direct", backend_used="direct",
+        is False
+    )
+    assert (
+        cli_module._is_safe_watchdog_usage(
+            AccountUsage(
+                account_id="a",
+                label="A",
+                captured_at=datetime.now(ZoneInfo("UTC")),
+                status=AccountStatus.BLOCKED,
+                backend_configured="direct",
+                backend_used="direct",
+            )
         )
-    ) is False
-    assert not cli_module._all_usage_results_valid([usage], ["a", "b"], predicate=lambda _item: True)
+        is False
+    )
+    assert not cli_module._all_usage_results_valid(
+        [usage], ["a", "b"], predicate=lambda _item: True
+    )
     assert not cli_module._all_usage_results_valid([object()], ["a"], predicate=lambda _item: True)
 
 
@@ -5479,8 +5682,12 @@ def test_profile_delete_and_ingest_helper_edges(monkeypatch, tmp_path):
     assert cli_module._delete_profile_dir(missing, browser="firefox", force=False) == "fehlt"
     assert cli_module._payload_from_raw_ingest("   ") == {"bodyText": ""}
     assert cli_module._payload_from_raw_ingest("[1, 2]") == {"bodyText": "[1, 2]"}
-    monkeypatch.setattr(cli_module, "read_private_text", lambda *_args, **_kwargs: ("payload", None))
-    assert cli_module._read_ingest_raw(SimpleNamespace(stdin=False, file=Path("input"))) == "payload"
+    monkeypatch.setattr(
+        cli_module, "read_private_text", lambda *_args, **_kwargs: ("payload", None)
+    )
+    assert (
+        cli_module._read_ingest_raw(SimpleNamespace(stdin=False, file=Path("input"))) == "payload"
+    )
 
     class BinaryStdin:
         def __init__(self, payload):
@@ -5538,7 +5745,11 @@ def test_profile_delete_transaction_commit_and_rollback_edges(monkeypatch, tmp_p
     quarantine.mkdir()
     path = tmp_path / "profile-2"
     tx = cli_module._ProfileDeleteTransaction(path, quarantine, "geloescht", locks)
-    monkeypatch.setattr(cli_module.shutil, "rmtree", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("rmtree")))
+    monkeypatch.setattr(
+        cli_module.shutil,
+        "rmtree",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("rmtree")),
+    )
     with pytest.raises(OSError, match="rmtree"):
         tx.commit()
     assert locks.closed is False
@@ -5548,7 +5759,11 @@ def test_profile_delete_transaction_commit_and_rollback_edges(monkeypatch, tmp_p
     quarantine.mkdir()
     path = tmp_path / "profile-3"
     tx = cli_module._ProfileDeleteTransaction(path, quarantine, "geloescht", locks)
-    monkeypatch.setattr(cli_module.shutil, "rmtree", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("rmtree")))
+    monkeypatch.setattr(
+        cli_module.shutil,
+        "rmtree",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("rmtree")),
+    )
     original_rollback = tx.rollback
 
     def rollback_with_failure():
@@ -5556,14 +5771,19 @@ def test_profile_delete_transaction_commit_and_rollback_edges(monkeypatch, tmp_p
         return original_rollback()
 
     monkeypatch.setattr(tx, "rollback", rollback_with_failure)
-    # Direct transaction behavior does not wrap commit errors; wrapper belongs to _delete_profile_dir.
+    # Direct transaction behavior does not wrap commit errors; the wrapper belongs
+    # to _delete_profile_dir.
     with pytest.raises(OSError, match="rmtree"):
         tx.commit()
 
     profile = tmp_path / "deletable"
     profile.mkdir()
     (profile / ".codex-usage-profile").write_text("marker\n", encoding="utf-8")
-    monkeypatch.setattr(cli_module.shutil, "rmtree", lambda _path, **_kwargs: (_ for _ in ()).throw(OSError("rmtree")))
+    monkeypatch.setattr(
+        cli_module.shutil,
+        "rmtree",
+        lambda _path, **_kwargs: (_ for _ in ()).throw(OSError("rmtree")),
+    )
     with pytest.raises(OSError, match="rmtree"):
         cli_module._delete_profile_dir(profile, browser="firefox", force=False)
     assert profile.is_dir()
@@ -5584,7 +5804,9 @@ def test_profile_delete_transaction_commit_and_rollback_edges(monkeypatch, tmp_p
 def test_cli_remaining_small_branches(monkeypatch, capsys, tmp_path):
     # Allow one polling sleep before job reaches terminal state.
     statuses = iter(("running", "completed"))
-    monkeypatch.setattr(cli_module, "list_profile_jobs", lambda _account: [{"job_id": "job", "status": "running"}])
+    monkeypatch.setattr(
+        cli_module, "list_profile_jobs", lambda _account: [{"job_id": "job", "status": "running"}]
+    )
     monkeypatch.setattr(cli_module, "cancel_profile_job", lambda _job: None)
     monkeypatch.setattr(cli_module, "profile_job_status", lambda _job: {"status": next(statuses)})
     monkeypatch.setattr(cli_module.time, "monotonic", lambda: 0.0)
@@ -5596,27 +5818,38 @@ def test_cli_remaining_small_branches(monkeypatch, capsys, tmp_path):
             raise OSError("commit")
 
     delete_account = Account("a", "A", "/tmp/a")
-    monkeypatch.setattr(cli_module, "load_config", lambda _path: SimpleNamespace(accounts=(delete_account,)))
+    monkeypatch.setattr(
+        cli_module, "load_config", lambda _path: SimpleNamespace(accounts=(delete_account,))
+    )
     monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: delete_account)
     monkeypatch.setattr(cli_module, "account_lock", lambda *_args: nullcontext())
     monkeypatch.setattr(cli_module, "profile_job_creation_lock", lambda: nullcontext())
     monkeypatch.setattr(cli_module, "_cancel_account_profile_jobs", lambda _account: None)
     monkeypatch.setattr(cli_module, "_managed_service_sync_required", lambda _path: False)
     monkeypatch.setattr(cli_module, "_sync_managed_service", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(cli_module, "remove_account", lambda *_args, **_kwargs: (SimpleNamespace(accounts=()), None))
-    monkeypatch.setattr(cli_module, "remove_account_state", lambda *_args, **_kwargs: CommitErrorTx())
+    monkeypatch.setattr(
+        cli_module, "remove_account", lambda *_args, **_kwargs: (SimpleNamespace(accounts=()), None)
+    )
+    monkeypatch.setattr(
+        cli_module, "remove_account_state", lambda *_args, **_kwargs: CommitErrorTx()
+    )
     monkeypatch.setattr(cli_module, "revoke_bridge_token", lambda _account: None)
     with pytest.raises(OSError, match="commit"):
         cli_module._cmd_account_delete(
             SimpleNamespace(
-                config=tmp_path / "config", account="a", delete_profile=False,
-                force_delete_profile=False, format="table",
+                config=tmp_path / "config",
+                account="a",
+                delete_profile=False,
+                force_delete_profile=False,
+                format="table",
             )
         )
 
     with pytest.raises(ValueError, match="not allowed"):
         cli_module._cmd_policy_set_limits(
-            SimpleNamespace(scope="global", identifier="bad", hourly=None, weekly=None, monthly=None)
+            SimpleNamespace(
+                scope="global", identifier="bad", hourly=None, weekly=None, monthly=None
+            )
         )
     monkeypatch.setattr(cli_module, "service_status", lambda: {"installed": False})
     cli_module._sync_managed_service(object(), tmp_path / "config", strict=False)
@@ -5624,43 +5857,84 @@ def test_cli_remaining_small_branches(monkeypatch, capsys, tmp_path):
     assert cli_module._default_root_command([]) == ["once"]
     assert cli_module._default_root_command(["--config", "cfg"]) == ["--config", "cfg", "once"]
     assert cli_module._default_root_command(["--config=cfg"]) == ["--config=cfg", "once"]
-    assert cli_module._default_root_command(["--config", "cfg", "--format", "json"]) == ["--config", "cfg", "once", "--format", "json"]
-    assert cli_module._default_root_command(["--config", "cfg", "account"]) == ["--config", "cfg", "account"]
-    assert cli_module._default_root_command(["--config", "cfg", "--help"]) == ["--config", "cfg", "--help"]
+    assert cli_module._default_root_command(["--config", "cfg", "--format", "json"]) == [
+        "--config",
+        "cfg",
+        "once",
+        "--format",
+        "json",
+    ]
+    assert cli_module._default_root_command(["--config", "cfg", "account"]) == [
+        "--config",
+        "cfg",
+        "account",
+    ]
+    assert cli_module._default_root_command(["--config", "cfg", "--help"]) == [
+        "--config",
+        "cfg",
+        "--help",
+    ]
     assert cli_module._default_root_command(["unknown-command"]) == ["unknown-command"]
     with pytest.raises(ValueError, match="no accounts"):
         cli_module._select_accounts(SimpleNamespace(accounts=()), None)
 
     usage = AccountUsage(
-        account_id="a", label="A", captured_at=datetime.now(ZoneInfo("UTC")),
-        status=AccountStatus.OK, backend_configured="direct", backend_used="direct",
+        account_id="a",
+        label="A",
+        captured_at=datetime.now(ZoneInfo("UTC")),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
         five_hour=LimitWindow(name="5h", remaining=50),
     )
     assert _is_successful_usage(usage) is True
     no_windows = AccountUsage(
-        account_id="a", label="A", captured_at=datetime.now(ZoneInfo("UTC")),
-        status=AccountStatus.OK, backend_configured="direct", backend_used="direct",
+        account_id="a",
+        label="A",
+        captured_at=datetime.now(ZoneInfo("UTC")),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
     )
     assert _is_successful_usage(no_windows) is False
     stale = AccountUsage(
-        account_id="a", label="A", captured_at=datetime.now(ZoneInfo("UTC")),
-        status=AccountStatus.OK, backend_configured="direct", backend_used="direct",
-        cache_invalidated=True, five_hour=LimitWindow(name="5h", remaining=50),
+        account_id="a",
+        label="A",
+        captured_at=datetime.now(ZoneInfo("UTC")),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        cache_invalidated=True,
+        five_hour=LimitWindow(name="5h", remaining=50),
     )
     assert cli_module._is_safe_watchdog_usage(stale) is False
     blocked = AccountUsage(
-        account_id="a", label="A", captured_at=datetime.now(ZoneInfo("UTC")),
-        status=AccountStatus.BLOCKED, backend_configured="direct", backend_used="direct",
+        account_id="a",
+        label="A",
+        captured_at=datetime.now(ZoneInfo("UTC")),
+        status=AccountStatus.BLOCKED,
+        backend_configured="direct",
+        backend_used="direct",
         blocked_reason="rate limit",
     )
     assert cli_module._is_safe_watchdog_usage(blocked) is True
-    assert not cli_module._all_usage_results_valid([usage], ["a", "a"], predicate=lambda _item: True)
-    usage_b = AccountUsage(
-        account_id="b", label="B", captured_at=datetime.now(ZoneInfo("UTC")),
-        status=AccountStatus.OK, backend_configured="direct", backend_used="direct",
+    assert not cli_module._all_usage_results_valid(
+        [usage], ["a", "a"], predicate=lambda _item: True
     )
-    assert not cli_module._all_usage_results_valid([usage, usage_b], ["a", "a"], predicate=lambda _item: True)
-    assert not cli_module._all_usage_results_valid([usage, usage_b], ["a", "c"], predicate=lambda _item: True)
+    usage_b = AccountUsage(
+        account_id="b",
+        label="B",
+        captured_at=datetime.now(ZoneInfo("UTC")),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+    )
+    assert not cli_module._all_usage_results_valid(
+        [usage, usage_b], ["a", "a"], predicate=lambda _item: True
+    )
+    assert not cli_module._all_usage_results_valid(
+        [usage, usage_b], ["a", "c"], predicate=lambda _item: True
+    )
 
     profile = tmp_path / "profile-locks"
     profile.mkdir()
@@ -5677,7 +5951,9 @@ def test_cli_remaining_small_branches(monkeypatch, capsys, tmp_path):
 def test_service_sync_not_installed_and_cli_module_guard(monkeypatch):
     monkeypatch.setattr(cli_module, "service_status", lambda: {"installed": False})
     cli_module._sync_managed_service(object(), Path("config"), strict=False)
-    assert cli_module._cmd_service(SimpleNamespace(action="status", config=None, format="table")) == 0
+    assert (
+        cli_module._cmd_service(SimpleNamespace(action="status", config=None, format="table")) == 0
+    )
     monkeypatch.setattr(sys, "argv", ["codex-usage", "--version"])
     with pytest.raises(SystemExit) as exc:
         runpy.run_module("codex_usage.cli", run_name="__main__")
@@ -5771,15 +6047,23 @@ def test_account_delete_enters_nested_account_lock_normally(monkeypatch, tmp_pat
     monkeypatch.setattr(cli_module, "_cancel_account_profile_jobs", lambda _account: None)
     monkeypatch.setattr(cli_module, "_managed_service_sync_required", lambda _path: False)
     monkeypatch.setattr(cli_module, "_sync_managed_service", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(cli_module, "remove_account", lambda *_args, **_kwargs: (SimpleNamespace(accounts=()), None))
+    monkeypatch.setattr(
+        cli_module, "remove_account", lambda *_args, **_kwargs: (SimpleNamespace(accounts=()), None)
+    )
     monkeypatch.setattr(cli_module, "remove_account_state", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli_module, "revoke_bridge_token", lambda _account: None)
-    assert cli_module._cmd_account_delete(
-        SimpleNamespace(
-            config=tmp_path / "config", account="a", delete_profile=False,
-            force_delete_profile=False, format="table",
+    assert (
+        cli_module._cmd_account_delete(
+            SimpleNamespace(
+                config=tmp_path / "config",
+                account="a",
+                delete_profile=False,
+                force_delete_profile=False,
+                format="table",
+            )
         )
-    ) == 0
+        == 0
+    )
     assert "Account geloescht" in capsys.readouterr().out
 
 
@@ -5797,7 +6081,12 @@ def test_profile_command_handlers_cover_text_errors_and_job_results(monkeypatch,
     monkeypatch.setattr(cli_module, "load_config", lambda _path: object())
     monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: account)
     monkeypatch.setattr(cli_module, "ensure_profile_layout", lambda _account: layout)
-    assert cli_module._cmd_profile_layout(SimpleNamespace(config=None, account="alpha", format="table")) == 0
+    assert (
+        cli_module._cmd_profile_layout(
+            SimpleNamespace(config=None, account="alpha", format="table")
+        )
+        == 0
+    )
     assert "codex_home:" in capsys.readouterr().out
 
     monkeypatch.setattr(cli_module, "rollback_auth_migration", lambda _path: None)
@@ -5815,7 +6104,9 @@ def test_profile_command_handlers_cover_text_errors_and_job_results(monkeypatch,
     monkeypatch.setattr(
         cli_module,
         "run_device_login",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(cli_module.DeviceLoginError("login failed")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            cli_module.DeviceLoginError("login failed")
+        ),
     )
     login_args = SimpleNamespace(
         config=None,
@@ -5878,9 +6169,12 @@ def test_reactivation_and_account_handlers_cover_success_and_errors(monkeypatch,
         "sync_account_auth",
         lambda *_args: (_ for _ in ()).throw(AssertionError("must remain explicit")),
     )
-    assert cli_module._cmd_reactivate(
-        SimpleNamespace(config=None, account="alpha", browser="firefox", format="table")
-    ) == 0
+    assert (
+        cli_module._cmd_reactivate(
+            SimpleNamespace(config=None, account="alpha", browser="firefox", format="table")
+        )
+        == 0
+    )
     output = capsys.readouterr().out
     assert "Account reaktiviert" in output
     assert "sync_required" in output
@@ -5890,9 +6184,12 @@ def test_reactivation_and_account_handlers_cover_success_and_errors(monkeypatch,
         "reactivate_account",
         lambda *_args, **kwargs: {"ok": True, "browser": kwargs["browser"]},
     )
-    assert cli_module._cmd_reactivate(
-        SimpleNamespace(config=None, account="alpha", browser="firefox", format="json")
-    ) == 0
+    assert (
+        cli_module._cmd_reactivate(
+            SimpleNamespace(config=None, account="alpha", browser="firefox", format="json")
+        )
+        == 0
+    )
     assert json.loads(capsys.readouterr().out)["auth_sync_required"] is True
 
     monkeypatch.setattr(
@@ -5902,9 +6199,12 @@ def test_reactivation_and_account_handlers_cover_success_and_errors(monkeypatch,
             cli_module.ReactivationError("reactivation failed")
         ),
     )
-    assert cli_module._cmd_reactivate(
-        SimpleNamespace(config=None, account="alpha", browser="auto", format="json")
-    ) == 2
+    assert (
+        cli_module._cmd_reactivate(
+            SimpleNamespace(config=None, account="alpha", browser="auto", format="json")
+        )
+        == 2
+    )
     assert json.loads(capsys.readouterr().out)["error"] == "reactivation failed"
     assert persisted == [
         ("alpha", {"path": None}),
@@ -5916,9 +6216,12 @@ def test_reactivation_and_account_handlers_cover_success_and_errors(monkeypatch,
         "open_account_in_reactivation_browser",
         lambda *_args, **_kwargs: {"ok": True, "browser": "firefox"},
     )
-    assert cli_module._cmd_account_manage(
-        SimpleNamespace(config=None, account="alpha", browser=None, format="table")
-    ) == 0
+    assert (
+        cli_module._cmd_account_manage(
+            SimpleNamespace(config=None, account="alpha", browser=None, format="table")
+        )
+        == 0
+    )
     assert "Account geöffnet" in capsys.readouterr().out
 
     monkeypatch.setattr(
@@ -5928,9 +6231,12 @@ def test_reactivation_and_account_handlers_cover_success_and_errors(monkeypatch,
             cli_module.ReactivationError("manage failed")
         ),
     )
-    assert cli_module._cmd_account_manage(
-        SimpleNamespace(config=None, account="alpha", browser="chromium", format="json")
-    ) == 2
+    assert (
+        cli_module._cmd_account_manage(
+            SimpleNamespace(config=None, account="alpha", browser="chromium", format="json")
+        )
+        == 2
+    )
     assert json.loads(capsys.readouterr().out)["error"] == "manage failed"
 
     monkeypatch.setattr(
@@ -5938,21 +6244,25 @@ def test_reactivation_and_account_handlers_cover_success_and_errors(monkeypatch,
         "start_account_terminal",
         lambda _account: {"ok": True, "profile_dir": "/tmp/alpha"},
     )
-    assert cli_module._cmd_account_terminal(
-        SimpleNamespace(config=None, account="alpha", format="table")
-    ) == 0
+    assert (
+        cli_module._cmd_account_terminal(
+            SimpleNamespace(config=None, account="alpha", format="table")
+        )
+        == 0
+    )
     assert "Terminal gestartet" in capsys.readouterr().out
 
     monkeypatch.setattr(
         cli_module,
         "start_account_terminal",
-        lambda _account: (_ for _ in ()).throw(
-            cli_module.TerminalError("terminal failed")
-        ),
+        lambda _account: (_ for _ in ()).throw(cli_module.TerminalError("terminal failed")),
     )
-    assert cli_module._cmd_account_terminal(
-        SimpleNamespace(config=None, account="alpha", format="json")
-    ) == 2
+    assert (
+        cli_module._cmd_account_terminal(
+            SimpleNamespace(config=None, account="alpha", format="json")
+        )
+        == 2
+    )
     assert json.loads(capsys.readouterr().out)["error"] == "terminal failed"
 
 
@@ -6007,42 +6317,54 @@ def test_general_cli_does_not_expose_integration_snapshot():
 def test_policy_and_spark_health_commands_cover_validation_and_outputs(monkeypatch, capsys):
     policy = {"global": {"allow_paid_overage": True}}
     monkeypatch.setattr(cli_module, "set_policy_rule", lambda *args: policy)
-    assert cli_module._cmd_policy_set(
-        SimpleNamespace(scope="global", identifier=None, value="allow")
-    ) == 0
+    assert (
+        cli_module._cmd_policy_set(SimpleNamespace(scope="global", identifier=None, value="allow"))
+        == 0
+    )
     assert json.loads(capsys.readouterr().out) == policy
 
     with pytest.raises(ValueError, match="--id is not allowed"):
-        cli_module._cmd_policy_set(
-            SimpleNamespace(scope="global", identifier="bad", value="deny")
-        )
+        cli_module._cmd_policy_set(SimpleNamespace(scope="global", identifier="bad", value="deny"))
     monkeypatch.setattr(cli_module, "set_credit_limits", lambda *args, **kwargs: {"limits": kwargs})
-    assert cli_module._cmd_policy_set_limits(
-        SimpleNamespace(scope="account", identifier="alpha", hourly=1, weekly=2, monthly=3)
-    ) == 0
+    assert (
+        cli_module._cmd_policy_set_limits(
+            SimpleNamespace(scope="account", identifier="alpha", hourly=1, weekly=2, monthly=3)
+        )
+        == 0
+    )
     capsys.readouterr()
     with pytest.raises(ValueError, match="--id is required"):
         cli_module._cmd_policy_set_limits(
-            SimpleNamespace(scope="account", identifier=None, hourly=None, weekly=None, monthly=None)
+            SimpleNamespace(
+                scope="account", identifier=None, hourly=None, weekly=None, monthly=None
+            )
         )
 
     monkeypatch.setattr(cli_module, "load_policy", lambda: policy)
     assert cli_module._cmd_policy_overview(SimpleNamespace()) == 0
     assert json.loads(capsys.readouterr().out) == policy
 
-    monkeypatch.setattr(cli_module, "spark_health_status", lambda account: {"account": account, "state": "healthy"})
-    assert cli_module._cmd_spark_health(
-        SimpleNamespace(backend_account_id="backend", state=None, reason=None)
-    ) == 0
+    monkeypatch.setattr(
+        cli_module, "spark_health_status", lambda account: {"account": account, "state": "healthy"}
+    )
+    assert (
+        cli_module._cmd_spark_health(
+            SimpleNamespace(backend_account_id="backend", state=None, reason=None)
+        )
+        == 0
+    )
     assert json.loads(capsys.readouterr().out)["state"] == "healthy"
     monkeypatch.setattr(
         cli_module,
         "set_spark_health",
         lambda account, state, *, reason: {"account": account, "state": state, "reason": reason},
     )
-    assert cli_module._cmd_spark_health(
-        SimpleNamespace(backend_account_id="backend", state="failed", reason="timeout")
-    ) == 0
+    assert (
+        cli_module._cmd_spark_health(
+            SimpleNamespace(backend_account_id="backend", state="failed", reason="timeout")
+        )
+        == 0
+    )
     assert json.loads(capsys.readouterr().out)["reason"] == "timeout"
     with pytest.raises(ValueError, match="--reason requires"):
         cli_module._cmd_spark_health(
@@ -6068,11 +6390,15 @@ def test_openai_accounts_command_returns_complete_live_projection(monkeypatch, c
         ),
     )
     remote = OpenAIControlAccount(
-        ref="openai-one", label="OpenAI One", enabled=True,
-        local_profile_ref="profile-one", source_host_ref="host-one",
+        ref="openai-one",
+        label="OpenAI One",
+        enabled=True,
+        local_profile_ref="profile-one",
+        source_host_ref="host-one",
         auth_state="ready",
         access_expires_at=datetime(2026, 8, 28, 18, tzinfo=UTC),
-        credential_generation=7, vault_projection_state="synced",
+        credential_generation=7,
+        vault_projection_state="synced",
         usage_state="available",
     )
     monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
@@ -6089,11 +6415,15 @@ def test_openai_accounts_command_returns_complete_live_projection(monkeypatch, c
     assert payload["stale"] is False
     assert payload["accounts"][0]["vault_projection_state"] == "synced"
     assert payload["accounts"][0]["usage_state"] == "available"
-    assert payload["local_accounts"] == [{
-        "account": "profile-one", "label": "OpenAI One",
-        "local_auth_state": "missing", "auth_sync_required": True,
-        "series-active": True,
-    }]
+    assert payload["local_accounts"] == [
+        {
+            "account": "profile-one",
+            "label": "OpenAI One",
+            "local_auth_state": "missing",
+            "auth_sync_required": True,
+            "series-active": True,
+        }
+    ]
     assert "/private/profile-one" not in json.dumps(payload)
 
 
@@ -6128,24 +6458,35 @@ def test_openai_accounts_command_preserves_live_error_when_cache_load_fails(
 
 def test_account_details_cli_returns_exact_live_projection_envelope(monkeypatch, capsys):
     account = SimpleNamespace(
-        ref="google-one", label="Google One", enabled=True, subject_bound=True,
-        oauth_state="ready", inventory_generation=4, quota_state="fresh",
-        project_count=1, billing_count=0, billing_refs=(), reload_state="ready",
+        ref="google-one",
+        label="Google One",
+        enabled=True,
+        subject_bound=True,
+        oauth_state="ready",
+        inventory_generation=4,
+        quota_state="fresh",
+        project_count=1,
+        billing_count=0,
+        billing_refs=(),
+        reload_state="ready",
         default_oauth_client_ref="oauth-client-one",
         oauth_client_availability="available",
     )
     project = SimpleNamespace(
-        ref="hive-one", project_name="Amber Orchard", purpose="quota_probe",
-        key_name="Willow Meadow", billing_ref=None, status="ready",
-        probe_state="ready", quota_state="available",
+        ref="hive-one",
+        project_name="Amber Orchard",
+        purpose="quota_probe",
+        key_name="Willow Meadow",
+        billing_ref=None,
+        status="ready",
+        probe_state="ready",
+        quota_state="available",
     )
     controller = SimpleNamespace(
         account_details=lambda: (SimpleNamespace(account=account, projects=(project,)),)
     )
     monkeypatch.setattr(cli_module, "_new_google_controller", lambda _path: controller)
-    monkeypatch.setattr(
-        cli_module, "_save_google_projection", lambda *_args, **_kwargs: None
-    )
+    monkeypatch.setattr(cli_module, "_save_google_projection", lambda *_args, **_kwargs: None)
 
     assert main(["google", "accounts", "--json"]) == 0
 
@@ -6165,14 +6506,28 @@ def test_live_projection_connection_commands_use_one_canonical_config(
 ):
     config_path = tmp_path / "config.toml"
     save_config(AppConfig(accounts=()), config_path)
-    assert main([
-        "--config", str(config_path), "masterjet", "connection-set",
-        "--transport", "https", "--endpoint",
-        "https://masterjet.example.test/control", "--timeout-seconds", "7", "--json",
-    ]) == 0
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "masterjet",
+                "connection-set",
+                "--transport",
+                "https",
+                "--endpoint",
+                "https://masterjet.example.test/control",
+                "--timeout-seconds",
+                "7",
+                "--json",
+            ]
+        )
+        == 0
+    )
     set_payload = json.loads(capsys.readouterr().out)
     assert load_config(config_path).masterjet == MasterjetConnection(
-        transport="https", endpoint="https://masterjet.example.test/control",
+        transport="https",
+        endpoint="https://masterjet.example.test/control",
         timeout_seconds=7,
     )
 
@@ -6197,9 +6552,7 @@ def test_live_projection_connection_commands_use_one_canonical_config(
     assert calls[-1] == ("openai.accounts.list", {})
 
 
-def test_masterjet_client_factory_wires_https_and_local_credentials(
-    tmp_path, monkeypatch
-):
+def test_masterjet_client_factory_wires_https_and_local_credentials(tmp_path, monkeypatch):
     credential_dir = tmp_path / "credentials"
     credential_dir.mkdir(mode=0o700)
     credential = credential_dir / "masterjet-control-bearer"
@@ -6234,28 +6587,37 @@ def test_masterjet_client_factory_wires_https_and_local_credentials(
     assert callable(captured[1][1]["local_attestation_verifier"])
 
 
-def test_live_projection_connection_set_rejects_invalid_endpoint_before_write(
-    tmp_path, capsys
-):
+def test_live_projection_connection_set_rejects_invalid_endpoint_before_write(tmp_path, capsys):
     config_path = tmp_path / "config.toml"
     save_config(AppConfig(accounts=()), config_path)
     before = config_path.read_bytes()
 
-    assert main([
-        "--config", str(config_path), "masterjet", "connection-set",
-        "--transport", "https", "--endpoint",
-        "https://user:secret@masterjet.example.test/control", "--json",
-    ]) == 2
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "masterjet",
+                "connection-set",
+                "--transport",
+                "https",
+                "--endpoint",
+                "https://user:secret@masterjet.example.test/control",
+                "--json",
+            ]
+        )
+        == 2
+    )
 
     assert config_path.read_bytes() == before
-    assert json.loads(capsys.readouterr().out) == {
-        "ok": False, "code": "control.endpoint_invalid"
-    }
+    assert json.loads(capsys.readouterr().out) == {"ok": False, "code": "control.endpoint_invalid"}
 
 
 def test_full_plan_preview_cli_contains_every_visible_name_pair(monkeypatch, capsys):
     plan = SimpleNamespace(
-        account_ref="google-one", plan_id="plan-one", expected_generation=4,
+        account_ref="google-one",
+        plan_id="plan-one",
+        expected_generation=4,
         plan_digest="sha256:" + "a" * 64,
         expires_at=datetime(2026, 8, 28, 18, tzinfo=ZoneInfo("UTC")),
         step_count=5,
@@ -6265,7 +6627,8 @@ def test_full_plan_preview_cli_contains_every_visible_name_pair(monkeypatch, cap
         ),
     )
     monkeypatch.setattr(
-        cli_module, "_new_google_controller",
+        cli_module,
+        "_new_google_controller",
         lambda _path: SimpleNamespace(provision_plan=lambda _account: plan),
     )
 

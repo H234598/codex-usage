@@ -633,14 +633,22 @@ def remove_account(
     path: Path | None = None,
     *,
     expected: Account | None = None,
+    _all_accounts_lock_held: bool = False,
 ) -> tuple[AppConfig, Account]:
+    if not isinstance(_all_accounts_lock_held, bool):
+        raise ValueError("_all_accounts_lock_held must be boolean")
     config_path = _select_config_path(path)
     _recovery = _pool_authority_owner_api("recover_pool_authority_pending")
     _recovery(config_path=config_path)
     _prepare_config_directory(config_path.parent)
     from .account_lock import account_lock
 
-    with account_lock("__all_accounts__"), private_path_lock(
+    account_guard = (
+        nullcontext()
+        if _all_accounts_lock_held
+        else account_lock("__all_accounts__")
+    )
+    with account_guard, private_path_lock(
         config_path, label="config lock"
     ):
         config = load_config(config_path)
@@ -678,18 +686,26 @@ def restore_account(
     *,
     index: int | None = None,
     expected: Account | None = None,
+    _all_accounts_lock_held: bool = False,
 ) -> AppConfig:
     if not isinstance(account, Account):
         raise ValueError("account entry must be Account")
     if index is not None and type(index) is not int:
         raise ValueError("restore index must be an integer")
+    if not isinstance(_all_accounts_lock_held, bool):
+        raise ValueError("_all_accounts_lock_held must be boolean")
     config_path = _select_config_path(path)
     _recovery = _pool_authority_owner_api("recover_pool_authority_pending")
     _recovery(config_path=config_path)
     _prepare_config_directory(config_path.parent)
     from .account_lock import account_lock
 
-    with account_lock("__all_accounts__"), private_path_lock(
+    account_guard = (
+        nullcontext()
+        if _all_accounts_lock_held
+        else account_lock("__all_accounts__")
+    )
+    with account_guard, private_path_lock(
         config_path, label="config lock"
     ):
         config = load_config(config_path)

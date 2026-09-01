@@ -2563,6 +2563,7 @@ def test_publish_teardown_failures_return_committed_pointer_and_attempt_all_clea
     real_flock = integration_evidence.fcntl.flock
     close_attempts: list[int] = []
     unlock_attempts: list[int] = []
+    unlock_targets: list[str] = []
     failed_close_fd: int | None = None
     failed_unlock = False
 
@@ -2579,6 +2580,7 @@ def test_publish_teardown_failures_return_committed_pointer_and_attempt_all_clea
         nonlocal failed_unlock
         if current.read_bytes() != old_current and operation == integration_evidence.fcntl.LOCK_UN:
             unlock_attempts.append(fd)
+            unlock_targets.append(os.readlink(f"/proc/self/fd/{fd}"))
             if not failed_unlock:
                 failed_unlock = True
                 raise OSError("synthetic post-commit unlock failure")
@@ -2602,7 +2604,28 @@ def test_publish_teardown_failures_return_committed_pointer_and_attempt_all_clea
     assert current.read_bytes() != old_current
     assert integration_evidence.parse_pointer(current.read_bytes()) == pointer
     assert len(close_attempts) >= 8
-    assert len(unlock_attempts) == 2
+    assert len(unlock_attempts) == 3
+    integration = state_home / "codex-usage/integration"
+    lock_root = integration_evidence.private_io._private_lock_root()
+    expected_unlock_targets = {
+        str(
+            lock_root
+            / integration_evidence.private_io._private_lock_name(
+                integration / integration_evidence.POOL_AUTHORITY_SOURCE_FILENAME
+            )
+        ),
+        str(
+            lock_root
+            / integration_evidence._evidence_lock_name(
+                integration / "producer-install"
+            )
+        ),
+        str(
+            lock_root
+            / integration_evidence._evidence_lock_name(integration / "current.json")
+        ),
+    }
+    assert set(unlock_targets) == expected_unlock_targets
 
 
 def test_fd_private_io_round_trip_and_identity(tmp_path):

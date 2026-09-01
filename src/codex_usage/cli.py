@@ -1238,12 +1238,18 @@ def _cmd_account_delete(args: argparse.Namespace) -> int:
             account.id,
             path=args.config,
             expected=account,
+            _all_accounts_lock_held=True,
         )
         try:
             _sync_managed_service(updated, args.config, strict=True)
         except Exception:
             try:
-                restore_account(account, path=args.config, index=account_index)
+                restore_account(
+                    account,
+                    path=args.config,
+                    index=account_index,
+                    _all_accounts_lock_held=True,
+                )
             except Exception as rollback_error:
                 raise ValueError(
                     "could not restore account config after service sync failure"
@@ -1253,7 +1259,12 @@ def _cmd_account_delete(args: argparse.Namespace) -> int:
             profile_state = cleanup_account()
         except Exception as cleanup_error:
             try:
-                restore_account(account, path=args.config, index=account_index)
+                restore_account(
+                    account,
+                    path=args.config,
+                    index=account_index,
+                    _all_accounts_lock_held=True,
+                )
                 if service_sync_required:
                     _sync_managed_service(config, args.config, strict=True)
             except Exception as rollback_error:

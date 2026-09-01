@@ -283,8 +283,21 @@ def test_style_tables_group_threshold_fields() -> None:
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
     expected = {
         "account-percent-styles": [
-            "account", "show-hover", "show-click", "hide-when-zero", "mode", "font", "size", "bold", "italic",
-            "color", "background", "hover-background", "threshold", "below-font", "below-size",
+            "account",
+            "show-hover",
+            "show-click",
+            "hide-when-zero",
+            "mode",
+            "font",
+            "size",
+            "bold",
+            "italic",
+            "color",
+            "background",
+            "hover-background",
+            "threshold",
+            "below-font",
+            "below-size",
             "below-bold",
             "below-italic",
             "below-color",
@@ -292,8 +305,22 @@ def test_style_tables_group_threshold_fields() -> None:
             "below-hover-background",
         ],
         "account-date-styles": [
-            "account", "show-hover", "show-click", "hide-when-zero", "format", "mode", "font", "size", "bold", "italic",
-            "color", "background", "hover-background", "threshold", "below-font", "below-size",
+            "account",
+            "show-hover",
+            "show-click",
+            "hide-when-zero",
+            "format",
+            "mode",
+            "font",
+            "size",
+            "bold",
+            "italic",
+            "color",
+            "background",
+            "hover-background",
+            "threshold",
+            "below-font",
+            "below-size",
             "below-bold",
             "below-italic",
             "below-color",
@@ -301,8 +328,22 @@ def test_style_tables_group_threshold_fields() -> None:
             "below-hover-background",
         ],
         "account-time-styles": [
-            "account", "show-hover", "show-click", "hide-when-zero", "format", "mode", "font", "size", "bold", "italic",
-            "color", "background", "hover-background", "threshold", "below-font", "below-size",
+            "account",
+            "show-hover",
+            "show-click",
+            "hide-when-zero",
+            "format",
+            "mode",
+            "font",
+            "size",
+            "bold",
+            "italic",
+            "color",
+            "background",
+            "hover-background",
+            "threshold",
+            "below-font",
+            "below-size",
             "below-bold",
             "below-italic",
             "below-color",
@@ -310,8 +351,22 @@ def test_style_tables_group_threshold_fields() -> None:
             "below-hover-background",
         ],
         "account-duration-styles": [
-            "account", "show-hover", "show-click", "hide-when-zero", "format", "mode", "font", "size", "bold", "italic",
-            "color", "background", "hover-background", "threshold", "below-font", "below-size",
+            "account",
+            "show-hover",
+            "show-click",
+            "hide-when-zero",
+            "format",
+            "mode",
+            "font",
+            "size",
+            "bold",
+            "italic",
+            "color",
+            "background",
+            "hover-background",
+            "threshold",
+            "below-font",
+            "below-size",
             "below-bold",
             "below-italic",
             "below-color",
@@ -335,7 +390,8 @@ def test_format_and_display_sections_use_new_labels() -> None:
     assert layout["general-page"]["title"] == "Einstellungen"
     assert layout["forecast-page"]["title"] == "Prognosen"
     assert layout["forecast-page"]["sections"] == [
-        "forecast-table-section", "forecast-options-section"
+        "forecast-table-section",
+        "forecast-options-section",
     ]
     assert layout["forecast-table-section"]["keys"] == ["forecast-table-selector"]
     assert layout["forecast-options-section"]["keys"] == ["show-consumption-delta"]
@@ -350,9 +406,7 @@ def test_format_and_display_sections_use_new_labels() -> None:
         "account-credit-consumption-settings",
     ]
     assert layout["status-page"]["title"] == "Status"
-    assert layout["status-page"]["sections"] == [
-        "credit-status-section", "reset-display-section"
-    ]
+    assert layout["status-page"]["sections"] == ["credit-status-section", "reset-display-section"]
     assert "accounts-page" not in layout
     assert "backend-section" not in layout
     assert layout["pages"][1] == "format-page"
@@ -450,8 +504,13 @@ def test_alert_table_has_editable_spark_column() -> None:
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
     table = settings["account-alert-settings"]
     assert [column["id"] for column in table["columns"]] == [
-        "account", "five-threshold", "weekly-threshold", "monthly-threshold", "spark-threshold",
-        "warnings", "errors",
+        "account",
+        "five-threshold",
+        "weekly-threshold",
+        "monthly-threshold",
+        "spark-threshold",
+        "warnings",
+        "errors",
     ]
     assert table["columns"][4]["title"] == "Spark %"
     assert table["show-buttons"] is True
