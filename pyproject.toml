@@ -21,6 +21,7 @@ dev = [
 [project.scripts]
 codex-usage = "codex_usage.cli:main"
 codex-usage-browser = "codex_usage.oauth_browser:main"
+codex-usage-integration-watchdog = "codex_usage.integration_watchdog:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

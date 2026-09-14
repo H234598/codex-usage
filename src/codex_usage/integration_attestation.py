@@ -3,6 +3,9 @@ from __future__ import annotations
 import base64
 import binascii
 import csv
+import email.parser
+import email.policy
+import errno
 import hashlib
 import importlib.util
 import io
@@ -10,6 +13,7 @@ import json
 import marshal
 import os
 import stat
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +23,7 @@ from .private_io import (
     FileIdentity,
     IntegrationEvidenceInvalid,
     IntegrationEvidenceUnavailable,
+    assert_no_symlink_ancestors,
     open_private_dir_at,
     open_verified_state_home,
     read_private_bytes_at,
@@ -32,6 +37,57 @@ MAX_RELEASE_TREE_BYTES = 128 * 1024 * 1024
 _DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.537.dist-info"
 _EXPECTED_VERSION = "0.6.537"
 _EXPECTED_DISTRIBUTION = "codex-usage-integration-producer"
+_EXPECTED_CORE_DISTRIBUTION = "codex-usage"
+_CORE_DIST_INFO_PREFIX = "codex_usage-0.6.537.dist-info"
+TRUSTED_CORE_MODULES = (
+    "__init__.py",
+    "account_lock.py",
+    "config.py",
+    "consumption.py",
+    "extractor.py",
+    "integration_attestation.py",
+    "integration_evidence.py",
+    "integration_entrypoint.py",
+    "integration_pool_authority.py",
+    "integration_snapshot.py",
+    "integration_timeout_contract.py",
+    "integration_watchdog.py",
+    "json_utils.py",
+    "models.py",
+    "history.py",
+    "private_io.py",
+    "state.py",
+    "usage_limits.py",
+    "usage_resets.py",
+)
+PRODUCER_RELEASE_MODULES = tuple(
+    module
+    for module in TRUSTED_CORE_MODULES
+    if module not in {"integration_timeout_contract.py", "integration_watchdog.py"}
+)
+TRUSTED_PRODUCER_CORE_MODULES = TRUSTED_CORE_MODULES
+TRUSTED_PRODUCER_CORE_RECORD_RELATIVES = tuple(
+    f"codex_usage/{name}" for name in TRUSTED_CORE_MODULES
+)
+PRODUCER_RELEASE_RECORD_RELATIVES = tuple(
+    f"codex_usage/{name}" for name in PRODUCER_RELEASE_MODULES
+)
+RUNTIME_SELF_ATTESTED_CORE_MODULES = (
+    "codex_usage",
+    "codex_usage.integration_attestation",
+    "codex_usage.integration_entrypoint",
+    "codex_usage.integration_timeout_contract",
+    "codex_usage.integration_watchdog",
+    "codex_usage.json_utils",
+    "codex_usage.private_io",
+)
+_PRODUCER_DIST_INFO_RECORD_RELATIVES = (
+    f"{_DIST_INFO_PREFIX}/METADATA",
+    f"{_DIST_INFO_PREFIX}/WHEEL",
+    f"{_DIST_INFO_PREFIX}/RECORD",
+    f"{_DIST_INFO_PREFIX}/top_level.txt",
+)
+MAX_RUNTIME_INTERPRETER_BYTES = 128 * 1024 * 1024
 _PREVIOUS_SCHEMA2_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.536.dist-info"
 _PREVIOUS_SCHEMA2_VERSION = "0.6.536"
 _CURRENT_SCHEMA2_MANIFEST_FIELDS = frozenset(
@@ -122,11 +178,56 @@ class _ReleaseEntryEvidence:
     ctime_ns: int
 
 
+@dataclass(frozen=True)
+class _TrustedDirectoryIdentity:
+    device: int
+    inode: int
+    mode: int
+    uid: int
+    gid: int
+    ctime_ns: int
+
+
+@dataclass(frozen=True)
+class _TrustedCoreProvenanceEvidence:
+    dist_info_path: Path
+    dist_info_identity: _TrustedDirectoryIdentity
+    metadata_identity: tuple[int, ...]
+    metadata_payload: bytes
+    record_identity: tuple[int, ...]
+    record_payload: bytes
+    trusted_modules: tuple[_CoreModuleEvidence, ...]
+    active_modules: tuple[_CoreModuleEvidence, ...]
+
+
+@dataclass(frozen=True)
+class _CoreModuleEvidence:
+    relative: str
+    identity: tuple[int, ...]
+    payload_sha256: str
+    size: int
+    payload: bytes
+
+
+@dataclass(frozen=True)
+class _RuntimeInterpreterEvidence:
+    path: Path
+    identity: tuple[int, ...]
+
+
 def _before_release_namespace_recheck(_release_fd: int) -> None:
     return None
 
 
 def _before_expected_runtime_bytecode_validation(_package_path: Path) -> None:
+    return None
+
+
+def _before_trusted_entrypoint_recheck(_trusted_entrypoint_path: Path) -> None:
+    return None
+
+
+def _before_runtime_self_attestation_recheck(_trusted_entrypoint_path: Path) -> None:
     return None
 
 
@@ -215,6 +316,34 @@ def _file_bytes(path: Path, *, mode: int) -> bytes:
 
 def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
+
+
+def _same_stat_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        left.st_dev == right.st_dev
+        and left.st_ino == right.st_ino
+        and left.st_mode == right.st_mode
+        and left.st_uid == right.st_uid
+        and left.st_gid == right.st_gid
+        and left.st_nlink == right.st_nlink
+        and left.st_size == right.st_size
+        and left.st_mtime_ns == right.st_mtime_ns
+        and left.st_ctime_ns == right.st_ctime_ns
+    )
+
+
+def _stable_file_identity(item: os.stat_result) -> tuple[int, ...]:
+    return (
+        item.st_dev,
+        item.st_ino,
+        item.st_mode,
+        item.st_uid,
+        item.st_gid,
+        item.st_nlink,
+        item.st_size,
+        item.st_mtime_ns,
+        item.st_ctime_ns,
+    )
 
 
 def _valid_hash(value: object) -> str:
@@ -609,6 +738,9 @@ def _release_entry_evidence(
             item.st_dev,
             item.st_ino,
             stat.S_IMODE(item.st_mode),
+            gid=item.st_gid,
+            uid=item.st_uid,
+            ctime_ns=item.st_ctime_ns,
         ),
         uid=item.st_uid,
         nlink=item.st_nlink,
@@ -811,6 +943,9 @@ def _release_tree_evidence_at(
                 release_item.st_dev,
                 release_item.st_ino,
                 stat.S_IMODE(release_item.st_mode),
+                gid=release_item.st_gid,
+                uid=release_item.st_uid,
+                ctime_ns=release_item.st_ctime_ns,
             ),
             release_anchor_fd=release_anchor_fd,
             entries=entries,
@@ -826,6 +961,9 @@ def _release_tree_evidence_at(
                 release_item.st_dev,
                 release_item.st_ino,
                 stat.S_IMODE(release_item.st_mode),
+                gid=release_item.st_gid,
+                uid=release_item.st_uid,
+                ctime_ns=release_item.st_ctime_ns,
             ),
             release_anchor_fd=release_anchor_fd,
             entries=repeated_entries,
@@ -896,7 +1034,14 @@ def _verify_release_entry_at(
             item = os.fstat(current_fd)
         finally:
             os.close(current_fd)
-    identity = FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
+    identity = FileIdentity(
+        item.st_dev,
+        item.st_ino,
+        stat.S_IMODE(item.st_mode),
+        gid=item.st_gid,
+        uid=item.st_uid,
+        ctime_ns=item.st_ctime_ns,
+    )
     if (
         identity != expected.identity
         or item.st_uid != expected.uid
@@ -1121,6 +1266,31 @@ def _record_digest(value: str, payload: bytes) -> bool:
     )
 
 
+def _record_digest_text(payload: bytes) -> str:
+    return (
+        "sha256="
+        + base64.urlsafe_b64encode(hashlib.sha256(payload).digest())
+        .decode("ascii")
+        .rstrip("=")
+    )
+
+
+def _metadata_header(payload: bytes, name: str) -> str:
+    try:
+        message = email.parser.BytesParser(policy=email.policy.default).parsebytes(
+            payload
+        )
+    except Exception:
+        raise _unavailable() from None
+    values = message.get_all(name)
+    if values is None or len(values) != 1:
+        raise _unavailable()
+    value = values[0]
+    if not isinstance(value, str) or not value:
+        raise _unavailable()
+    return value
+
+
 def _record_rows(record_path: Path, release_dir: Path) -> dict[str, tuple[str, int]]:
     payload = _file_bytes(record_path, mode=0o600)
     site_packages = record_path.parent.parent
@@ -1297,12 +1467,12 @@ def _verify_manifest_contract(
         raise _unavailable()
     try:
         metadata_path = record_path.parent / "METADATA"
-        metadata = _read_nofollow_bytes(metadata_path).decode("utf-8")
-    except (UnicodeDecodeError, IntegrationAttestationUnavailable):
+        metadata_payload = _read_nofollow_bytes(metadata_path)
+    except IntegrationAttestationUnavailable:
         raise _unavailable() from None
     if (
-        f"Version: {expected_version}\n" not in metadata
-        or f"Name: {_EXPECTED_DISTRIBUTION}\n" not in metadata
+        _metadata_header(metadata_payload, "Version") != expected_version
+        or _metadata_header(metadata_payload, "Name") != _EXPECTED_DISTRIBUTION
     ):
         raise _unavailable()
     expected_runtime_bytecode_root = (
@@ -1352,6 +1522,860 @@ def _verify_manifest(
     )
 
 
+def _active_entrypoint_candidate_from_active_manifest(
+    *,
+    state_home: Path,
+    data_home: Path,
+) -> Path:
+    state_fd = -1
+    app_fd = -1
+    integration_fd = -1
+    try:
+        state_fd = open_verified_state_home(state_home)
+        app_fd = open_private_dir_at(state_fd, "codex-usage")
+        integration_fd = open_private_dir_at(app_fd, "integration")
+        payload, _identity = read_private_bytes_at(
+            integration_fd,
+            "active.json",
+            maximum=_MANIFEST_MAX_BYTES,
+            mode=0o600,
+        )
+        manifest = _manifest_from_canonical_bytes(payload)
+        if _absolute_path(manifest.get("state_home")) != state_home:
+            raise _unavailable()
+        if _absolute_path(manifest.get("data_home")) != data_home:
+            raise _unavailable()
+        return _absolute_path(manifest.get("entrypoint_path"))
+    except FileNotFoundError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    except (OSError, IntegrationAttestationUnavailable) as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    except ValueError as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    finally:
+        if integration_fd >= 0:
+            os.close(integration_fd)
+        if app_fd >= 0:
+            os.close(app_fd)
+        if state_fd >= 0:
+            os.close(state_fd)
+
+
+def _trusted_entrypoint_bytes_and_stat(path: Path) -> tuple[bytes, os.stat_result]:
+    if not isinstance(path, Path):
+        raise IntegrationEvidenceUnavailable()
+    if (
+        not path.is_absolute()
+        or any(part in {"", ".", ".."} for part in path.parts[1:])
+        or "\x00" in str(path)
+    ):
+        raise IntegrationEvidenceUnavailable()
+    try:
+        assert_no_symlink_ancestors(path, label="trusted integration entrypoint")
+        initial = path.lstat()
+        if (
+            not stat.S_ISREG(initial.st_mode)
+            or initial.st_uid != os.geteuid()
+            or initial.st_nlink != 1
+            or stat.S_IMODE(initial.st_mode) != 0o644
+            or initial.st_size > MAX_ATTESTATION_FILE_BYTES
+        ):
+            raise IntegrationEvidenceUnavailable()
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        file_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+        parent_fd = -1
+        fd = -1
+        try:
+            parent = path.parent.lstat()
+            if (
+                not stat.S_ISDIR(parent.st_mode)
+                or parent.st_uid != os.geteuid()
+                or bool(stat.S_IMODE(parent.st_mode) & 0o022)
+            ):
+                raise IntegrationEvidenceUnavailable()
+            parent_fd = os.open(path.parent, directory_flags)
+            opened_parent = os.fstat(parent_fd)
+            if (
+                not stat.S_ISDIR(opened_parent.st_mode)
+                or opened_parent.st_uid != os.geteuid()
+                or opened_parent.st_dev != parent.st_dev
+                or opened_parent.st_ino != parent.st_ino
+                or opened_parent.st_mode != parent.st_mode
+                or bool(stat.S_IMODE(opened_parent.st_mode) & 0o022)
+            ):
+                raise IntegrationEvidenceUnavailable()
+            fd = os.open(path.name, file_flags, dir_fd=parent_fd)
+            opened = os.fstat(fd)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or not _same_stat_identity(opened, initial)
+                or stat.S_IMODE(opened.st_mode) != 0o644
+            ):
+                raise IntegrationEvidenceUnavailable()
+            payload = bytearray()
+            while len(payload) <= MAX_ATTESTATION_FILE_BYTES:
+                chunk = os.read(
+                    fd,
+                    min(65_536, MAX_ATTESTATION_FILE_BYTES + 1 - len(payload)),
+                )
+                if not chunk:
+                    break
+                payload.extend(chunk)
+            final = os.fstat(fd)
+            if len(payload) > MAX_ATTESTATION_FILE_BYTES:
+                raise IntegrationEvidenceUnavailable()
+            if not _same_stat_identity(final, opened):
+                raise IntegrationEvidenceUnavailable()
+            return bytes(payload), opened
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            if parent_fd >= 0:
+                os.close(parent_fd)
+    except IntegrationEvidenceUnavailable:
+        raise
+    except IntegrationAttestationUnavailable as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    except (OSError, ValueError) as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+
+
+def _trusted_file_bytes_at(
+    directory_fd: int,
+    name: str,
+    *,
+    mode: int,
+) -> tuple[bytes, os.stat_result]:
+    if (
+        type(name) is not str
+        or not name
+        or name in {".", ".."}
+        or "/" in name
+        or "\\" in name
+        or "\x00" in name
+    ):
+        raise IntegrationEvidenceUnavailable()
+    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    file_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = -1
+    try:
+        fd = os.open(name, file_flags, dir_fd=directory_fd)
+        initial = os.fstat(fd)
+        if (
+            not stat.S_ISREG(initial.st_mode)
+            or initial.st_uid != os.geteuid()
+            or initial.st_nlink != 1
+            or stat.S_IMODE(initial.st_mode) != mode
+            or initial.st_size > MAX_ATTESTATION_FILE_BYTES
+        ):
+            raise IntegrationEvidenceUnavailable()
+        payload = bytearray()
+        while len(payload) <= MAX_ATTESTATION_FILE_BYTES:
+            chunk = os.read(
+                fd,
+                min(65_536, MAX_ATTESTATION_FILE_BYTES + 1 - len(payload)),
+            )
+            if not chunk:
+                break
+            payload.extend(chunk)
+        final = os.fstat(fd)
+        if len(payload) > MAX_ATTESTATION_FILE_BYTES:
+            raise IntegrationEvidenceUnavailable()
+        if not _same_stat_identity(final, initial):
+            raise IntegrationEvidenceUnavailable()
+        return bytes(payload), initial
+    except IntegrationEvidenceUnavailable:
+        raise
+    except IntegrationAttestationUnavailable as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    except (OSError, ValueError) as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _trusted_directory_fd_at(parent_fd: int, name: str) -> tuple[int, os.stat_result]:
+    if (
+        type(name) is not str
+        or not name
+        or name in {".", ".."}
+        or "/" in name
+        or "\\" in name
+        or "\x00" in name
+    ):
+        raise IntegrationEvidenceUnavailable()
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    fd = -1
+    try:
+        fd = os.open(name, flags, dir_fd=parent_fd)
+        item = os.fstat(fd)
+        mode = stat.S_IMODE(item.st_mode)
+        if (
+            not stat.S_ISDIR(item.st_mode)
+            or item.st_uid != os.geteuid()
+            or bool(mode & 0o022)
+        ):
+            raise IntegrationEvidenceUnavailable()
+        result = fd
+        fd = -1
+        return result, item
+    except IntegrationEvidenceUnavailable:
+        raise
+    except (OSError, ValueError) as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _trusted_directory_identity(item: os.stat_result) -> _TrustedDirectoryIdentity:
+    return _TrustedDirectoryIdentity(
+        device=item.st_dev,
+        inode=item.st_ino,
+        mode=stat.S_IMODE(item.st_mode),
+        uid=item.st_uid,
+        gid=item.st_gid,
+        ctime_ns=item.st_ctime_ns,
+    )
+
+
+def _require_trusted_directory_identity_fd(
+    fd: int,
+    *,
+    root_uid: int,
+) -> _TrustedDirectoryIdentity:
+    try:
+        item = os.fstat(fd)
+    except OSError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    mode = stat.S_IMODE(item.st_mode)
+    root_sticky = item.st_uid == root_uid and bool(item.st_mode & stat.S_ISVTX)
+    if (
+        not stat.S_ISDIR(item.st_mode)
+        or item.st_uid not in {root_uid, os.geteuid()}
+        or (bool(mode & 0o022) and not root_sticky)
+    ):
+        raise IntegrationEvidenceUnavailable()
+    return _trusted_directory_identity(item)
+
+
+def _trusted_entrypoint_ancestor_identities(
+    path: Path,
+) -> tuple[_TrustedDirectoryIdentity, ...]:
+    if (
+        not isinstance(path, Path)
+        or not path.is_absolute()
+        or any(part in {"", ".", ".."} for part in path.parts[1:])
+        or "\x00" in str(path)
+    ):
+        raise IntegrationEvidenceUnavailable()
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    current_fd = -1
+    try:
+        current_fd = os.open(path.anchor, flags)
+        root_uid = os.fstat(current_fd).st_uid
+        identities = [_require_trusted_directory_identity_fd(current_fd, root_uid=root_uid)]
+        for component in path.parent.parts[1:]:
+            if (
+                not component
+                or component in {".", ".."}
+                or "/" in component
+                or "\\" in component
+                or "\x00" in component
+            ):
+                raise IntegrationEvidenceUnavailable()
+            try:
+                next_fd = os.open(component, flags, dir_fd=current_fd)
+            except OSError as exc:
+                if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                    raise IntegrationEvidenceUnavailable() from exc
+                raise
+            os.close(current_fd)
+            current_fd = next_fd
+            identities.append(
+                _require_trusted_directory_identity_fd(
+                    current_fd,
+                    root_uid=root_uid,
+                )
+            )
+        return tuple(identities)
+    except IntegrationEvidenceUnavailable:
+        raise
+    except (OSError, ValueError) as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    finally:
+        if current_fd >= 0:
+            os.close(current_fd)
+
+
+def _trusted_core_record_rows(payload: bytes) -> dict[str, tuple[str, int]]:
+    rows: dict[str, tuple[str, int]] = {}
+    try:
+        reader = csv.reader(io.StringIO(payload.decode("utf-8")))
+        rows_seen = 0
+        for row in reader:
+            rows_seen += 1
+            if rows_seen > MAX_RELEASE_TREE_ENTRIES:
+                raise _unavailable()
+            if len(row) != 3:
+                raise _unavailable()
+            relative_text, digest, size_text = row
+            if (
+                relative_text in rows
+                or not relative_text
+                or relative_text.startswith("/")
+                or "\\" in relative_text
+                or "\x00" in relative_text
+                or any(part in {"", ".", ".."} for part in relative_text.split("/"))
+            ):
+                raise _unavailable()
+            if digest or size_text:
+                if not digest or not size_text.isdecimal():
+                    raise _unavailable()
+                try:
+                    size = int(size_text)
+                except (OverflowError, ValueError):
+                    raise _unavailable() from None
+                rows[relative_text] = (digest, size)
+            else:
+                rows[relative_text] = ("", -1)
+    except (UnicodeDecodeError, csv.Error):
+        raise _unavailable() from None
+    if not rows:
+        raise _unavailable()
+    return rows
+
+
+def _require_core_record_row(
+    rows: Mapping[str, tuple[str, int]],
+    relative: str,
+    payload: bytes,
+) -> None:
+    row = rows.get(relative)
+    if (
+        row is None
+        or row[0] != _record_digest_text(payload)
+        or row[1] != len(payload)
+    ):
+        raise IntegrationEvidenceUnavailable()
+
+
+def _trusted_core_provenance_evidence(
+    trusted_entrypoint_path: Path,
+    trusted_entrypoint_payload: bytes,
+) -> _TrustedCoreProvenanceEvidence:
+    if (
+        trusted_entrypoint_path.name != "integration_entrypoint.py"
+        or trusted_entrypoint_path.parent.name != "codex_usage"
+    ):
+        raise IntegrationEvidenceUnavailable()
+    site_packages = trusted_entrypoint_path.parent.parent
+    assert_no_symlink_ancestors(site_packages, label="trusted core site-packages")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    site_fd = -1
+    selected: tuple[Path, _TrustedDirectoryIdentity, bytes, os.stat_result] | None = None
+    codex_usage_dist_infos = 0
+    try:
+        site_fd = os.open(site_packages, flags)
+        site_item = os.fstat(site_fd)
+        if (
+            not stat.S_ISDIR(site_item.st_mode)
+            or site_item.st_uid != os.geteuid()
+            or bool(stat.S_IMODE(site_item.st_mode) & 0o022)
+        ):
+            raise IntegrationEvidenceUnavailable()
+        entries_seen = 0
+        with os.scandir(site_fd) as entries:
+            for entry in entries:
+                entries_seen += 1
+                if entries_seen > MAX_RELEASE_TREE_ENTRIES:
+                    raise IntegrationEvidenceUnavailable()
+                name = entry.name
+                if not (
+                    isinstance(name, str)
+                    and name.startswith("codex_usage-")
+                    and name.endswith(".dist-info")
+                ):
+                    continue
+                dist_fd = -1
+                try:
+                    dist_fd, dist_item = _trusted_directory_fd_at(site_fd, name)
+                    metadata_payload, metadata_item = _trusted_file_bytes_at(
+                        dist_fd,
+                        "METADATA",
+                        mode=0o644,
+                    )
+                    if _metadata_header(metadata_payload, "Name") != (
+                        _EXPECTED_CORE_DISTRIBUTION
+                    ):
+                        continue
+                    codex_usage_dist_infos += 1
+                    if name == _CORE_DIST_INFO_PREFIX:
+                        selected = (
+                            site_packages / name,
+                            _trusted_directory_identity(dist_item),
+                            metadata_payload,
+                            metadata_item,
+                        )
+                finally:
+                    if dist_fd >= 0:
+                        os.close(dist_fd)
+        if codex_usage_dist_infos != 1 or selected is None:
+            raise IntegrationEvidenceUnavailable()
+        dist_info_path, dist_identity, metadata_payload, metadata_item = selected
+        dist_fd, dist_item = _trusted_directory_fd_at(site_fd, dist_info_path.name)
+        try:
+            if _trusted_directory_identity(dist_item) != dist_identity:
+                raise IntegrationEvidenceUnavailable()
+            metadata_payload, metadata_item = _trusted_file_bytes_at(
+                dist_fd,
+                "METADATA",
+                mode=0o644,
+            )
+            if (
+                _metadata_header(metadata_payload, "Name")
+                != _EXPECTED_CORE_DISTRIBUTION
+                or _metadata_header(metadata_payload, "Version") != _EXPECTED_VERSION
+            ):
+                raise IntegrationEvidenceUnavailable()
+            record_payload, record_item = _trusted_file_bytes_at(
+                dist_fd,
+                "RECORD",
+                mode=0o644,
+            )
+            rows = _trusted_core_record_rows(record_payload)
+            entrypoint_relative = trusted_entrypoint_path.relative_to(
+                site_packages
+            ).as_posix()
+            metadata_relative = (dist_info_path / "METADATA").relative_to(
+                site_packages
+            ).as_posix()
+            record_relative = (dist_info_path / "RECORD").relative_to(
+                site_packages
+            ).as_posix()
+            _require_core_record_row(
+                rows,
+                entrypoint_relative,
+                trusted_entrypoint_payload,
+            )
+            _require_core_record_row(rows, metadata_relative, metadata_payload)
+            if rows.get(record_relative) != ("", -1):
+                raise IntegrationEvidenceUnavailable()
+            package_fd = -1
+            try:
+                package_fd, _package_item = _trusted_directory_fd_at(
+                    site_fd,
+                    "codex_usage",
+                )
+                trusted_modules: list[_CoreModuleEvidence] = []
+                for module_name in TRUSTED_CORE_MODULES:
+                    relative = f"codex_usage/{module_name}"
+                    payload, item = _trusted_file_bytes_at(
+                        package_fd,
+                        module_name,
+                        mode=0o644,
+                    )
+                    _require_core_record_row(rows, relative, payload)
+                    trusted_modules.append(
+                        _CoreModuleEvidence(
+                            relative=relative,
+                            identity=_stable_file_identity(item),
+                            payload_sha256=_sha256_bytes(payload),
+                            size=len(payload),
+                            payload=payload,
+                        )
+                    )
+            finally:
+                if package_fd >= 0:
+                    os.close(package_fd)
+            return _TrustedCoreProvenanceEvidence(
+                dist_info_path=dist_info_path,
+                dist_info_identity=dist_identity,
+                metadata_identity=_stable_file_identity(metadata_item),
+                metadata_payload=metadata_payload,
+                record_identity=_stable_file_identity(record_item),
+                record_payload=record_payload,
+                trusted_modules=tuple(trusted_modules),
+                active_modules=(),
+            )
+        finally:
+            os.close(dist_fd)
+    except IntegrationEvidenceUnavailable:
+        raise
+    except IntegrationAttestationUnavailable as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    except (OSError, ValueError) as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    finally:
+        if site_fd >= 0:
+            os.close(site_fd)
+
+
+def _active_release_core_module_evidence(
+    verified: VerifiedActiveManifest,
+    trusted_modules: tuple[_CoreModuleEvidence, ...],
+) -> tuple[_CoreModuleEvidence, ...]:
+    trusted_by_relative = {module.relative: module for module in trusted_modules}
+    if set(trusted_by_relative) != set(TRUSTED_PRODUCER_CORE_RECORD_RELATIVES):
+        raise IntegrationEvidenceUnavailable()
+    site_packages = verified.active_release.entrypoint_path.parent.parent
+    package_path = site_packages / "codex_usage"
+    record_path = site_packages / _DIST_INFO_PREFIX / "RECORD"
+    if verified.active_release.entrypoint_path != package_path / "integration_entrypoint.py":
+        raise IntegrationEvidenceUnavailable()
+    _contained(package_path, verified.active_release.release_dir)
+    _contained(record_path, verified.active_release.release_dir)
+    record_rows = _record_rows(record_path, verified.active_release.release_dir)
+    if set(record_rows) != (
+        set(PRODUCER_RELEASE_RECORD_RELATIVES)
+        | set(_PRODUCER_DIST_INFO_RECORD_RELATIVES)
+    ):
+        raise IntegrationEvidenceUnavailable()
+
+    expected_names = set(PRODUCER_RELEASE_MODULES)
+    package_initial = _private_directory(package_path)
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    package_fd = -1
+    try:
+        package_fd = os.open(package_path, flags)
+        package_opened = os.fstat(package_fd)
+        if not _same_stat_identity(package_opened, package_initial):
+            raise IntegrationEvidenceUnavailable()
+        seen: set[str] = set()
+        modules: list[_CoreModuleEvidence] = []
+        with os.scandir(package_fd) as entries:
+            for entry in entries:
+                name = entry.name
+                if (
+                    type(name) is not str
+                    or name not in expected_names
+                    or name in seen
+                    or len(seen) >= len(expected_names)
+                ):
+                    raise IntegrationEvidenceUnavailable()
+                seen.add(name)
+                relative = f"codex_usage/{name}"
+                payload, item = _trusted_file_bytes_at(
+                    package_fd,
+                    name,
+                    mode=0o600,
+                )
+                _require_core_record_row(record_rows, relative, payload)
+                trusted = trusted_by_relative[relative]
+                if payload != trusted.payload:
+                    raise IntegrationEvidenceUnavailable()
+                modules.append(
+                    _CoreModuleEvidence(
+                        relative=relative,
+                        identity=_stable_file_identity(item),
+                        payload_sha256=_sha256_bytes(payload),
+                        size=len(payload),
+                        payload=payload,
+                    )
+                )
+        if seen != expected_names:
+            raise IntegrationEvidenceUnavailable()
+        if not _same_stat_identity(os.fstat(package_fd), package_opened):
+            raise IntegrationEvidenceUnavailable()
+        modules.sort(key=lambda module: module.relative)
+        return tuple(modules)
+    except IntegrationEvidenceUnavailable:
+        raise
+    except IntegrationAttestationUnavailable as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    except (OSError, ValueError) as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    finally:
+        if package_fd >= 0:
+            os.close(package_fd)
+
+
+def _runtime_module_relative(module_name: str) -> str:
+    if module_name == "codex_usage":
+        return "codex_usage/__init__.py"
+    prefix = "codex_usage."
+    if (
+        type(module_name) is not str
+        or not module_name.startswith(prefix)
+        or module_name.count(".") != 1
+    ):
+        raise IntegrationEvidenceUnavailable()
+    leaf = module_name.removeprefix(prefix)
+    if (
+        not leaf
+        or not leaf.isidentifier()
+        or "/" in leaf
+        or "\\" in leaf
+        or "\x00" in leaf
+    ):
+        raise IntegrationEvidenceUnavailable()
+    return f"codex_usage/{leaf}.py"
+
+
+def _runtime_interpreter_evidence(
+    interpreter_path: Path | None,
+) -> _RuntimeInterpreterEvidence:
+    selected = Path(sys.executable) if interpreter_path is None else interpreter_path
+    if (
+        not isinstance(selected, Path)
+        or not selected.is_absolute()
+        or any(part in {"", ".", ".."} for part in selected.parts[1:])
+        or "\x00" in str(selected)
+    ):
+        raise IntegrationEvidenceUnavailable()
+    try:
+        resolved = selected.resolve(strict=True)
+        if (
+            not resolved.is_absolute()
+            or any(part in {"", ".", ".."} for part in resolved.parts[1:])
+            or "\x00" in str(resolved)
+        ):
+            raise IntegrationEvidenceUnavailable()
+        assert_no_symlink_ancestors(resolved, label="runtime interpreter")
+        initial = resolved.lstat()
+        mode = stat.S_IMODE(initial.st_mode)
+        if (
+            not stat.S_ISREG(initial.st_mode)
+            or initial.st_uid not in {0, os.geteuid()}
+            or bool(mode & 0o022)
+            or not bool(mode & 0o111)
+            or initial.st_size <= 0
+            or initial.st_size > MAX_RUNTIME_INTERPRETER_BYTES
+        ):
+            raise IntegrationEvidenceUnavailable()
+        final = resolved.lstat()
+        if not _same_stat_identity(final, initial):
+            raise IntegrationEvidenceUnavailable()
+        return _RuntimeInterpreterEvidence(
+            path=resolved,
+            identity=_stable_file_identity(final),
+        )
+    except IntegrationEvidenceUnavailable:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+
+
+def _runtime_core_module_evidence(
+    *,
+    trusted_entrypoint_path: Path,
+    trusted_modules: tuple[_CoreModuleEvidence, ...],
+    module_names: tuple[str, ...],
+) -> tuple[_CoreModuleEvidence, ...]:
+    if (
+        type(module_names) is not tuple
+        or not module_names
+        or len(module_names) > len(TRUSTED_CORE_MODULES)
+        or len(set(module_names)) != len(module_names)
+    ):
+        raise IntegrationEvidenceUnavailable()
+    trusted_by_relative = {module.relative: module for module in trusted_modules}
+    site_packages = trusted_entrypoint_path.parent.parent
+    modules: list[_CoreModuleEvidence] = []
+    for module_name in module_names:
+        relative = _runtime_module_relative(module_name)
+        trusted = trusted_by_relative.get(relative)
+        module = sys.modules.get(module_name)
+        if trusted is None or module is None:
+            raise IntegrationEvidenceUnavailable()
+        module_file = getattr(module, "__file__", None)
+        module_spec = getattr(module, "__spec__", None)
+        spec_origin = None if module_spec is None else getattr(module_spec, "origin", None)
+        if type(module_file) is not str or type(spec_origin) is not str:
+            raise IntegrationEvidenceUnavailable()
+        if module_file != spec_origin:
+            raise IntegrationEvidenceUnavailable()
+        module_path = Path(module_file)
+        if (
+            not module_path.is_absolute()
+            or any(part in {"", ".", ".."} for part in module_path.parts[1:])
+            or "\x00" in str(module_path)
+            or module_path != site_packages / relative
+        ):
+            raise IntegrationEvidenceUnavailable()
+        initial = _private_regular(module_path, mode=0o644)
+        payload = _read_nofollow_bytes(
+            module_path,
+            expected_file_identity=initial,
+        )
+        final = _private_regular(module_path, mode=0o644)
+        if (
+            not _same_stat_identity(final, initial)
+            or payload != trusted.payload
+            or _sha256_bytes(payload) != trusted.payload_sha256
+            or len(payload) != trusted.size
+        ):
+            raise IntegrationEvidenceUnavailable()
+        modules.append(
+            _CoreModuleEvidence(
+                relative=relative,
+                identity=_stable_file_identity(final),
+                payload_sha256=_sha256_bytes(payload),
+                size=len(payload),
+                payload=payload,
+            )
+        )
+    modules.sort(key=lambda module: module.relative)
+    return tuple(modules)
+
+
+def _verify_trusted_core_provenance(
+    trusted_entrypoint_path: Path,
+    verified: VerifiedActiveManifest,
+    trusted_entrypoint_payload: bytes,
+    *,
+    expected: _TrustedCoreProvenanceEvidence | None = None,
+) -> _TrustedCoreProvenanceEvidence:
+    if (
+        verified.active_release.version != _EXPECTED_VERSION
+        or not verified.release_id.startswith(f"{_EXPECTED_VERSION}-")
+    ):
+        raise IntegrationEvidenceUnavailable()
+    evidence = _trusted_core_provenance_evidence(
+        trusted_entrypoint_path,
+        trusted_entrypoint_payload,
+    )
+    evidence = _TrustedCoreProvenanceEvidence(
+        dist_info_path=evidence.dist_info_path,
+        dist_info_identity=evidence.dist_info_identity,
+        metadata_identity=evidence.metadata_identity,
+        metadata_payload=evidence.metadata_payload,
+        record_identity=evidence.record_identity,
+        record_payload=evidence.record_payload,
+        trusted_modules=evidence.trusted_modules,
+        active_modules=_active_release_core_module_evidence(
+            verified,
+            evidence.trusted_modules,
+        ),
+    )
+    if expected is not None and evidence != expected:
+        raise IntegrationEvidenceUnavailable()
+    return evidence
+
+
+def verify_runtime_self_attestation(
+    *,
+    trusted_entrypoint_path: Path,
+    verified: VerifiedActiveManifest,
+    module_names: tuple[str, ...] = RUNTIME_SELF_ATTESTED_CORE_MODULES,
+    interpreter_path: Path | None = None,
+) -> None:
+    interpreter = _runtime_interpreter_evidence(interpreter_path)
+    trusted_payload, trusted_stat = _trusted_entrypoint_bytes_and_stat(
+        trusted_entrypoint_path,
+    )
+    provenance = _verify_trusted_core_provenance(
+        trusted_entrypoint_path,
+        verified,
+        trusted_payload,
+    )
+    runtime_modules = _runtime_core_module_evidence(
+        trusted_entrypoint_path=trusted_entrypoint_path,
+        trusted_modules=provenance.trusted_modules,
+        module_names=module_names,
+    )
+    _before_runtime_self_attestation_recheck(trusted_entrypoint_path)
+    try:
+        repeated_interpreter = _runtime_interpreter_evidence(interpreter_path)
+        repeated_trusted_payload, repeated_trusted_stat = (
+            _trusted_entrypoint_bytes_and_stat(trusted_entrypoint_path)
+        )
+        repeated_provenance = _verify_trusted_core_provenance(
+            trusted_entrypoint_path,
+            verified,
+            repeated_trusted_payload,
+            expected=provenance,
+        )
+        repeated_runtime_modules = _runtime_core_module_evidence(
+            trusted_entrypoint_path=trusted_entrypoint_path,
+            trusted_modules=repeated_provenance.trusted_modules,
+            module_names=module_names,
+        )
+    except (IntegrationAttestationUnavailable, IntegrationEvidenceUnavailable) as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    if (
+        repeated_interpreter != interpreter
+        or repeated_trusted_payload != trusted_payload
+        or not _same_stat_identity(repeated_trusted_stat, trusted_stat)
+        or repeated_runtime_modules != runtime_modules
+    ):
+        raise IntegrationEvidenceInvalid()
+
+
+def verify_active_manifest_against_trusted_entrypoint(
+    *,
+    state_home: Path,
+    data_home: Path,
+    trusted_entrypoint_path: Path,
+) -> VerifiedActiveManifest:
+    candidate_entrypoint = _active_entrypoint_candidate_from_active_manifest(
+        state_home=state_home,
+        data_home=data_home,
+    )
+    first = verify_active_manifest_at(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=candidate_entrypoint,
+    )
+    trusted_ancestors = _trusted_entrypoint_ancestor_identities(
+        trusted_entrypoint_path,
+    )
+    trusted_payload, trusted_stat = _trusted_entrypoint_bytes_and_stat(
+        trusted_entrypoint_path,
+    )
+    provenance = _verify_trusted_core_provenance(
+        trusted_entrypoint_path,
+        first,
+        trusted_payload,
+    )
+    release_payload = _file_bytes(first.active_release.entrypoint_path, mode=0o600)
+    if (
+        trusted_payload != release_payload
+        or _sha256_bytes(release_payload) != first.active_release.entrypoint_sha256
+    ):
+        raise IntegrationEvidenceUnavailable()
+    _before_trusted_entrypoint_recheck(trusted_entrypoint_path)
+    try:
+        repeated_trusted_ancestors = _trusted_entrypoint_ancestor_identities(
+            trusted_entrypoint_path,
+        )
+        repeated_trusted_payload, repeated_trusted_stat = (
+            _trusted_entrypoint_bytes_and_stat(trusted_entrypoint_path)
+        )
+    except IntegrationEvidenceUnavailable as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    if (
+        repeated_trusted_ancestors != trusted_ancestors
+        or repeated_trusted_payload != trusted_payload
+        or not _same_stat_identity(repeated_trusted_stat, trusted_stat)
+    ):
+        raise IntegrationEvidenceInvalid()
+    second = verify_active_manifest_at(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=candidate_entrypoint,
+    )
+    if first != second:
+        raise IntegrationEvidenceInvalid()
+    try:
+        _verify_trusted_core_provenance(
+            trusted_entrypoint_path,
+            second,
+            repeated_trusted_payload,
+            expected=provenance,
+        )
+    except IntegrationEvidenceUnavailable as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    return second
+
+
 def _verify_previous_schema2_manifest_for_upgrade(
     *,
     manifest_path: Path,
@@ -1399,7 +2423,14 @@ def _before_active_identity_recheck(_integration_fd: int) -> None:
 
 def _fd_identity(fd: int) -> FileIdentity:
     item = os.fstat(fd)
-    return FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
+    return FileIdentity(
+        item.st_dev,
+        item.st_ino,
+        stat.S_IMODE(item.st_mode),
+        gid=item.st_gid,
+        uid=item.st_uid,
+        ctime_ns=item.st_ctime_ns,
+    )
 
 
 def verify_active_manifest_at(

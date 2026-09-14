@@ -6,10 +6,10 @@ import hashlib
 import json
 import math
 import os
-import pwd
 import re
 import secrets
 import stat
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -95,8 +95,45 @@ _STAGING_FILE_RE = re.compile(
 )
 _POINTER_STAGING_PREFIX = ".tmp-current.json-"
 _POINTER_STAGING_RE = re.compile(r"\.tmp-current\.json-[0-9a-f]{32}")
+_CURRENT_COMMIT_MARKER_PREFIX = ".tmp-current.commit-marker-"
+_CURRENT_COMMIT_MARKER_RE = re.compile(r"\.tmp-current\.commit-marker-[0-9a-f]{32}")
+_LEGACY_CURRENT_COMMIT_MARKER_PREFIX = ".tmp-current.committed-"
+_LEGACY_CURRENT_COMMIT_MARKER_RE = re.compile(
+    r"\.tmp-current\.committed-[0-9a-f]{32}"
+)
+_CURRENT_ROLLBACK_STASH_PREFIX = ".tmp-current.rollback-stash-"
+_CURRENT_ROLLBACK_STASH_RE = re.compile(
+    r"\.tmp-current\.rollback-stash-[0-9a-f]{32}"
+)
 _POINTER_STAGING_MAX_ENTRIES = 64
 _INTEGRATION_RECOVERY_MAX_ENTRIES = 128
+_CURRENT_COMMIT_MARKER_FIELDS = frozenset(
+    (
+        "candidate_current",
+        "current_commit_marker_schema_version",
+        "integration_recovery_artifact_type",
+        "previous_current",
+        "target_name",
+    )
+)
+_LEGACY_CURRENT_COMMIT_MARKER_FIELDS = frozenset(
+    (
+        "candidate_current",
+        "current_commit_marker_schema_version",
+        "previous_current",
+    )
+)
+_CURRENT_ROLLBACK_STASH_FIELDS = frozenset(
+    (
+        "current_rollback_stash_schema_version",
+        "integration_recovery_artifact_type",
+        "stashed_current",
+        "target_name",
+    )
+)
+_COMMITTED_CLEANUP_DIAGNOSTIC_TOKEN = "committed-with-cleanup-error"
+_COMMITTED_CLEANUP_DIAGNOSTIC_MAX_TYPES = 8
+_COMMITTED_CLEANUP_DIAGNOSTIC_MAX_BYTES = 1024
 
 
 @dataclass(frozen=True)
@@ -181,6 +218,13 @@ class _PointerStagingArtifact:
     snapshot: os.stat_result
 
 
+@dataclass(frozen=True)
+class _IntegrationRecoveryArtifacts:
+    pointer_staging: tuple[_PointerStagingArtifact, ...]
+    committed_current: tuple[_PointerStagingArtifact, ...]
+    rollback_stash: tuple[_PointerStagingArtifact, ...]
+
+
 class IntegrationBusy(IntegrationEvidenceError):
     pass
 
@@ -253,6 +297,10 @@ def _before_publish_pointer_parent_recheck(
     _state_home: Path,
     _integration_fd: int,
 ) -> None:
+    return None
+
+
+def _before_current_rollback_swap(_integration_fd: int) -> None:
     return None
 
 
@@ -539,6 +587,163 @@ def parse_pointer(payload: bytes) -> EvidencePointer:
     return pointer
 
 
+def _pointer_from_marker_object(value: object) -> EvidencePointer:
+    if type(value) is not dict:
+        _invalid_contract()
+    pointer_payload = _serialize_contract(cast(dict[str, object], value))
+    return parse_pointer(pointer_payload)
+
+
+def _serialize_current_commit_marker(
+    *,
+    candidate_pointer_bytes: bytes,
+    previous_pointer_bytes: bytes | None,
+) -> bytes:
+    candidate = parse_pointer(candidate_pointer_bytes)
+    previous = (
+        parse_pointer(previous_pointer_bytes)
+        if previous_pointer_bytes is not None
+        else None
+    )
+    payload = {
+        "candidate_current": _canonical_pointer(candidate),
+        "current_commit_marker_schema_version": 2,
+        "integration_recovery_artifact_type": "current-commit-marker",
+        "previous_current": (
+            _canonical_pointer(previous) if previous is not None else None
+        ),
+        "target_name": "current.json",
+    }
+    marker = _serialize_contract(payload)
+    if not 1 <= len(marker) <= _POINTER_MAX_BYTES:
+        _invalid_contract()
+    return marker
+
+
+def _serialize_legacy_current_commit_marker(
+    *,
+    candidate: EvidencePointer,
+    previous: EvidencePointer | None,
+) -> bytes:
+    payload = {
+        "candidate_current": _canonical_pointer(candidate),
+        "current_commit_marker_schema_version": 1,
+        "previous_current": (
+            _canonical_pointer(previous) if previous is not None else None
+        ),
+    }
+    marker = _serialize_contract(payload)
+    if not 1 <= len(marker) <= _POINTER_MAX_BYTES:
+        _invalid_contract()
+    return marker
+
+
+def _parse_current_commit_marker(
+    payload: bytes,
+) -> tuple[EvidencePointer, EvidencePointer | None]:
+    if type(payload) is not bytes or not 1 <= len(payload) <= _POINTER_MAX_BYTES:
+        _invalid_contract()
+    try:
+        raw = loads_strict(payload)
+        if type(raw) is not dict:
+            _invalid_contract()
+        fields = set(cast(dict[object, object], raw))
+        if fields == _CURRENT_COMMIT_MARKER_FIELDS:
+            value = _require_exact_object(
+                raw,
+                fields=_CURRENT_COMMIT_MARKER_FIELDS,
+            )
+            if (
+                value["current_commit_marker_schema_version"] != 2
+                or value["integration_recovery_artifact_type"]
+                != "current-commit-marker"
+                or value["target_name"] != "current.json"
+            ):
+                _invalid_contract()
+            legacy = False
+        elif fields == _LEGACY_CURRENT_COMMIT_MARKER_FIELDS:
+            value = _require_exact_object(
+                raw,
+                fields=_LEGACY_CURRENT_COMMIT_MARKER_FIELDS,
+            )
+            if value["current_commit_marker_schema_version"] != 1:
+                _invalid_contract()
+            legacy = True
+        else:
+            _invalid_contract()
+        candidate = _pointer_from_marker_object(value["candidate_current"])
+        previous_value = value["previous_current"]
+        previous = (
+            _pointer_from_marker_object(previous_value)
+            if previous_value is not None
+            else None
+        )
+        if legacy:
+            canonical = _serialize_legacy_current_commit_marker(
+                candidate=candidate,
+                previous=previous,
+            )
+        else:
+            canonical = _serialize_current_commit_marker(
+                candidate_pointer_bytes=serialize_pointer(candidate),
+                previous_pointer_bytes=(
+                    serialize_pointer(previous) if previous is not None else None
+                ),
+            )
+    except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
+        _invalid_contract()
+    if canonical != payload:
+        _invalid_contract()
+    return candidate, previous
+
+
+def _serialize_current_rollback_stash(
+    *,
+    target_name: str,
+    stashed_pointer_bytes: bytes,
+) -> bytes:
+    if target_name != "current.json":
+        _invalid_contract()
+    stashed = parse_pointer(stashed_pointer_bytes)
+    payload = {
+        "current_rollback_stash_schema_version": 1,
+        "integration_recovery_artifact_type": "current-rollback-stash",
+        "stashed_current": _canonical_pointer(stashed),
+        "target_name": "current.json",
+    }
+    marker = _serialize_contract(payload)
+    if not 1 <= len(marker) <= _POINTER_MAX_BYTES:
+        _invalid_contract()
+    return marker
+
+
+def _parse_current_rollback_stash(payload: bytes) -> EvidencePointer:
+    if type(payload) is not bytes or not 1 <= len(payload) <= _POINTER_MAX_BYTES:
+        _invalid_contract()
+    try:
+        value = _require_exact_object(
+            loads_strict(payload),
+            fields=_CURRENT_ROLLBACK_STASH_FIELDS,
+        )
+        if (
+            value["current_rollback_stash_schema_version"] != 1
+            or value["integration_recovery_artifact_type"]
+            != "current-rollback-stash"
+            or value["target_name"] != "current.json"
+        ):
+            _invalid_contract()
+        stashed = _pointer_from_marker_object(value["stashed_current"])
+        canonical = _serialize_current_rollback_stash(
+            target_name="current.json",
+            stashed_pointer_bytes=serialize_pointer(stashed),
+        )
+    except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
+        _invalid_contract()
+    if canonical != payload:
+        _invalid_contract()
+    return stashed
+
+
 def validate_v2_payload_bytes(payload: bytes) -> dict[str, object]:
     if type(payload) is not bytes or not 1 <= len(payload) <= _PAYLOAD_MAX_BYTES:
         raise IntegrationInvalidSource()
@@ -600,51 +805,101 @@ def _close_fds(*fds: int) -> None:
                 pass
 
 
+def _close_fds_collect(*fds: int) -> list[BaseException]:
+    errors: list[BaseException] = []
+    for fd in fds:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except BaseException as exc:
+                errors.append(exc)
+    return errors
+
+
+def _raise_pre_current_cleanup_errors(
+    *,
+    primary_error: BaseException | None,
+    cleanup_errors: list[BaseException],
+) -> None:
+    if not cleanup_errors:
+        return
+    group_type = (
+        ExceptionGroup
+        if all(isinstance(error, Exception) for error in cleanup_errors)
+        and (primary_error is None or isinstance(primary_error, Exception))
+        else BaseExceptionGroup
+    )
+    if primary_error is None:
+        if len(cleanup_errors) == 1:
+            raise cleanup_errors[0]
+        raise group_type("integration evidence cleanup failed", cleanup_errors)
+    raise group_type(
+        "integration evidence publish failed during cleanup",
+        [primary_error, *cleanup_errors],
+    ) from primary_error
+
+
+def _committed_cleanup_diagnostic(
+    cleanup_errors: list[BaseException],
+) -> dict[str, object]:
+    flattened_errors = private_io._base_exception_leaves(cleanup_errors)
+    error_types = tuple(sorted({type(error).__name__ for error in flattened_errors}))
+    truncated = len(error_types) > _COMMITTED_CLEANUP_DIAGNOSTIC_MAX_TYPES
+    return {
+        "token": _COMMITTED_CLEANUP_DIAGNOSTIC_TOKEN,
+        "cleanup_error_count": len(flattened_errors),
+        "cleanup_error_types": error_types[:_COMMITTED_CLEANUP_DIAGNOSTIC_MAX_TYPES],
+        "cleanup_error_types_truncated": truncated,
+    }
+
+
+def _record_committed_cleanup_error(diagnostic: dict[str, object]) -> None:
+    safe = {
+        "cleanup_error_count": int(diagnostic.get("cleanup_error_count", 0)),
+        "cleanup_error_types": [
+            str(error_type)[:80]
+            for error_type in tuple(diagnostic.get("cleanup_error_types", ()))[:8]
+        ],
+        "cleanup_error_types_truncated": bool(
+            diagnostic.get("cleanup_error_types_truncated", False)
+        ),
+        "token": str(diagnostic.get("token", _COMMITTED_CLEANUP_DIAGNOSTIC_TOKEN))[:80],
+    }
+    payload = json.dumps(safe, sort_keys=True, separators=(",", ":"))
+    if len(payload.encode("utf-8")) > _COMMITTED_CLEANUP_DIAGNOSTIC_MAX_BYTES:
+        safe = {
+            "cleanup_error_count": safe["cleanup_error_count"],
+            "cleanup_error_types": [],
+            "cleanup_error_types_truncated": True,
+            "token": _COMMITTED_CLEANUP_DIAGNOSTIC_TOKEN,
+        }
+        payload = json.dumps(safe, sort_keys=True, separators=(",", ":"))
+    sys.stderr.write(payload + "\n")
+    sys.stderr.flush()
+
+
 def _open_lock_root(*, create: bool) -> int:
     lock_root = private_io._private_lock_root()
-    if create:
-        try:
-            private_io.ensure_private_directory(
+    try:
+        if create:
+            root_fd, _root_identities = private_io._open_or_create_private_lock_root(
                 lock_root,
-                label="integration evidence lock root",
             )
-        except (OSError, ValueError) as exc:
-            raise IntegrationEvidenceInvalid() from exc
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_DIRECTORY", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_CLOEXEC", 0)
-    )
-    try:
-        passwd_home = Path(pwd.getpwuid(os.geteuid()).pw_dir)
-    except (KeyError, OSError, TypeError, ValueError) as exc:
-        raise IntegrationEvidenceUnavailable() from exc
-    enforce_from = len(lock_root.parts) - 1
-    if lock_root.parts[: len(passwd_home.parts)] == passwd_home.parts:
-        enforce_from = len(passwd_home.parts) - 1
-    fd = -1
-    try:
-        fd = os.open(lock_root.anchor, flags)
-        for index, component in enumerate(lock_root.parts[1:], start=1):
-            next_fd = os.open(component, flags, dir_fd=fd)
-            os.close(fd)
-            fd = next_fd
-            if index >= enforce_from:
-                _validate_directory(os.fstat(fd))
-        result = fd
-        fd = -1
-        return result
+        else:
+            root_fd, _root_identities = private_io._open_existing_private_lock_root(
+                lock_root,
+            )
+        return root_fd
     except FileNotFoundError as exc:
         raise IntegrationEvidenceUnavailable() from exc
     except IntegrationEvidenceError:
         raise
+    except ValueError as exc:
+        raise IntegrationEvidenceInvalid() from exc
     except OSError as exc:
         if exc.errno in (errno.ELOOP, errno.ENOTDIR):
             raise IntegrationEvidenceInvalid() from exc
         raise IntegrationEvidenceUnavailable() from exc
-    finally:
-        _close_fds(fd)
 
 
 def _open_lock_file(lock_root_fd: int, name: str, *, create: bool) -> int:
@@ -655,6 +910,7 @@ def _open_lock_file(lock_root_fd: int, name: str, *, create: bool) -> int:
         | getattr(os, "O_NONBLOCK", 0)
     )
     created = False
+    fd = -1
     try:
         try:
             fd = os.open(name, flags, dir_fd=lock_root_fd)
@@ -681,16 +937,38 @@ def _open_lock_file(lock_root_fd: int, name: str, *, create: bool) -> int:
         ):
             raise IntegrationEvidenceInvalid()
         return fd
-    except IntegrationEvidenceError:
-        if "fd" in locals():
-            _close_fds(fd)
+    except IntegrationEvidenceError as exc:
+        if fd >= 0:
+            cleanup_errors = _close_fds_collect(fd)
+            if cleanup_errors:
+                _raise_pre_current_cleanup_errors(
+                    primary_error=exc,
+                    cleanup_errors=cleanup_errors,
+                )
         raise
     except OSError as exc:
-        if "fd" in locals():
-            _close_fds(fd)
+        primary_error: IntegrationEvidenceError
         if exc.errno in (errno.ELOOP, errno.EISDIR, errno.ENXIO):
-            raise IntegrationEvidenceInvalid() from exc
-        raise IntegrationEvidenceUnavailable() from exc
+            primary_error = IntegrationEvidenceInvalid()
+        else:
+            primary_error = IntegrationEvidenceUnavailable()
+        if fd >= 0:
+            cleanup_errors = _close_fds_collect(fd)
+            if cleanup_errors:
+                _raise_pre_current_cleanup_errors(
+                    primary_error=primary_error,
+                    cleanup_errors=cleanup_errors,
+                )
+        raise primary_error from exc
+    except BaseException as exc:
+        if fd >= 0:
+            cleanup_errors = _close_fds_collect(fd)
+            if cleanup_errors:
+                _raise_pre_current_cleanup_errors(
+                    primary_error=exc,
+                    cleanup_errors=cleanup_errors,
+                )
+        raise
 
 
 def _acquire_lock(fd: int, *, mode: str, deadline: float) -> None:
@@ -752,6 +1030,7 @@ def _verify_held_lock_namespace(
     release_fd: int,
     current_name: str,
     current_fd: int,
+    extra_locks: tuple[tuple[str, int], ...] = (),
 ) -> None:
     fresh_root_fd = -1
     try:
@@ -766,6 +1045,8 @@ def _verify_held_lock_namespace(
             raise IntegrationEvidenceInvalid()
         _verify_held_lock_entry(fresh_root_fd, release_name, release_fd)
         _verify_held_lock_entry(fresh_root_fd, current_name, current_fd)
+        for name, fd in extra_locks:
+            _verify_held_lock_entry(fresh_root_fd, name, fd)
     finally:
         _close_fds(fresh_root_fd)
 
@@ -778,9 +1059,74 @@ def _release_lock(fd: int) -> None:
     _close_fds(fd)
 
 
+def _release_lock_collect(fd: int) -> list[BaseException]:
+    errors: list[BaseException] = []
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    except BaseException as exc:
+        errors.append(exc)
+    errors.extend(_close_fds_collect(fd))
+    return errors
+
+
 def _fd_identity(fd: int) -> FileIdentity:
     item = os.fstat(fd)
-    return FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
+    return FileIdentity(
+        item.st_dev,
+        item.st_ino,
+        stat.S_IMODE(item.st_mode),
+        gid=item.st_gid,
+        uid=item.st_uid,
+        ctime_ns=item.st_ctime_ns,
+    )
+
+
+def _refresh_directory_identity_after_mutation(
+    fd: int,
+    previous: FileIdentity,
+) -> FileIdentity:
+    current = _fd_identity(fd)
+    if (
+        current.device != previous.device
+        or current.inode != previous.inode
+        or current.mode != previous.mode
+        or current.uid != previous.uid
+        or current.gid != previous.gid
+    ):
+        raise IntegrationEvidenceInvalid()
+    return current
+
+
+def _same_mutable_directory_identity(
+    left: FileIdentity,
+    right: FileIdentity,
+) -> bool:
+    return (
+        left.device == right.device
+        and left.inode == right.inode
+        and left.mode == right.mode
+        and left.uid == right.uid
+        and left.gid == right.gid
+    )
+
+
+def _same_verified_manifest_for_evidence(
+    first: VerifiedActiveManifest,
+    second: VerifiedActiveManifest,
+) -> bool:
+    return (
+        first.active_release == second.active_release
+        and first.release_id == second.release_id
+        and first.source_manifest_sha256 == second.source_manifest_sha256
+        and first.active_manifest_bytes == second.active_manifest_bytes
+        and first.active_manifest_sha256 == second.active_manifest_sha256
+        and first.state_home_identity == second.state_home_identity
+        and _same_mutable_directory_identity(
+            first.integration_parent_identity,
+            second.integration_parent_identity,
+        )
+        and first.active_file_identity == second.active_file_identity
+    )
 
 
 def _verify_lock_target_parent(state_home: Path) -> tuple[FileIdentity, FileIdentity]:
@@ -811,14 +1157,21 @@ def bootstrap_evidence_lock_inodes(*, state_home: Path) -> None:
     integration = state_home / "codex-usage" / "integration"
     release_name = _evidence_lock_name(integration / "producer-install")
     current_name = _evidence_lock_name(integration / "current.json")
+    source_name = _evidence_lock_name(integration / POOL_AUTHORITY_SOURCE_FILENAME)
     root_fd = -1
     release_fd = -1
     current_fd = -1
+    source_fd = -1
     try:
         root_fd = _open_lock_root(create=True)
         lock_root_identity = _fd_identity(root_fd)
         release_fd = _open_lock_file(root_fd, release_name, create=True)
         current_fd = _open_lock_file(root_fd, current_name, create=True)
+        source_fd = _open_lock_file(root_fd, source_name, create=True)
+        lock_root_identity = _refresh_directory_identity_after_mutation(
+            root_fd,
+            lock_root_identity,
+        )
         os.fsync(root_fd)
         _verify_held_lock_namespace(
             held_root_fd=root_fd,
@@ -827,6 +1180,7 @@ def bootstrap_evidence_lock_inodes(*, state_home: Path) -> None:
             release_fd=release_fd,
             current_name=current_name,
             current_fd=current_fd,
+            extra_locks=((source_name, source_fd),),
         )
         if _verify_lock_target_parent(state_home) != (
             state_identity,
@@ -838,7 +1192,7 @@ def bootstrap_evidence_lock_inodes(*, state_home: Path) -> None:
     except OSError as exc:
         raise IntegrationEvidenceUnavailable() from exc
     finally:
-        _close_fds(current_fd, release_fd, root_fd)
+        _close_fds(source_fd, current_fd, release_fd, root_fd)
 
 
 def _matches_held_lock_set(
@@ -931,12 +1285,13 @@ def evidence_lock_set(
         ("release", release_name, release_mode),
         ("current", current_name, current_mode),
     )
-    root_fd = _open_lock_root(create=create)
-    lock_root_identity = _fd_identity(root_fd)
+    root_fd = -1
     acquired: list[tuple[str, int]] = []
     acquired_identities: dict[str, FileIdentity] = {}
     held_set = None
     try:
+        root_fd = _open_lock_root(create=create)
+        lock_root_identity = _fd_identity(root_fd)
         for logical_name, lock_name, mode in targets:
             fd = _open_lock_file(
                 root_fd,
@@ -946,11 +1301,21 @@ def evidence_lock_set(
             try:
                 _acquire_lock(fd, mode=mode, deadline=deadline)
                 _verify_held_lock_entry(root_fd, lock_name, fd)
-            except Exception:
-                _close_fds(fd)
+            except BaseException as exc:
+                cleanup_errors = _release_lock_collect(fd)
+                if cleanup_errors:
+                    _raise_pre_current_cleanup_errors(
+                        primary_error=exc,
+                        cleanup_errors=cleanup_errors,
+                    )
                 raise
             acquired.append((logical_name, fd))
             acquired_identities[logical_name] = _fd_identity(fd)
+        if create:
+            lock_root_identity = _refresh_directory_identity_after_mutation(
+                root_fd,
+                lock_root_identity,
+            )
         _verify_held_lock_namespace(
             held_root_fd=root_fd,
             lock_root_identity=lock_root_identity,
@@ -977,11 +1342,17 @@ def evidence_lock_set(
         finally:
             held_sets.remove(held_set)
     finally:
+        active_error = sys.exc_info()[1]
+        cleanup_errors: list[BaseException] = []
         if held_set is not None and held_set in held_sets:
             held_sets.remove(held_set)
         for _, fd in reversed(acquired):
-            _release_lock(fd)
-        _close_fds(root_fd)
+            cleanup_errors.extend(_release_lock_collect(fd))
+        cleanup_errors.extend(_close_fds_collect(root_fd))
+        _raise_pre_current_cleanup_errors(
+            primary_error=active_error,
+            cleanup_errors=cleanup_errors,
+        )
 
 
 def _require_verified_manifest(value: object) -> VerifiedActiveManifest:
@@ -1005,7 +1376,7 @@ def _require_same_verified_manifest(
 ) -> None:
     _require_verified_manifest(first)
     _require_verified_manifest(second)
-    if first != second:
+    if not _same_verified_manifest_for_evidence(first, second):
         raise IntegrationEvidenceUnavailable()
 
 
@@ -1289,6 +1660,40 @@ def _validate_pointer_binding(
         _close_fds(generation_fd)
 
 
+def _revalidate_published_generation_before_current(
+    *,
+    generations_fd: int,
+    generation_id: str,
+    generation_fd: int,
+    staged_identity: FileIdentity,
+    binding_sha256: str,
+    verified: VerifiedActiveManifest,
+) -> None:
+    if (
+        _fd_identity(generation_fd) != staged_identity
+        or _named_identity(generations_fd, generation_id, directory=True)
+        != staged_identity
+    ):
+        raise IntegrationEvidenceInvalid()
+    generation = _validate_pointer_binding(
+        generations_fd=generations_fd,
+        generation_id=generation_id,
+        binding_sha256=binding_sha256,
+        verified=verified,
+        read_payload=True,
+        require_current_active=True,
+        hooks=False,
+    )
+    if (
+        generation.generation_identity != staged_identity
+        or generation.payload_identity is None
+        or _fd_identity(generation_fd) != staged_identity
+        or _named_identity(generations_fd, generation_id, directory=True)
+        != staged_identity
+    ):
+        raise IntegrationEvidenceInvalid()
+
+
 def _reader_status(
     document: dict[str, object],
     *,
@@ -1373,7 +1778,10 @@ def read_current_generation_bundle(
                 generations_identity = _fd_identity(generations_fd)
                 if (
                     state_identity != verified.state_home_identity
-                    or integration_identity != verified.integration_parent_identity
+                    or not _same_mutable_directory_identity(
+                        integration_identity,
+                        verified.integration_parent_identity,
+                    )
                     or _named_identity(integration_fd, "generations", directory=True)
                     != generations_identity
                 ):
@@ -1588,6 +1996,24 @@ def _write_staged_file(
             _safe_unlink_owned_file(staging_fd, temporary_name, identity)
 
 
+def _publish_generation_directory_no_replace(
+    generations_fd: int,
+    staging_name: str,
+    generation_id: str,
+) -> None:
+    try:
+        private_io._rename_private_lock_residue_no_replace(
+            source_fd=generations_fd,
+            source_name=staging_name,
+            destination_fd=generations_fd,
+            destination_name=generation_id,
+        )
+    except OSError as exc:
+        if exc.errno == errno.EEXIST:
+            raise IntegrationEvidenceInvalid() from exc
+        raise
+
+
 def _validate_existing_current(
     integration_fd: int,
     generations_fd: int,
@@ -1706,29 +2132,71 @@ def _require_pointer_staging_snapshot(item: os.stat_result) -> None:
 
 def _scan_integration_recovery_namespace(
     integration_fd: int,
-) -> tuple[_PointerStagingArtifact, ...]:
+) -> _IntegrationRecoveryArtifacts:
     try:
         private_io._require_private_directory_fd(integration_fd)
-        artifacts: list[_PointerStagingArtifact] = []
+        pointer_staging: list[_PointerStagingArtifact] = []
+        committed_current: list[_PointerStagingArtifact] = []
+        rollback_stash: list[_PointerStagingArtifact] = []
         with os.scandir(integration_fd) as entries:
             for entry_count, entry in enumerate(entries, start=1):
                 if entry_count > _INTEGRATION_RECOVERY_MAX_ENTRIES:
                     raise IntegrationEvidenceInvalid()
-                if not entry.name.startswith(_POINTER_STAGING_PREFIX):
-                    continue
-                if _POINTER_STAGING_RE.fullmatch(entry.name) is None:
-                    raise IntegrationEvidenceInvalid()
-                artifacts.append(
-                    _PointerStagingArtifact(
-                        name=entry.name,
-                        snapshot=entry.stat(follow_symlinks=False),
+                if entry.name.startswith(_POINTER_STAGING_PREFIX):
+                    if _POINTER_STAGING_RE.fullmatch(entry.name) is None:
+                        raise IntegrationEvidenceInvalid()
+                    pointer_staging.append(
+                        _PointerStagingArtifact(
+                            name=entry.name,
+                            snapshot=entry.stat(follow_symlinks=False),
+                        )
                     )
-                )
-                if len(artifacts) > _POINTER_STAGING_MAX_ENTRIES:
-                    raise IntegrationEvidenceInvalid()
-        for artifact in artifacts:
+                    if len(pointer_staging) > _POINTER_STAGING_MAX_ENTRIES:
+                        raise IntegrationEvidenceInvalid()
+                    continue
+                if entry.name.startswith(_CURRENT_COMMIT_MARKER_PREFIX):
+                    if _CURRENT_COMMIT_MARKER_RE.fullmatch(entry.name) is None:
+                        raise IntegrationEvidenceInvalid()
+                    committed_current.append(
+                        _PointerStagingArtifact(
+                            name=entry.name,
+                            snapshot=entry.stat(follow_symlinks=False),
+                        )
+                    )
+                    if len(committed_current) > _POINTER_STAGING_MAX_ENTRIES:
+                        raise IntegrationEvidenceInvalid()
+                    continue
+                if entry.name.startswith(_LEGACY_CURRENT_COMMIT_MARKER_PREFIX):
+                    if _LEGACY_CURRENT_COMMIT_MARKER_RE.fullmatch(entry.name) is None:
+                        raise IntegrationEvidenceInvalid()
+                    committed_current.append(
+                        _PointerStagingArtifact(
+                            name=entry.name,
+                            snapshot=entry.stat(follow_symlinks=False),
+                        )
+                    )
+                    if len(committed_current) > _POINTER_STAGING_MAX_ENTRIES:
+                        raise IntegrationEvidenceInvalid()
+                    continue
+                if entry.name.startswith(_CURRENT_ROLLBACK_STASH_PREFIX):
+                    if _CURRENT_ROLLBACK_STASH_RE.fullmatch(entry.name) is None:
+                        raise IntegrationEvidenceInvalid()
+                    rollback_stash.append(
+                        _PointerStagingArtifact(
+                            name=entry.name,
+                            snapshot=entry.stat(follow_symlinks=False),
+                        )
+                    )
+                    if len(rollback_stash) > _POINTER_STAGING_MAX_ENTRIES:
+                        raise IntegrationEvidenceInvalid()
+                    continue
+        for artifact in (*pointer_staging, *committed_current, *rollback_stash):
             _require_pointer_staging_snapshot(artifact.snapshot)
-        return tuple(artifacts)
+        return _IntegrationRecoveryArtifacts(
+            pointer_staging=tuple(pointer_staging),
+            committed_current=tuple(committed_current),
+            rollback_stash=tuple(rollback_stash),
+        )
     except IntegrationEvidenceError:
         raise
     except ValueError as exc:
@@ -1740,10 +2208,12 @@ def _scan_integration_recovery_namespace(
 def _remove_safe_pointer_staging_artifact(
     integration_fd: int,
     artifact: _PointerStagingArtifact,
+    *,
+    pattern: re.Pattern[str] = _POINTER_STAGING_RE,
 ) -> None:
     fd = -1
     try:
-        if _POINTER_STAGING_RE.fullmatch(artifact.name) is None:
+        if pattern.fullmatch(artifact.name) is None:
             raise IntegrationEvidenceInvalid()
         fd = os.open(
             artifact.name,
@@ -1792,6 +2262,314 @@ def _recover_pointer_staging_artifacts(
         os.fsync(integration_fd)
 
 
+def _pointer_bindings_are_valid(
+    *,
+    generations_fd: int,
+    pointer: EvidencePointer,
+) -> bool:
+    try:
+        _validate_pointer_binding(
+            generations_fd=generations_fd,
+            generation_id=pointer.current_generation_id,
+            binding_sha256=pointer.current_binding_sha256,
+            verified=None,
+            read_payload=True,
+            require_current_active=False,
+            hooks=False,
+        )
+        if (
+            pointer.previous_generation_id is not None
+            and pointer.previous_binding_sha256 is not None
+        ):
+            _validate_pointer_binding(
+                generations_fd=generations_fd,
+                generation_id=pointer.previous_generation_id,
+                binding_sha256=pointer.previous_binding_sha256,
+                verified=None,
+                read_payload=True,
+                require_current_active=False,
+                hooks=False,
+            )
+        return True
+    except IntegrationEvidenceError:
+        return False
+
+
+def _read_current_pointer_for_recovery(
+    *,
+    integration_fd: int,
+) -> tuple[bytes | None, EvidencePointer | None, FileIdentity | None]:
+    try:
+        current_bytes, current_identity = _read_verified_evidence_file(
+            integration_fd,
+            "current.json",
+            maximum=_POINTER_MAX_BYTES,
+            hook=lambda *_: None,
+        )
+    except IntegrationEvidenceUnavailable as exc:
+        if isinstance(exc.__cause__, FileNotFoundError):
+            return None, None, None
+        raise
+    pointer = parse_pointer(current_bytes)
+    return current_bytes, pointer, current_identity
+
+
+def _restore_previous_current_from_marker(
+    *,
+    integration_fd: int,
+    generations_fd: int,
+    candidate: EvidencePointer,
+    previous: EvidencePointer | None,
+) -> None:
+    current_bytes, current_pointer, current_identity = _read_current_pointer_for_recovery(
+        integration_fd=integration_fd,
+    )
+    if current_pointer is not None:
+        current_valid = _pointer_bindings_are_valid(
+            generations_fd=generations_fd,
+            pointer=current_pointer,
+        )
+        if current_valid and current_pointer != candidate:
+            return
+        if current_pointer != candidate:
+            raise IntegrationEvidenceInvalid()
+        if current_valid:
+            return
+    if current_bytes is not None and current_pointer != candidate:
+        raise IntegrationEvidenceInvalid()
+    if previous is None:
+        if current_identity is not None:
+            _safe_unlink_owned_file(
+                integration_fd,
+                "current.json",
+                current_identity,
+            )
+        os.fsync(integration_fd)
+        return
+    if not _pointer_bindings_are_valid(generations_fd=generations_fd, pointer=previous):
+        raise IntegrationEvidenceInvalid()
+    rollback_bytes = serialize_pointer(previous)
+    temporary_name = f"{_POINTER_STAGING_PREFIX}{secrets.token_hex(16)}"
+    identity = private_io.write_private_bytes_at(
+        integration_fd,
+        temporary_name,
+        rollback_bytes,
+        mode=0o600,
+    )
+    renamed = False
+    try:
+        _verify_named_file(
+            integration_fd,
+            temporary_name,
+            rollback_bytes,
+            maximum=_POINTER_MAX_BYTES,
+            hook=lambda *_: None,
+        )
+        repeated_bytes, repeated_pointer, _repeated_identity = (
+            _read_current_pointer_for_recovery(integration_fd=integration_fd)
+        )
+        if repeated_pointer is not None:
+            repeated_valid = _pointer_bindings_are_valid(
+                generations_fd=generations_fd,
+                pointer=repeated_pointer,
+            )
+            if repeated_valid and repeated_pointer != candidate:
+                return
+            if repeated_pointer != candidate:
+                raise IntegrationEvidenceInvalid()
+            if repeated_valid:
+                return
+        if repeated_bytes is not None and repeated_pointer != candidate:
+            raise IntegrationEvidenceInvalid()
+        os.replace(
+            temporary_name,
+            "current.json",
+            src_dir_fd=integration_fd,
+            dst_dir_fd=integration_fd,
+        )
+        renamed = True
+        _verify_named_file(
+            integration_fd,
+            "current.json",
+            rollback_bytes,
+            maximum=_POINTER_MAX_BYTES,
+            hook=lambda *_: None,
+        )
+        os.fsync(integration_fd)
+    finally:
+        if not renamed:
+            _safe_unlink_owned_file(integration_fd, temporary_name, identity)
+
+
+def _recover_committed_current_artifact(
+    *,
+    integration_fd: int,
+    generations_fd: int,
+    artifact: _PointerStagingArtifact,
+) -> None:
+    if _CURRENT_COMMIT_MARKER_RE.fullmatch(artifact.name) is not None:
+        marker_pattern = _CURRENT_COMMIT_MARKER_RE
+    elif _LEGACY_CURRENT_COMMIT_MARKER_RE.fullmatch(artifact.name) is not None:
+        marker_pattern = _LEGACY_CURRENT_COMMIT_MARKER_RE
+    else:
+        raise IntegrationEvidenceInvalid()
+    snapshot = _private_file_snapshot_at(
+        integration_fd,
+        artifact.name,
+        maximum=_POINTER_MAX_BYTES,
+    )
+    if not _same_private_file_snapshot(artifact.snapshot, snapshot):
+        raise IntegrationEvidenceInvalid()
+    marker_bytes, _marker_identity = _read_verified_evidence_file(
+        integration_fd,
+        artifact.name,
+        maximum=_POINTER_MAX_BYTES,
+        hook=lambda *_: None,
+    )
+    candidate, previous = _parse_current_commit_marker(marker_bytes)
+    _restore_previous_current_from_marker(
+        integration_fd=integration_fd,
+        generations_fd=generations_fd,
+        candidate=candidate,
+        previous=previous,
+    )
+    _remove_safe_pointer_staging_artifact(
+        integration_fd,
+        artifact,
+        pattern=marker_pattern,
+    )
+    os.fsync(integration_fd)
+
+
+def _recover_committed_current_artifacts(
+    *,
+    integration_fd: int,
+    generations_fd: int,
+    artifacts: tuple[_PointerStagingArtifact, ...],
+) -> None:
+    for artifact in sorted(artifacts, key=lambda item: item.name):
+        _recover_committed_current_artifact(
+            integration_fd=integration_fd,
+            generations_fd=generations_fd,
+            artifact=artifact,
+        )
+
+
+def _restore_stashed_current_if_missing(
+    *,
+    integration_fd: int,
+    generations_fd: int,
+    stashed: EvidencePointer,
+) -> None:
+    stashed_bytes = serialize_pointer(stashed)
+    if not _pointer_bindings_are_valid(generations_fd=generations_fd, pointer=stashed):
+        raise IntegrationEvidenceInvalid()
+    temporary_name = f"{_POINTER_STAGING_PREFIX}{secrets.token_hex(16)}"
+    identity = private_io.write_private_bytes_at(
+        integration_fd,
+        temporary_name,
+        stashed_bytes,
+        mode=0o600,
+    )
+    renamed = False
+    try:
+        _verify_named_file(
+            integration_fd,
+            temporary_name,
+            stashed_bytes,
+            maximum=_POINTER_MAX_BYTES,
+            hook=lambda *_: None,
+        )
+        try:
+            private_io._rename_private_lock_residue_no_replace(
+                source_fd=integration_fd,
+                source_name=temporary_name,
+                destination_fd=integration_fd,
+                destination_name="current.json",
+            )
+        except OSError as exc:
+            if exc.errno == errno.EEXIST:
+                raise IntegrationEvidenceInvalid() from exc
+            raise
+        renamed = True
+        _verify_named_file(
+            integration_fd,
+            "current.json",
+            stashed_bytes,
+            maximum=_POINTER_MAX_BYTES,
+            hook=lambda *_: None,
+        )
+        os.fsync(integration_fd)
+    finally:
+        if not renamed:
+            _safe_unlink_owned_file(integration_fd, temporary_name, identity)
+
+
+def _recover_current_rollback_stash_artifact(
+    *,
+    integration_fd: int,
+    generations_fd: int,
+    artifact: _PointerStagingArtifact,
+) -> None:
+    if _CURRENT_ROLLBACK_STASH_RE.fullmatch(artifact.name) is None:
+        raise IntegrationEvidenceInvalid()
+    snapshot = _private_file_snapshot_at(
+        integration_fd,
+        artifact.name,
+        maximum=_POINTER_MAX_BYTES,
+    )
+    if not _same_private_file_snapshot(artifact.snapshot, snapshot):
+        raise IntegrationEvidenceInvalid()
+    stash_bytes, _stash_identity = _read_verified_evidence_file(
+        integration_fd,
+        artifact.name,
+        maximum=_POINTER_MAX_BYTES,
+        hook=lambda *_: None,
+    )
+    stashed = _parse_current_rollback_stash(stash_bytes)
+    current_bytes, current_pointer, _current_identity = _read_current_pointer_for_recovery(
+        integration_fd=integration_fd
+    )
+    if current_pointer is None:
+        _restore_stashed_current_if_missing(
+            integration_fd=integration_fd,
+            generations_fd=generations_fd,
+            stashed=stashed,
+        )
+    elif current_pointer == stashed:
+        if not _pointer_bindings_are_valid(
+            generations_fd=generations_fd,
+            pointer=current_pointer,
+        ):
+            raise IntegrationEvidenceInvalid()
+    else:
+        if current_bytes is None or not _pointer_bindings_are_valid(
+            generations_fd=generations_fd,
+            pointer=current_pointer,
+        ):
+            raise IntegrationEvidenceInvalid()
+    _remove_safe_pointer_staging_artifact(
+        integration_fd,
+        artifact,
+        pattern=_CURRENT_ROLLBACK_STASH_RE,
+    )
+    os.fsync(integration_fd)
+
+
+def _recover_current_rollback_stash_artifacts(
+    *,
+    integration_fd: int,
+    generations_fd: int,
+    artifacts: tuple[_PointerStagingArtifact, ...],
+) -> None:
+    for artifact in sorted(artifacts, key=lambda item: item.name):
+        _recover_current_rollback_stash_artifact(
+            integration_fd=integration_fd,
+            generations_fd=generations_fd,
+            artifact=artifact,
+        )
+
+
 def _remove_safe_staging_directory(generations_fd: int, name: str) -> None:
     staging_fd = -1
     try:
@@ -1833,6 +2611,10 @@ def _remove_safe_staging_directory(generations_fd: int, name: str) -> None:
             if not _same_private_file_snapshot(snapshot, current):
                 raise IntegrationEvidenceInvalid()
             os.unlink(entry_name, dir_fd=staging_fd)
+        staging_identity = _refresh_directory_identity_after_mutation(
+            staging_fd,
+            staging_identity,
+        )
         os.fsync(staging_fd)
         if (
             _fd_identity(staging_fd) != staging_identity
@@ -1873,6 +2655,14 @@ def recover_evidence_staging(*, state_home: Path) -> None:
                 _recover_evidence_staging_from_fds(
                     integration_fd=integration_fd,
                     generations_fd=generations_fd,
+                )
+                integration_identity = _refresh_directory_identity_after_mutation(
+                    integration_fd,
+                    integration_identity,
+                )
+                generations_identity = _refresh_directory_identity_after_mutation(
+                    generations_fd,
+                    generations_identity,
                 )
                 fresh_state_identity, fresh_integration_identity = (
                     _fresh_parent_identities(state_home)
@@ -1937,15 +2727,25 @@ def _recover_evidence_staging_from_fds(
     integration_fd: int,
     generations_fd: int,
 ) -> _GenerationNamespace:
-    pointer_artifacts = _scan_integration_recovery_namespace(integration_fd)
+    recovery_artifacts = _scan_integration_recovery_namespace(integration_fd)
     namespace = _scan_generation_namespace(generations_fd)
     _recover_evidence_staging_from_namespace(
         generations_fd=generations_fd,
         namespace=namespace,
     )
+    _recover_committed_current_artifacts(
+        integration_fd=integration_fd,
+        generations_fd=generations_fd,
+        artifacts=recovery_artifacts.committed_current,
+    )
+    _recover_current_rollback_stash_artifacts(
+        integration_fd=integration_fd,
+        generations_fd=generations_fd,
+        artifacts=recovery_artifacts.rollback_stash,
+    )
     _recover_pointer_staging_artifacts(
         integration_fd=integration_fd,
-        artifacts=pointer_artifacts,
+        artifacts=recovery_artifacts.pointer_staging,
     )
     return namespace
 
@@ -1962,8 +2762,14 @@ def _atomic_replace_current(
     pointer_bytes: bytes,
     *,
     before_replace: Callable[[], None] | None = None,
+    after_replace: Callable[[], None] | None = None,
+    rollback_bytes: bytes | None = None,
+    post_commit_errors: list[BaseException] | None = None,
 ) -> None:
-    temporary_name = f".tmp-current.json-{secrets.token_hex(16)}"
+    temporary_name = f"{_POINTER_STAGING_PREFIX}{secrets.token_hex(16)}"
+    committed_marker_name = f"{_CURRENT_COMMIT_MARKER_PREFIX}{secrets.token_hex(16)}"
+    committed_marker_identity: FileIdentity | None = None
+    committed_marker_removable = False
     identity = private_io.write_private_bytes_at(
         integration_fd,
         temporary_name,
@@ -1979,20 +2785,110 @@ def _atomic_replace_current(
             maximum=_POINTER_MAX_BYTES,
             hook=lambda *_: None,
         )
-        if before_replace is not None:
-            before_replace()
-        os.replace(
-            temporary_name,
-            "current.json",
-            src_dir_fd=integration_fd,
-            dst_dir_fd=integration_fd,
+        committed_marker_bytes = _serialize_current_commit_marker(
+            candidate_pointer_bytes=pointer_bytes,
+            previous_pointer_bytes=rollback_bytes,
         )
+        committed_marker_identity = private_io.write_private_bytes_at(
+            integration_fd,
+            committed_marker_name,
+            committed_marker_bytes,
+            mode=0o600,
+        )
+        _verify_named_file(
+            integration_fd,
+            committed_marker_name,
+            committed_marker_bytes,
+            maximum=_POINTER_MAX_BYTES,
+            hook=lambda *_: None,
+        )
+        os.fsync(integration_fd)
+        try:
+            if before_replace is not None:
+                before_replace()
+        except BaseException:
+            committed_marker_removable = True
+            raise
+        try:
+            os.replace(
+                temporary_name,
+                "current.json",
+                src_dir_fd=integration_fd,
+                dst_dir_fd=integration_fd,
+            )
+        except BaseException:
+            try:
+                committed_identity = _verify_named_file(
+                    integration_fd,
+                    "current.json",
+                    pointer_bytes,
+                    maximum=_POINTER_MAX_BYTES,
+                    hook=lambda *_: None,
+                )
+            except BaseException:
+                committed_marker_removable = True
+                raise
+            renamed = True
+            _restore_current_after_failed_commit(
+                integration_fd=integration_fd,
+                committed_identity=committed_identity,
+                committed_pointer_bytes=pointer_bytes,
+                rollback_bytes=rollback_bytes,
+            )
+            committed_marker_removable = True
+            raise
         # Current namespace commit point; later work is durability/maintenance only.
         renamed = True
+        committed_identity = _verify_named_file(
+            integration_fd,
+            "current.json",
+            pointer_bytes,
+            maximum=_POINTER_MAX_BYTES,
+            hook=lambda *_: None,
+        )
+        try:
+            if after_replace is not None:
+                after_replace()
+        except IntegrationEvidenceError:
+            _restore_current_after_failed_commit(
+                integration_fd=integration_fd,
+                committed_identity=committed_identity,
+                committed_pointer_bytes=pointer_bytes,
+                rollback_bytes=rollback_bytes,
+            )
+            committed_marker_removable = True
+            raise
+        except (OSError, ValueError) as exc:
+            _restore_current_after_failed_commit(
+                integration_fd=integration_fd,
+                committed_identity=committed_identity,
+                committed_pointer_bytes=pointer_bytes,
+                rollback_bytes=rollback_bytes,
+            )
+            committed_marker_removable = True
+            raise IntegrationEvidenceInvalid() from exc
+        except BaseException:
+            _restore_current_after_failed_commit(
+                integration_fd=integration_fd,
+                committed_identity=committed_identity,
+                committed_pointer_bytes=pointer_bytes,
+                rollback_bytes=rollback_bytes,
+            )
+            committed_marker_removable = True
+            raise
         try:
             os.fsync(integration_fd)
-        except Exception:
-            pass
+        except BaseException as exc:
+            if post_commit_errors is not None:
+                post_commit_errors.append(exc)
+        committed_marker_removable = True
+        if committed_marker_identity is not None:
+            _safe_unlink_owned_file(
+                integration_fd,
+                committed_marker_name,
+                committed_marker_identity,
+            )
+            committed_marker_identity = None
     except IntegrationEvidenceError:
         raise
     except ValueError as exc:
@@ -2002,6 +2898,196 @@ def _atomic_replace_current(
     finally:
         if not renamed:
             _safe_unlink_owned_file(integration_fd, temporary_name, identity)
+        if committed_marker_removable and committed_marker_identity is not None:
+            _safe_unlink_owned_file(
+                integration_fd,
+                committed_marker_name,
+                committed_marker_identity,
+            )
+
+
+def _restore_pointer_bytes_if_current_missing(
+    *,
+    integration_fd: int,
+    pointer_bytes: bytes,
+) -> None:
+    parse_pointer(pointer_bytes)
+    temporary_name = f"{_POINTER_STAGING_PREFIX}{secrets.token_hex(16)}"
+    identity = private_io.write_private_bytes_at(
+        integration_fd,
+        temporary_name,
+        pointer_bytes,
+        mode=0o600,
+    )
+    renamed = False
+    try:
+        _verify_named_file(
+            integration_fd,
+            temporary_name,
+            pointer_bytes,
+            maximum=_POINTER_MAX_BYTES,
+            hook=lambda *_: None,
+        )
+        try:
+            private_io._rename_private_lock_residue_no_replace(
+                source_fd=integration_fd,
+                source_name=temporary_name,
+                destination_fd=integration_fd,
+                destination_name="current.json",
+            )
+        except OSError as exc:
+            if exc.errno == errno.EEXIST:
+                raise IntegrationEvidenceInvalid() from exc
+            raise
+        renamed = True
+        _verify_named_file(
+            integration_fd,
+            "current.json",
+            pointer_bytes,
+            maximum=_POINTER_MAX_BYTES,
+            hook=lambda *_: None,
+        )
+        os.fsync(integration_fd)
+    finally:
+        if not renamed:
+            _safe_unlink_owned_file(integration_fd, temporary_name, identity)
+
+
+def _restore_current_after_failed_commit(
+    *,
+    integration_fd: int,
+    committed_identity: FileIdentity,
+    committed_pointer_bytes: bytes,
+    rollback_bytes: bytes | None,
+) -> None:
+    def verify_committed_current(name: str = "current.json") -> None:
+        if (
+            _verify_named_file(
+                integration_fd,
+                name,
+                committed_pointer_bytes,
+                maximum=_POINTER_MAX_BYTES,
+                hook=lambda *_: None,
+            )
+            != committed_identity
+        ):
+            raise IntegrationEvidenceInvalid()
+
+    verify_committed_current()
+    stashed_current_name = f"{_CURRENT_ROLLBACK_STASH_PREFIX}{secrets.token_hex(16)}"
+    stashed_current_bytes = _serialize_current_rollback_stash(
+        target_name="current.json",
+        stashed_pointer_bytes=committed_pointer_bytes,
+    )
+    stashed_current_identity: FileIdentity | None = None
+    current_removed = False
+    temporary_name: str | None = None
+    identity: FileIdentity | None = None
+    renamed = False
+    try:
+        stashed_current_identity = private_io.write_private_bytes_at(
+            integration_fd,
+            stashed_current_name,
+            stashed_current_bytes,
+            mode=0o600,
+        )
+        _verify_named_file(
+            integration_fd,
+            stashed_current_name,
+            stashed_current_bytes,
+            maximum=_POINTER_MAX_BYTES,
+            hook=lambda *_: None,
+        )
+        os.fsync(integration_fd)
+        if rollback_bytes is None:
+            _before_current_rollback_swap(integration_fd)
+            verify_committed_current()
+            os.unlink(
+                "current.json",
+                dir_fd=integration_fd,
+            )
+            current_removed = True
+            os.fsync(integration_fd)
+            _safe_unlink_owned_file(
+                integration_fd,
+                stashed_current_name,
+                stashed_current_identity,
+            )
+            stashed_current_identity = None
+            current_removed = False
+            return
+        temporary_name = f"{_POINTER_STAGING_PREFIX}{secrets.token_hex(16)}"
+        identity = private_io.write_private_bytes_at(
+            integration_fd,
+            temporary_name,
+            rollback_bytes,
+            mode=0o600,
+        )
+        _verify_named_file(
+            integration_fd,
+            temporary_name,
+            rollback_bytes,
+            maximum=_POINTER_MAX_BYTES,
+            hook=lambda *_: None,
+        )
+        _before_current_rollback_swap(integration_fd)
+        verify_committed_current()
+        os.unlink(
+            "current.json",
+            dir_fd=integration_fd,
+        )
+        current_removed = True
+        os.fsync(integration_fd)
+        try:
+            private_io._rename_private_lock_residue_no_replace(
+                source_fd=integration_fd,
+                source_name=temporary_name,
+                destination_fd=integration_fd,
+                destination_name="current.json",
+            )
+        except OSError as exc:
+            if exc.errno == errno.EEXIST:
+                raise IntegrationEvidenceInvalid() from exc
+            raise
+        renamed = True
+        current_removed = False
+        _verify_named_file(
+            integration_fd,
+            "current.json",
+            rollback_bytes,
+            maximum=_POINTER_MAX_BYTES,
+            hook=lambda *_: None,
+        )
+        _safe_unlink_owned_file(
+            integration_fd,
+            stashed_current_name,
+            stashed_current_identity,
+        )
+        stashed_current_identity = None
+        os.fsync(integration_fd)
+    finally:
+        if (
+            rollback_bytes is not None
+            and not renamed
+            and temporary_name is not None
+            and identity is not None
+        ):
+            _safe_unlink_owned_file(integration_fd, temporary_name, identity)
+        if current_removed and stashed_current_identity is not None:
+            try:
+                _restore_pointer_bytes_if_current_missing(
+                    integration_fd=integration_fd,
+                    pointer_bytes=committed_pointer_bytes,
+                )
+                current_removed = False
+            except IntegrationEvidenceInvalid:
+                raise
+        if stashed_current_identity is not None and not current_removed:
+            _safe_unlink_owned_file(
+                integration_fd,
+                stashed_current_name,
+                stashed_current_identity,
+            )
 
 
 def _prune_complete_generations(
@@ -2081,7 +3167,10 @@ def gc_evidence_generations(
             generations_identity = _fd_identity(generations_fd)
             if (
                 state_identity != verified.state_home_identity
-                or integration_identity != verified.integration_parent_identity
+                or not _same_mutable_directory_identity(
+                    integration_identity,
+                    verified.integration_parent_identity,
+                )
                 or _named_identity(integration_fd, "generations", directory=True)
                 != generations_identity
             ):
@@ -2375,7 +3464,10 @@ def rollback_current_evidence(
             generations_identity = _fd_identity(generations_fd)
             if (
                 state_identity != verified.state_home_identity
-                or integration_identity != verified.integration_parent_identity
+                or not _same_mutable_directory_identity(
+                    integration_identity,
+                    verified.integration_parent_identity,
+                )
                 or _named_identity(integration_fd, "generations", directory=True)
                 != generations_identity
             ):
@@ -2455,6 +3547,7 @@ def rollback_current_evidence(
             _atomic_replace_current(
                 integration_fd,
                 serialize_pointer(rolled_back),
+                rollback_bytes=current_bytes,
             )
             return rolled_back
         except IntegrationEvidenceError:
@@ -2524,6 +3617,8 @@ def _publish_evidence_generation_locked(
     source_lock = None
     source_lock_acquired = False
     current_committed = False
+    primary_error: BaseException | None = None
+    post_commit_errors: list[BaseException] = []
     try:
         state_fd, app_fd, integration_fd, generations_fd = _open_evidence_parents(
             state_home
@@ -2533,7 +3628,10 @@ def _publish_evidence_generation_locked(
         held_generations_identity = _fd_identity(generations_fd)
         if (
             held_state_identity != verified.state_home_identity
-            or held_integration_identity != verified.integration_parent_identity
+            or not _same_mutable_directory_identity(
+                held_integration_identity,
+                verified.integration_parent_identity,
+            )
             or _named_identity(integration_fd, "generations", directory=True)
             != held_generations_identity
         ):
@@ -2543,23 +3641,35 @@ def _publish_evidence_generation_locked(
             POOL_AUTHORITY_SOURCE_FILENAME
         )
         source_lock = private_path_lock(
-            source_lock_path, label="pool authority source lock"
+            source_lock_path,
+            label="pool authority source lock",
+            create=False,
         )
         source_lock.__enter__()
         source_lock_acquired = True
-        authority_source_bytes, _authority_source_identity = (
-            _read_verified_evidence_file(
-                integration_fd,
-                POOL_AUTHORITY_SOURCE_FILENAME,
-                maximum=POOL_AUTHORITY_SOURCE_MAX_BYTES,
-                hook=_before_publish_pool_authority_source_recheck,
+        try:
+            authority_source_bytes, _authority_source_identity = (
+                _read_verified_evidence_file(
+                    integration_fd,
+                    POOL_AUTHORITY_SOURCE_FILENAME,
+                    maximum=POOL_AUTHORITY_SOURCE_MAX_BYTES,
+                    hook=_before_publish_pool_authority_source_recheck,
+                )
             )
-        )
-        authority_source = parse_pool_authority_source(authority_source_bytes)
+        except IntegrationEvidenceUnavailable as exc:
+            raise IntegrationInvalidSource() from exc
+        try:
+            authority_source = parse_pool_authority_source(authority_source_bytes)
+        except PoolAuthorityInvalid as exc:
+            raise IntegrationInvalidSource() from exc
 
         namespace = _recover_evidence_staging_from_fds(
             integration_fd=integration_fd,
             generations_fd=generations_fd,
+        )
+        held_generations_identity = _refresh_directory_identity_after_mutation(
+            generations_fd,
+            held_generations_identity,
         )
         old_pointer = _validate_existing_current(integration_fd, generations_fd)
         if old_pointer is not None:
@@ -2616,6 +3726,10 @@ def _publish_evidence_generation_locked(
             pointer=old_pointer,
             maximum=255,
         )
+        held_generations_identity = _refresh_directory_identity_after_mutation(
+            generations_fd,
+            held_generations_identity,
+        )
 
         for _attempt in range(16):
             generation_id = secrets.token_hex(16)
@@ -2630,6 +3744,10 @@ def _publish_evidence_generation_locked(
                 os.mkdir(staging_name, mode=0o700, dir_fd=generations_fd)
             except FileExistsError:
                 continue
+            held_generations_identity = _refresh_directory_identity_after_mutation(
+                generations_fd,
+                held_generations_identity,
+            )
             break
         else:
             raise IntegrationEvidenceUnavailable()
@@ -2709,12 +3827,23 @@ def _publish_evidence_generation_locked(
             maximum=_BINDING_MAX_BYTES,
             hook=_before_publish_binding_recheck,
         )
+        staged_identity = _refresh_directory_identity_after_mutation(
+            generation_fd,
+            staged_identity,
+        )
         os.fsync(generation_fd)
-        os.rename(
+        _publish_generation_directory_no_replace(
+            generations_fd,
             staging_name,
             generation_id,
-            src_dir_fd=generations_fd,
-            dst_dir_fd=generations_fd,
+        )
+        staged_identity = _refresh_directory_identity_after_mutation(
+            generation_fd,
+            staged_identity,
+        )
+        held_generations_identity = _refresh_directory_identity_after_mutation(
+            generations_fd,
+            held_generations_identity,
         )
         os.fsync(generations_fd)
         _before_publish_generation_recheck(
@@ -2739,14 +3868,24 @@ def _publish_evidence_generation_locked(
             expected_entrypoint_path=verified.active_release.entrypoint_path,
         )
         _require_same_verified_manifest(verified, repeated)
+        binding_digest = hashlib.sha256(binding_bytes).hexdigest()
+        _revalidate_published_generation_before_current(
+            generations_fd=generations_fd,
+            generation_id=generation_id,
+            generation_fd=generation_fd,
+            staged_identity=staged_identity,
+            binding_sha256=binding_digest,
+            verified=verified,
+        )
         pointer = EvidencePointer(
             generation_id,
-            hashlib.sha256(binding_bytes).hexdigest(),
+            binding_digest,
             1,
             old_pointer.current_generation_id if old_pointer else None,
             old_pointer.current_binding_sha256 if old_pointer else None,
         )
         pointer_bytes = serialize_pointer(pointer)
+
         def rebind_publish_parents() -> None:
             _before_publish_pointer_parent_recheck(state_home, integration_fd)
             fresh_state_identity, fresh_integration_identity = (
@@ -2760,10 +3899,16 @@ def _publish_evidence_generation_locked(
                 )
                 if (
                     _fd_identity(state_fd) != held_state_identity
-                    or _fd_identity(integration_fd) != held_integration_identity
+                    or not _same_mutable_directory_identity(
+                        _fd_identity(integration_fd),
+                        held_integration_identity,
+                    )
                     or _fd_identity(generations_fd) != held_generations_identity
                     or fresh_state_identity != held_state_identity
-                    or fresh_integration_identity != held_integration_identity
+                    or not _same_mutable_directory_identity(
+                        fresh_integration_identity,
+                        held_integration_identity,
+                    )
                     or _fd_identity(fresh_generations_fd)
                     != held_generations_identity
                     or _named_identity(
@@ -2774,6 +3919,14 @@ def _publish_evidence_generation_locked(
                     != held_generations_identity
                 ):
                     raise IntegrationEvidenceInvalid()
+                _revalidate_published_generation_before_current(
+                    generations_fd=generations_fd,
+                    generation_id=generation_id,
+                    generation_fd=generation_fd,
+                    staged_identity=staged_identity,
+                    binding_sha256=binding_digest,
+                    verified=verified,
+                )
             finally:
                 _close_fds(fresh_generations_fd)
 
@@ -2781,29 +3934,59 @@ def _publish_evidence_generation_locked(
             integration_fd,
             pointer_bytes,
             before_replace=rebind_publish_parents,
+            after_replace=rebind_publish_parents,
+            rollback_bytes=serialize_pointer(old_pointer) if old_pointer else None,
+            post_commit_errors=post_commit_errors,
         )
         current_committed = True
         return pointer
-    except IntegrationEvidenceError:
+    except IntegrationEvidenceError as exc:
+        primary_error = exc
         raise
-    except (IntegrationInvalidSource, PoolAuthorityInvalid) as exc:
-        raise IntegrationEvidenceInvalid() from exc
+    except IntegrationInvalidSource as exc:
+        primary_error = exc
+        raise
+    except PoolAuthorityInvalid as exc:
+        primary_error = IntegrationInvalidSource()
+        raise primary_error from exc
     except ValueError as exc:
-        raise IntegrationEvidenceInvalid() from exc
+        primary_error = IntegrationEvidenceInvalid()
+        raise primary_error from exc
     except OSError as exc:
-        raise IntegrationEvidenceUnavailable() from exc
+        primary_error = IntegrationEvidenceUnavailable()
+        raise primary_error from exc
+    except BaseException as exc:
+        primary_error = exc
+        raise
     finally:
+        cleanup_errors: list[BaseException] = []
+        cleanup_errors.extend(post_commit_errors)
         if source_lock_acquired:
             assert source_lock is not None
             try:
                 source_lock.__exit__(None, None, None)
-            except OSError:
-                if not current_committed:
-                    raise
-        _close_fds(
-            generation_fd,
-            generations_fd,
-            integration_fd,
-            app_fd,
-            state_fd,
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+        cleanup_errors.extend(
+            _close_fds_collect(
+                generation_fd,
+                generations_fd,
+                integration_fd,
+                app_fd,
+                state_fd,
+            )
         )
+        if not current_committed:
+            _raise_pre_current_cleanup_errors(
+                primary_error=primary_error,
+                cleanup_errors=cleanup_errors,
+            )
+        elif cleanup_errors:
+            # After current.json is committed, teardown failures are diagnostic only:
+            # callers must not retry an already committed publish.
+            try:
+                _record_committed_cleanup_error(
+                    _committed_cleanup_diagnostic(cleanup_errors)
+                )
+            except BaseException:
+                pass

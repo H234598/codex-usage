@@ -5,6 +5,7 @@ import json
 import multiprocessing
 import os
 import shutil
+import signal
 import stat
 import sys
 import threading
@@ -26,6 +27,8 @@ _SOURCE_FILES = (
     "src/codex_usage/integration_entrypoint.py",
     "src/codex_usage/integration_pool_authority.py",
     "src/codex_usage/integration_snapshot.py",
+    "src/codex_usage/integration_timeout_contract.py",
+    "src/codex_usage/integration_watchdog.py",
     "src/codex_usage/json_utils.py",
     "src/codex_usage/models.py",
     "src/codex_usage/history.py",
@@ -76,11 +79,6 @@ def evidence_layout(tmp_path):
         python_executable=Path(sys.executable),
         temporary_root=temporary_root,
     )
-    verified = verify_active_manifest_at(
-        state_home=state_home,
-        data_home=data_home,
-        expected_entrypoint_path=release.entrypoint_path,
-    )
     authority_source = (
         state_home
         / "codex-usage"
@@ -91,6 +89,11 @@ def evidence_layout(tmp_path):
         b'{"authorities":[],"pool_authority_source_schema_version":2}\n'
     )
     authority_source.chmod(0o600)
+    verified = verify_active_manifest_at(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=release.entrypoint_path,
+    )
     payload = serialize_schema2_document(
         {
             "accounts": [],
@@ -212,6 +215,70 @@ def test_publish_evidence_rechecks_pending_created_during_source_read(
             data_home=data_home,
             verified_active_manifest=verified,
         )
+
+
+@pytest.mark.parametrize(
+    ("source_payload", "missing"),
+    (
+        pytest.param(None, True, id="missing"),
+        pytest.param(b"{}", False, id="malformed"),
+    ),
+)
+def test_entrypoint_maps_pool_authority_source_read_parse_errors_to_rc65(
+    staged_evidence_layout,
+    source_payload,
+    missing,
+    monkeypatch,
+) -> None:
+    """Would fail if owner authority source failures were reported as secure IO."""
+    from codex_usage import integration_entrypoint
+    from codex_usage.integration_snapshot import IntegrationInvalidSource
+
+    state_home, data_home, entrypoint, payload, verified = staged_evidence_layout
+    source = state_home / "codex-usage/integration/pool-authority-source-v2.json"
+    if missing:
+        source.unlink()
+    else:
+        source.write_bytes(source_payload)
+
+    with pytest.raises(IntegrationInvalidSource):
+        integration_entrypoint._publish_evidence_generation_locked(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "read_current_usage_records",
+        lambda _current_dir: (),
+    )
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "_load_tracker_samples",
+        lambda _history_path, _usages, _now: {},
+    )
+    result = integration_entrypoint.execute(
+        ("integration-snapshot", "--schema", "2", "--format", "json"),
+        environ={
+            "XDG_DATA_HOME": str(data_home),
+            "XDG_STATE_HOME": str(state_home),
+        },
+        clock=lambda: datetime(2026, 8, 25, 10, 0, tzinfo=UTC),
+        expected_entrypoint_path=entrypoint,
+        verifier=lambda *_args: verified,
+    )
+
+    assert result.exit_code == 65
+    assert result.stdout == b""
+    assert result.stderr == b"integration_snapshot_invalid_source\n"
+    integration = state_home / "codex-usage/integration"
+    assert not (integration / "current.json").exists()
+    assert sorted(
+        entry.name
+        for entry in (integration / "generations").iterdir()
+        if not entry.name.startswith(".tmp-")
+    ) == []
 
 
 def test_publisher_commits_before_owner_can_withdraw_the_verified_authority(
@@ -406,6 +473,200 @@ def test_publisher_does_not_release_an_unacquired_source_lock(
     assert released == []
 
 
+def _flatten_errors(error: BaseException) -> list[BaseException]:
+    if isinstance(error, BaseExceptionGroup):
+        flattened: list[BaseException] = []
+        for nested in error.exceptions:
+            flattened.extend(_flatten_errors(nested))
+        return flattened
+    return [error]
+
+
+class _SyntheticEvidenceCleanupCancellation(BaseException):
+    pass
+
+
+def test_publish_pre_current_failure_aggregates_source_lock_and_fd_cleanup_errors(
+    staged_evidence_layout,
+    monkeypatch,
+) -> None:
+    """Would fail if cleanup errors replaced the primary pre-Current failure."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, payload, verified = staged_evidence_layout
+    integration = state_home / "codex-usage/integration"
+    real_private_path_lock = integration_evidence.private_path_lock
+    real_close = integration_evidence.os.close
+    close_attempts: list[int] = []
+    failing_close_count = 0
+    source_lock_released = False
+    primary_failure_triggered = False
+
+    class FailingRelease:
+        def __init__(self, context) -> None:
+            self._context = context
+
+        def __enter__(self):
+            return self._context.__enter__()
+
+        def __exit__(self, *args) -> bool:
+            nonlocal source_lock_released
+            source_lock_released = True
+            self._context.__exit__(*args)
+            raise OSError("synthetic source lock release failure")
+
+    def source_lock_with_failing_release(path: Path, **kwargs):
+        context = real_private_path_lock(path, **kwargs)
+        if kwargs.get("label") == "pool authority source lock":
+            return FailingRelease(context)
+        return context
+
+    def fail_first_two_relevant_closes(fd: int) -> None:
+        nonlocal failing_close_count
+        try:
+            opened_path = Path(os.readlink(f"/proc/self/fd/{fd}"))
+        except OSError:
+            opened_path = None
+        if (
+            primary_failure_triggered
+            and opened_path is not None
+            and state_home in {opened_path, *opened_path.parents}
+        ):
+            close_attempts.append(fd)
+            real_close(fd)
+            if failing_close_count < 2:
+                failing_close_count += 1
+                raise OSError(f"synthetic fd close failure {failing_close_count}")
+            return
+        real_close(fd)
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "private_path_lock",
+        source_lock_with_failing_release,
+    )
+    monkeypatch.setattr(integration_evidence.os, "close", fail_first_two_relevant_closes)
+    def fail_generation_recheck(*_args) -> None:
+        nonlocal primary_failure_triggered
+        primary_failure_triggered = True
+        raise integration_evidence.IntegrationEvidenceInvalid()
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_before_publish_generation_recheck",
+        fail_generation_recheck,
+    )
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+
+    flattened = _flatten_errors(exc_info.value)
+    assert any(
+        isinstance(error, integration_evidence.IntegrationEvidenceInvalid)
+        for error in flattened
+    )
+    assert any("source lock release failure" in str(error) for error in flattened)
+    assert sorted(
+        str(error)
+        for error in flattened
+        if isinstance(error, OSError) and "fd close failure" in str(error)
+    ) == ["synthetic fd close failure 1", "synthetic fd close failure 2"]
+    assert primary_failure_triggered
+    assert source_lock_released
+    assert len(close_attempts) >= 5
+    assert not (integration / "current.json").exists()
+
+
+def test_publish_pre_current_failure_aggregates_baseexception_cleanup_errors(
+    staged_evidence_layout,
+    monkeypatch,
+) -> None:
+    """Would fail if cleanup BaseException stopped later unlock/close attempts."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, payload, verified = staged_evidence_layout
+    integration = state_home / "codex-usage/integration"
+    real_private_path_lock = integration_evidence.private_path_lock
+    real_close = integration_evidence.os.close
+    close_attempts: list[int] = []
+    primary_failure_triggered = False
+
+    class FailingRelease:
+        def __init__(self, context) -> None:
+            self._context = context
+
+        def __enter__(self):
+            return self._context.__enter__()
+
+        def __exit__(self, *args) -> bool:
+            self._context.__exit__(*args)
+            raise _SyntheticEvidenceCleanupCancellation(
+                "synthetic source lock cleanup cancellation"
+            )
+
+    def source_lock_with_failing_release(path: Path, **kwargs):
+        context = real_private_path_lock(path, **kwargs)
+        if kwargs.get("label") == "pool authority source lock":
+            return FailingRelease(context)
+        return context
+
+    def observe_relevant_close(fd: int) -> None:
+        try:
+            opened_path = Path(os.readlink(f"/proc/self/fd/{fd}"))
+        except OSError:
+            opened_path = None
+        if (
+            primary_failure_triggered
+            and opened_path is not None
+            and state_home in {opened_path, *opened_path.parents}
+        ):
+            close_attempts.append(fd)
+        real_close(fd)
+
+    def fail_generation_recheck(*_args) -> None:
+        nonlocal primary_failure_triggered
+        primary_failure_triggered = True
+        raise integration_evidence.IntegrationEvidenceInvalid()
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "private_path_lock",
+        source_lock_with_failing_release,
+    )
+    monkeypatch.setattr(integration_evidence.os, "close", observe_relevant_close)
+    monkeypatch.setattr(
+        integration_evidence,
+        "_before_publish_generation_recheck",
+        fail_generation_recheck,
+    )
+
+    with pytest.raises(BaseExceptionGroup) as exc_info:
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+
+    flattened = _flatten_errors(exc_info.value)
+    assert any(
+        isinstance(error, integration_evidence.IntegrationEvidenceInvalid)
+        for error in flattened
+    )
+    assert any(
+        isinstance(error, _SyntheticEvidenceCleanupCancellation)
+        for error in flattened
+    )
+    assert primary_failure_triggered
+    assert len(close_attempts) >= 5
+    assert not (integration / "current.json").exists()
+
+
 def _replace_named_file(parent_fd: int, name: str, payload: bytes) -> None:
     old_name = f"old-{name}"
     os.rename(name, old_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
@@ -420,6 +681,95 @@ def _replace_named_file(parent_fd: int, name: str, payload: bytes) -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def _published_generation_dirs(state_home: Path) -> list[Path]:
+    generations = state_home / "codex-usage/integration/generations"
+    return sorted(
+        entry
+        for entry in generations.iterdir()
+        if entry.is_dir() and not entry.name.startswith(".tmp-")
+    )
+
+
+def test_publish_revalidates_generation_bundle_after_second_attestation(
+    staged_evidence_layout,
+    monkeypatch,
+) -> None:
+    """Would fail if a post-attestation generation mutation could still become Current."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, data_home, _entrypoint, payload, verified = staged_evidence_layout
+    real_verify = integration_evidence._verify_active_manifest_for_publish
+    verify_calls = 0
+
+    def mutate_generation_during_second_verify(**kwargs):
+        nonlocal verify_calls
+        verify_calls += 1
+        result = real_verify(**kwargs)
+        if verify_calls == 2:
+            generation = _published_generation_dirs(state_home)[0]
+            _rewrite_reader_file(
+                generation,
+                "account-usage-v2.json",
+                payload + b"\n",
+            )
+        return result
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_verify_active_manifest_for_publish",
+        mutate_generation_during_second_verify,
+    )
+
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+
+    assert verify_calls == 2
+    assert not (state_home / "codex-usage/integration/current.json").exists()
+
+
+def test_publish_revalidates_generation_bundle_directly_before_current_rename(
+    staged_evidence_layout,
+    monkeypatch,
+) -> None:
+    """Would fail if the current.json callback checked only parent directories."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, data_home, _entrypoint, payload, verified = staged_evidence_layout
+    real_hook = integration_evidence._before_publish_pointer_parent_recheck
+
+    def mutate_generation_at_current_callback(state_home_arg, integration_fd):
+        real_hook(state_home_arg, integration_fd)
+        generation = _published_generation_dirs(state_home)[0]
+        _rewrite_reader_file(
+            generation,
+            "pool-authority-v2.json",
+            b'{"pool_authority_schema_version":2}\n',
+        )
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_before_publish_pointer_parent_recheck",
+        mutate_generation_at_current_callback,
+    )
+
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+
+    assert not (state_home / "codex-usage/integration/current.json").exists()
 
 
 def _create_complete_generations(
@@ -660,6 +1010,227 @@ def _try_shared_evidence_lock(state_home_text: str, result) -> None:
         result.put("busy")
 
 
+def test_evidence_lock_set_rejects_foreign_private_lock_namespace_residue(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if publisher locks ignored global private-lock residues."""
+    from codex_usage import integration_evidence, private_io
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home = tmp_path / "state"
+    integration = state_home / "codex-usage" / "integration"
+    integration.mkdir(mode=0o700, parents=True)
+    state_home.chmod(0o700)
+    integration.parent.chmod(0o700)
+    lock_root = tmp_path / "lock-root"
+    lock_root.mkdir(mode=0o700)
+    lock_root.chmod(0o700)
+    monkeypatch.setattr(private_io, "_private_lock_root", lambda: lock_root)
+    for target in (integration / "producer-install", integration / "current.json"):
+        fd = os.open(
+            lock_root / integration_evidence._evidence_lock_name(target),
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+        )
+        os.close(fd)
+    residue = lock_root / (f"{3:064x}.lock.moved")
+    fd = os.open(
+        residue,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+    )
+    os.close(fd)
+
+    with pytest.raises(IntegrationEvidenceInvalid):
+        with integration_evidence.evidence_lock_set(
+            state_home=state_home,
+            release_mode="exclusive",
+            current_mode="exclusive",
+            timeout_seconds=0,
+            create=False,
+        ):
+            pass
+
+
+def test_evidence_lock_set_closes_fd_after_acquire_baseexception_before_append(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if BaseException between open and acquired.append leaked a lock fd."""
+    from codex_usage import integration_evidence, private_io
+
+    state_home = tmp_path / "state"
+    integration = state_home / "codex-usage" / "integration"
+    integration.mkdir(mode=0o700, parents=True)
+    state_home.chmod(0o700)
+    integration.parent.chmod(0o700)
+    lock_root = tmp_path / "lock-root"
+    lock_root.mkdir(mode=0o700)
+    lock_root.chmod(0o700)
+    monkeypatch.setattr(private_io, "_private_lock_root", lambda: lock_root)
+    real_open_lock_file = integration_evidence._open_lock_file
+    real_close = integration_evidence.os.close
+    opened_lock_fds: list[int] = []
+    closed_fds: list[int] = []
+
+    def track_open_lock_file(root_fd, name, *, create):
+        fd = real_open_lock_file(root_fd, name, create=create)
+        opened_lock_fds.append(fd)
+        return fd
+
+    def track_close(fd):
+        closed_fds.append(fd)
+        return real_close(fd)
+
+    def cancel_acquire(_fd, *, mode, deadline):
+        raise _SyntheticEvidenceCleanupCancellation("synthetic acquire cancellation")
+
+    monkeypatch.setattr(integration_evidence, "_open_lock_file", track_open_lock_file)
+    monkeypatch.setattr(integration_evidence.os, "close", track_close)
+    monkeypatch.setattr(integration_evidence, "_acquire_lock", cancel_acquire)
+
+    try:
+        with pytest.raises(_SyntheticEvidenceCleanupCancellation):
+            with integration_evidence.evidence_lock_set(
+                state_home=state_home,
+                release_mode="exclusive",
+                current_mode="exclusive",
+                timeout_seconds=0,
+                create=True,
+            ):
+                pass
+        assert opened_lock_fds
+        assert opened_lock_fds[0] in closed_fds
+    finally:
+        for fd in opened_lock_fds:
+            if fd not in closed_fds:
+                real_close(fd)
+
+
+def test_evidence_lock_set_closes_root_fd_when_identity_baseexception(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if root fd identity errors happened before cleanup ownership."""
+    from codex_usage import integration_evidence, private_io
+
+    state_home = tmp_path / "state"
+    integration = state_home / "codex-usage" / "integration"
+    integration.mkdir(mode=0o700, parents=True)
+    state_home.chmod(0o700)
+    integration.parent.chmod(0o700)
+    lock_root = tmp_path / "lock-root"
+    lock_root.mkdir(mode=0o700)
+    lock_root.chmod(0o700)
+    monkeypatch.setattr(private_io, "_private_lock_root", lambda: lock_root)
+    real_open_lock_root = integration_evidence._open_lock_root
+    real_fd_identity = integration_evidence._fd_identity
+    real_close = integration_evidence.os.close
+    opened_root_fds: list[int] = []
+    closed_fds: list[int] = []
+
+    def track_open_lock_root(*, create):
+        fd = real_open_lock_root(create=create)
+        opened_root_fds.append(fd)
+        return fd
+
+    def interrupt_root_identity(fd: int):
+        if opened_root_fds and fd == opened_root_fds[-1]:
+            raise _SyntheticEvidenceCleanupCancellation("synthetic root identity")
+        return real_fd_identity(fd)
+
+    def track_close(fd: int):
+        closed_fds.append(fd)
+        return real_close(fd)
+
+    monkeypatch.setattr(integration_evidence, "_open_lock_root", track_open_lock_root)
+    monkeypatch.setattr(integration_evidence, "_fd_identity", interrupt_root_identity)
+    monkeypatch.setattr(integration_evidence.os, "close", track_close)
+
+    try:
+        with pytest.raises(_SyntheticEvidenceCleanupCancellation):
+            with integration_evidence.evidence_lock_set(
+                state_home=state_home,
+                release_mode="exclusive",
+                current_mode="exclusive",
+                timeout_seconds=0,
+                create=True,
+            ):
+                pass
+        assert opened_root_fds
+        assert opened_root_fds[-1] in closed_fds
+        with pytest.raises(OSError):
+            os.fstat(opened_root_fds[-1])
+    finally:
+        for fd in opened_root_fds:
+            if fd not in closed_fds:
+                real_close(fd)
+
+
+def test_evidence_lock_set_cleanup_attempts_all_unlocks_after_baseexception(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if one unlock BaseException skipped later lock cleanup."""
+    from codex_usage import integration_evidence, private_io
+
+    state_home = tmp_path / "state"
+    integration = state_home / "codex-usage" / "integration"
+    integration.mkdir(mode=0o700, parents=True)
+    state_home.chmod(0o700)
+    integration.parent.chmod(0o700)
+    lock_root = tmp_path / "lock-root"
+    lock_root.mkdir(mode=0o700)
+    lock_root.chmod(0o700)
+    monkeypatch.setattr(private_io, "_private_lock_root", lambda: lock_root)
+    real_open_lock_file = integration_evidence._open_lock_file
+    real_close = integration_evidence.os.close
+    real_flock = integration_evidence.fcntl.flock
+    opened_lock_fds: list[int] = []
+    closed_fds: list[int] = []
+    unlock_attempts: list[int] = []
+
+    def track_open_lock_file(root_fd, name, *, create):
+        fd = real_open_lock_file(root_fd, name, create=create)
+        opened_lock_fds.append(fd)
+        return fd
+
+    def track_close(fd):
+        closed_fds.append(fd)
+        return real_close(fd)
+
+    def fail_first_unlock(fd, operation):
+        if operation == integration_evidence.fcntl.LOCK_UN:
+            unlock_attempts.append(fd)
+            if len(unlock_attempts) == 1:
+                raise _SyntheticEvidenceCleanupCancellation(
+                    "synthetic unlock cancellation"
+                )
+        return real_flock(fd, operation)
+
+    monkeypatch.setattr(integration_evidence, "_open_lock_file", track_open_lock_file)
+    monkeypatch.setattr(integration_evidence.os, "close", track_close)
+    monkeypatch.setattr(integration_evidence.fcntl, "flock", fail_first_unlock)
+
+    try:
+        with pytest.raises(_SyntheticEvidenceCleanupCancellation):
+            with integration_evidence.evidence_lock_set(
+                state_home=state_home,
+                release_mode="exclusive",
+                current_mode="exclusive",
+                timeout_seconds=0,
+                create=True,
+            ):
+                pass
+        assert len(unlock_attempts) == 2
+        assert all(fd in closed_fds for fd in opened_lock_fds)
+    finally:
+        for fd in opened_lock_fds:
+            if fd not in closed_fds:
+                real_close(fd)
+
+
 def _rewrite_complete_generation(
     state_home: Path,
     generation_id: str,
@@ -770,6 +1341,94 @@ def test_rollback_swaps_current_and_previous_in_one_pointer_rename(
     assert len(current_replaces) == 1
     assert current_replaces[0][1] == "current.json"
     assert count_complete_generation_directories(state_home) == 2
+
+
+def test_rollback_post_rename_failure_restores_previous_current_bytes(
+    staged_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if rollback omitted the previous Current from atomic recovery."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceUnavailable
+
+    state_home, data_home, _entrypoint, payload_bytes, verified = (
+        staged_evidence_layout
+    )
+    integration_evidence.publish_evidence_generation(
+        payload_bytes,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified,
+    )
+    second = integration_evidence.publish_evidence_generation(
+        payload_bytes,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified,
+    )
+    assert second.previous_binding_sha256 is not None
+    assert second.previous_generation_id is not None
+    previous_current = (
+        f'{{"current_binding_sha256":"{second.current_binding_sha256}",'
+        f'"current_generation_id":"{second.current_generation_id}",'
+        '"pointer_schema_version":1,'
+        f'"previous_binding_sha256":"{second.previous_binding_sha256}",'
+        f'"previous_generation_id":"{second.previous_generation_id}"}}'
+    ).encode("ascii")
+    rolled_back_current = (
+        f'{{"current_binding_sha256":"{second.previous_binding_sha256}",'
+        f'"current_generation_id":"{second.previous_generation_id}",'
+        '"pointer_schema_version":1,'
+        f'"previous_binding_sha256":"{second.current_binding_sha256}",'
+        f'"previous_generation_id":"{second.current_generation_id}"}}'
+    ).encode("ascii")
+    integration = state_home / "codex-usage/integration"
+    current = integration / "current.json"
+    current.write_bytes(previous_current)
+    current.chmod(0o600)
+    real_replace = integration_evidence.os.replace
+    replaced_current_bytes: list[bytes] = []
+    marker_documents: list[dict[str, object]] = []
+
+    def replace_then_fail(src, dst, *args, **kwargs):
+        result = real_replace(src, dst, *args, **kwargs)
+        if dst == "current.json" and not replaced_current_bytes:
+            replaced_current_bytes.append(current.read_bytes())
+            marker_documents.extend(
+                json.loads(entry.read_bytes())
+                for entry in integration.iterdir()
+                if entry.name.startswith(".tmp-current.commit-marker-")
+            )
+            raise OSError("synthetic rollback post-rename failure")
+        return result
+
+    monkeypatch.setattr(integration_evidence.os, "replace", replace_then_fail)
+
+    with pytest.raises(IntegrationEvidenceUnavailable):
+        integration_evidence.rollback_current_evidence(
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+
+    assert replaced_current_bytes == [rolled_back_current]
+    assert current.exists()
+    assert current.read_bytes() == previous_current
+    assert marker_documents == [
+        {
+            "candidate_current": json.loads(rolled_back_current),
+            "current_commit_marker_schema_version": 2,
+            "integration_recovery_artifact_type": "current-commit-marker",
+            "previous_current": json.loads(previous_current),
+            "target_name": "current.json",
+        }
+    ]
+    assert [
+        entry.name
+        for entry in integration.iterdir()
+        if entry.name.startswith(".tmp-current.commit-marker-")
+        or entry.name.startswith(".tmp-current.rollback-stash-")
+    ] == []
 
 
 def test_gc_scans_257_complete_generations_then_retains_256(
@@ -1809,6 +2468,9 @@ def _publish_until_crash(
     real_fsync = os.fsync
     real_rename = os.rename
     real_replace = os.replace
+    real_publish_generation_directory_no_replace = (
+        integration_evidence._publish_generation_directory_no_replace
+    )
 
     def wait_then_exit_after(operation):
         ready.set()
@@ -1880,6 +2542,30 @@ def _publish_until_crash(
             wait_then_exit_after(lambda: real_rename(src, dst, *args, **kwargs))
         return real_rename(src, dst, *args, **kwargs)
 
+    def publish_generation_directory_no_replace(
+        generations_fd: int,
+        staging_name: str,
+        generation_id: str,
+    ) -> None:
+        if (
+            scenario == "generation_rename"
+            and staging_name.startswith(".tmp-")
+            and integration_evidence._GENERATION_ID_RE.fullmatch(generation_id)
+            is not None
+        ):
+            wait_then_exit_after(
+                lambda: real_publish_generation_directory_no_replace(
+                    generations_fd,
+                    staging_name,
+                    generation_id,
+                )
+            )
+        real_publish_generation_directory_no_replace(
+            generations_fd,
+            staging_name,
+            generation_id,
+        )
+
     def replace(src, dst, *args, **kwargs):
         if scenario == "pointer_rename" and dst == "current.json":
             wait_then_exit_after(lambda: real_replace(src, dst, *args, **kwargs))
@@ -1896,6 +2582,9 @@ def _publish_until_crash(
     integration_evidence.os.fsync = fsync
     integration_evidence.os.rename = rename
     integration_evidence.os.replace = replace
+    integration_evidence._publish_generation_directory_no_replace = (
+        publish_generation_directory_no_replace
+    )
     try:
         integration_evidence.publish_evidence_generation(
             payload,
@@ -2016,6 +2705,430 @@ def _recover_and_read_after_crash(
         assert published.previous_generation_id == old_pointer.current_generation_id
 
 
+def _committed_current_marker_bytes(
+    *,
+    candidate_pointer,
+    previous_pointer,
+) -> bytes:
+    from codex_usage import integration_evidence
+
+    serializer = getattr(
+        integration_evidence,
+        "_serialize_current_commit_marker",
+        None,
+    )
+    if serializer is not None:
+        return serializer(
+            candidate_pointer_bytes=integration_evidence.serialize_pointer(
+                candidate_pointer
+            ),
+            previous_pointer_bytes=(
+                integration_evidence.serialize_pointer(previous_pointer)
+                if previous_pointer is not None
+                else None
+            ),
+        )
+    payload = {
+        "candidate_current": json.loads(
+            integration_evidence.serialize_pointer(candidate_pointer)
+        ),
+        "current_commit_marker_schema_version": 1,
+        "previous_current": (
+            json.loads(integration_evidence.serialize_pointer(previous_pointer))
+            if previous_pointer is not None
+            else None
+        ),
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _rollback_stash_artifact_bytes(*, stashed_pointer) -> bytes:
+    from codex_usage import integration_evidence
+
+    serializer = getattr(
+        integration_evidence,
+        "_serialize_current_rollback_stash",
+        None,
+    )
+    stashed_pointer_bytes = integration_evidence.serialize_pointer(stashed_pointer)
+    if serializer is None:
+        return stashed_pointer_bytes
+    return serializer(
+        target_name="current.json",
+        stashed_pointer_bytes=stashed_pointer_bytes,
+    )
+
+
+def _publish_until_sigkill_after_invalid_current(
+    mutation: str,
+    state_home: str,
+    data_home: str,
+    payload: bytes,
+    verified,
+    ready,
+    proceed,
+) -> None:
+    from codex_usage import integration_evidence
+
+    real_replace = os.replace
+    replaced = False
+
+    def replace_then_invalidate_generation(src, dst, *args, **kwargs):
+        nonlocal replaced
+        if dst == "current.json" and not replaced:
+            replaced = True
+            real_replace(src, dst, *args, **kwargs)
+            current = Path(state_home) / "codex-usage/integration/current.json"
+            pointer = integration_evidence.parse_pointer(current.read_bytes())
+            generation = (
+                Path(state_home)
+                / "codex-usage/integration/generations"
+                / pointer.current_generation_id
+            )
+            if mutation == "delete":
+                shutil.rmtree(generation)
+            elif mutation == "rebind":
+                generation.rename(generation.with_name(f".tmp-{generation.name}"))
+                generation.mkdir(mode=0o700)
+                generation.chmod(0o700)
+            else:
+                os._exit(88)
+            ready.set()
+            if not proceed.wait(10):
+                os._exit(91)
+            os.kill(os.getpid(), signal.SIGKILL)
+        return real_replace(src, dst, *args, **kwargs)
+
+    integration_evidence.os.replace = replace_then_invalidate_generation
+    try:
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=Path(state_home),
+            data_home=Path(data_home),
+            verified_active_manifest=verified,
+        )
+    except BaseException:
+        os._exit(92)
+    os._exit(93)
+
+
+def _publish_until_sigkill_after_current_remove_for_rollback(
+    state_home: str,
+    data_home: str,
+    payload: bytes,
+    verified,
+    ready,
+    proceed,
+) -> None:
+    from codex_usage import integration_evidence
+
+    real_rename = integration_evidence.os.rename
+    real_unlink = integration_evidence.os.unlink
+    parent_rechecks = 0
+
+    def fail_after_current_commit(_state_home, _integration_fd):
+        nonlocal parent_rechecks
+        parent_rechecks += 1
+        if parent_rechecks == 2:
+            raise integration_evidence.IntegrationEvidenceInvalid()
+
+    def crash_after_current_rename(src, dst, *args, **kwargs):
+        result = real_rename(src, dst, *args, **kwargs)
+        if (
+            src == "current.json"
+            and isinstance(dst, str)
+            and (
+                dst.startswith(".tmp-current.committed-")
+                or dst.startswith(".tmp-current.rollback-stash-")
+            )
+        ):
+            ready.set()
+            if not proceed.wait(10):
+                os._exit(91)
+            os.kill(os.getpid(), signal.SIGKILL)
+        return result
+
+    def crash_after_current_unlink(name, *args, **kwargs):
+        result = real_unlink(name, *args, **kwargs)
+        if name == "current.json":
+            ready.set()
+            if not proceed.wait(10):
+                os._exit(91)
+            os.kill(os.getpid(), signal.SIGKILL)
+        return result
+
+    integration_evidence._before_publish_pointer_parent_recheck = (
+        fail_after_current_commit
+    )
+    integration_evidence.os.rename = crash_after_current_rename
+    integration_evidence.os.unlink = crash_after_current_unlink
+    try:
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=Path(state_home),
+            data_home=Path(data_home),
+            verified_active_manifest=verified,
+        )
+    except BaseException:
+        os._exit(92)
+    os._exit(93)
+
+
+def test_recovery_restores_previous_current_from_committed_marker(
+    published_evidence_layout,
+):
+    """Would fail if current commit-marker artifacts were ignored by recovery."""
+    from codex_usage import integration_evidence
+
+    state_home, _data_home, _entrypoint, _payload, _verified, old_current = (
+        published_evidence_layout
+    )
+    integration = state_home / "codex-usage/integration"
+    previous = integration_evidence.parse_pointer(old_current)
+    candidate = integration_evidence.EvidencePointer(
+        "a" * 32,
+        "b" * 64,
+        1,
+        previous.current_generation_id,
+        previous.current_binding_sha256,
+    )
+    marker = integration / (
+        integration_evidence._CURRENT_COMMIT_MARKER_PREFIX
+        + "11111111111111111111111111111111"
+    )
+    marker.write_bytes(
+        _committed_current_marker_bytes(
+            candidate_pointer=candidate,
+            previous_pointer=previous,
+        )
+    )
+    marker.chmod(0o600)
+    (integration / "current.json").write_bytes(
+        integration_evidence.serialize_pointer(candidate)
+    )
+    (integration / "current.json").chmod(0o600)
+
+    integration_evidence.recover_evidence_staging(state_home=state_home)
+
+    assert (integration / "current.json").read_bytes() == old_current
+    assert not marker.exists()
+
+
+def test_current_commit_marker_and_rollback_stash_prefixes_are_disjoint():
+    from codex_usage import integration_evidence
+
+    assert (
+        integration_evidence._CURRENT_COMMIT_MARKER_PREFIX
+        != integration_evidence._CURRENT_ROLLBACK_STASH_PREFIX
+    )
+
+
+def test_recovery_does_not_parse_rollback_stash_as_commit_marker(
+    published_evidence_layout,
+):
+    """Would fail if a raw stashed current shared the commit-marker namespace."""
+    from codex_usage import integration_evidence
+
+    state_home, _data_home, _entrypoint, _payload, _verified, old_current = (
+        published_evidence_layout
+    )
+    integration = state_home / "codex-usage/integration"
+    previous = integration_evidence.parse_pointer(old_current)
+    candidate = integration_evidence.EvidencePointer(
+        "a" * 32,
+        "b" * 64,
+        1,
+        previous.current_generation_id,
+        previous.current_binding_sha256,
+    )
+    marker = integration / (
+        integration_evidence._CURRENT_COMMIT_MARKER_PREFIX
+        + "11111111111111111111111111111111"
+    )
+    marker.write_bytes(
+        _committed_current_marker_bytes(
+            candidate_pointer=candidate,
+            previous_pointer=previous,
+        )
+    )
+    marker.chmod(0o600)
+    stash_prefix = getattr(
+        integration_evidence,
+        "_CURRENT_ROLLBACK_STASH_PREFIX",
+        integration_evidence._CURRENT_COMMIT_MARKER_PREFIX,
+    )
+    stash = integration / (stash_prefix + "22222222222222222222222222222222")
+    stash.write_bytes(_rollback_stash_artifact_bytes(stashed_pointer=candidate))
+    stash.chmod(0o600)
+    (integration / "current.json").write_bytes(
+        integration_evidence.serialize_pointer(candidate)
+    )
+    (integration / "current.json").chmod(0o600)
+
+    integration_evidence.recover_evidence_staging(state_home=state_home)
+
+    assert (integration / "current.json").read_bytes() == old_current
+    assert not marker.exists()
+    assert not stash.exists()
+
+
+def test_sigkill_after_current_remove_for_rollback_recovers_old_current(
+    published_evidence_layout,
+):
+    """Would fail if crash recovery parsed the rollback stash as a commit marker."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, entrypoint, payload, verified, old_current = (
+        published_evidence_layout
+    )
+    context = multiprocessing.get_context("fork")
+    ready = context.Event()
+    proceed = context.Event()
+    child = context.Process(
+        target=_publish_until_sigkill_after_current_remove_for_rollback,
+        args=(
+            str(state_home),
+            str(data_home),
+            payload,
+            verified,
+            ready,
+            proceed,
+        ),
+    )
+    child.start()
+    try:
+        assert ready.wait(10)
+        proceed.set()
+        child.join(10)
+    finally:
+        if child.is_alive():
+            child.kill()
+            child.join(10)
+
+    assert child.exitcode == -signal.SIGKILL
+    integration_evidence.recover_evidence_staging(state_home=state_home)
+    assert (
+        state_home / "codex-usage/integration/current.json"
+    ).read_bytes() == old_current
+    document, status = integration_evidence.read_current_evidence(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=entrypoint,
+        now=datetime(2026, 8, 25, tzinfo=UTC),
+    )
+    assert status == "complete"
+    assert document["schema_version"] == 2
+
+
+@pytest.mark.parametrize("mutation", ("delete", "rebind"))
+def test_sigkill_after_current_replace_with_invalid_generation_recovers_old_current(
+    published_evidence_layout,
+    mutation,
+):
+    """Would fail if SIGKILL after current replace could persist an invalid pointer."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, entrypoint, payload, verified, old_current = (
+        published_evidence_layout
+    )
+    context = multiprocessing.get_context("fork")
+    ready = context.Event()
+    proceed = context.Event()
+    child = context.Process(
+        target=_publish_until_sigkill_after_invalid_current,
+        args=(
+            mutation,
+            str(state_home),
+            str(data_home),
+            payload,
+            verified,
+            ready,
+            proceed,
+        ),
+    )
+    child.start()
+    try:
+        assert ready.wait(10)
+        proceed.set()
+        child.join(10)
+    finally:
+        if child.is_alive():
+            child.kill()
+            child.join(10)
+
+    assert child.exitcode == -signal.SIGKILL
+    integration_evidence.recover_evidence_staging(state_home=state_home)
+    assert (
+        state_home / "codex-usage/integration/current.json"
+    ).read_bytes() == old_current
+    document, status = integration_evidence.read_current_evidence(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=entrypoint,
+        now=datetime(2026, 8, 25, tzinfo=UTC),
+    )
+    assert status == "complete"
+    assert document["schema_version"] == 2
+
+
+def test_concurrent_reader_never_accepts_current_with_rebound_generation(
+    published_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if a reader accepted a Current whose generation was rebound."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, data_home, entrypoint, payload, verified, old_current = (
+        published_evidence_layout
+    )
+    integration = state_home / "codex-usage/integration"
+    generations = integration / "generations"
+    real_replace = integration_evidence.os.replace
+    observed_statuses: list[str] = []
+    mutated_generation: str | None = None
+
+    def replace_then_read_invalid_current(src, dst, *args, **kwargs):
+        nonlocal mutated_generation
+        if dst == "current.json" and mutated_generation is None:
+            real_replace(src, dst, *args, **kwargs)
+            pointer = integration_evidence.parse_pointer(
+                (integration / "current.json").read_bytes()
+            )
+            mutated_generation = pointer.current_generation_id
+            generation = generations / pointer.current_generation_id
+            generation.rename(generation.with_name(f".tmp-{generation.name}"))
+            generation.mkdir(mode=0o700)
+            generation.chmod(0o700)
+            _document, status = integration_evidence.read_current_evidence(
+                state_home=state_home,
+                data_home=data_home,
+                expected_entrypoint_path=entrypoint,
+                now=datetime(2026, 8, 25, tzinfo=UTC),
+            )
+            observed_statuses.append(status)
+            return None
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(
+        integration_evidence.os,
+        "replace",
+        replace_then_read_invalid_current,
+    )
+
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+
+    assert mutated_generation is not None
+    assert observed_statuses and observed_statuses[0] != "complete"
+    assert (integration / "current.json").read_bytes() == old_current
+
+
 class TestCrashRecovery:
     def test_recovery_after_payload_write_before_fsync(
         self, published_evidence_layout
@@ -2126,13 +3239,13 @@ def test_publish_missing_or_partial_authority_source_never_commits_current(
     staged_evidence_layout,
 ):
     from codex_usage import integration_evidence
-    from codex_usage.private_io import IntegrationEvidenceError
+    from codex_usage.integration_snapshot import IntegrationInvalidSource
 
     state_home, data_home, _entrypoint, payload_bytes, verified = staged_evidence_layout
     integration = state_home / "codex-usage/integration"
     source = integration / "pool-authority-source-v2.json"
     source.unlink()
-    with pytest.raises(IntegrationEvidenceError):
+    with pytest.raises(IntegrationInvalidSource):
         integration_evidence.publish_evidence_generation(
             payload_bytes,
             state_home=state_home,
@@ -2146,7 +3259,7 @@ def test_publish_missing_or_partial_authority_source_never_commits_current(
         b'"pool_authority_source_schema_version":2}\n'
     )
     source.chmod(0o600)
-    with pytest.raises(IntegrationEvidenceError):
+    with pytest.raises(IntegrationInvalidSource):
         integration_evidence.publish_evidence_generation(
             payload_bytes,
             state_home=state_home,
@@ -2154,6 +3267,127 @@ def test_publish_missing_or_partial_authority_source_never_commits_current(
             verified_active_manifest=verified,
         )
     assert not (integration / "current.json").exists()
+
+
+def test_publish_missing_authority_source_does_not_create_source_lock(
+    staged_evidence_layout,
+):
+    """Would fail if missing Authority mutated the lock namespace before RC65."""
+    from codex_usage import integration_evidence, private_io
+    from codex_usage.integration_snapshot import IntegrationInvalidSource
+
+    state_home, data_home, _entrypoint, payload_bytes, verified = staged_evidence_layout
+    integration = state_home / "codex-usage/integration"
+    source = integration / "pool-authority-source-v2.json"
+    source.unlink()
+    lock_root = private_io._private_lock_root()
+    before = sorted(path.name for path in lock_root.iterdir())
+
+    with pytest.raises(IntegrationInvalidSource):
+        integration_evidence.publish_evidence_generation(
+            payload_bytes,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+
+    assert sorted(path.name for path in lock_root.iterdir()) == before
+    assert not (integration / "current.json").exists()
+
+
+def test_open_lock_file_closes_created_fd_on_baseexception(tmp_path, monkeypatch):
+    """Would fail if BaseException after os.open leaked the lock FD."""
+    from codex_usage import integration_evidence
+
+    root = tmp_path / "lock-root"
+    root.mkdir(mode=0o700)
+    root_fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    opened: list[int] = []
+    real_open = integration_evidence.os.open
+    real_fchmod = integration_evidence.os.fchmod
+
+    class SyntheticLockOpenCancellation(BaseException):
+        pass
+
+    def record_open(path, flags, *args, **kwargs):
+        fd = real_open(path, flags, *args, **kwargs)
+        if path == "created.lock":
+            opened.append(fd)
+        return fd
+
+    def interrupt_fchmod(fd, mode):
+        if opened and fd == opened[-1]:
+            raise SyntheticLockOpenCancellation("cancel after open")
+        return real_fchmod(fd, mode)
+
+    monkeypatch.setattr(integration_evidence.os, "open", record_open)
+    monkeypatch.setattr(integration_evidence.os, "fchmod", interrupt_fchmod)
+    try:
+        with pytest.raises(SyntheticLockOpenCancellation):
+            integration_evidence._open_lock_file(root_fd, "created.lock", create=True)
+        assert opened
+        with pytest.raises(OSError):
+            os.fstat(opened[-1])
+    finally:
+        for fd in opened:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        os.close(root_fd)
+
+
+def test_open_lock_file_reports_primary_and_close_errors(tmp_path, monkeypatch):
+    """Would fail if lock-open cleanup close errors were discarded."""
+    from codex_usage import integration_evidence, private_io
+
+    root = tmp_path / "lock-root"
+    root.mkdir(mode=0o700)
+    root_fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    opened: list[int] = []
+    real_open = integration_evidence.os.open
+    real_close = integration_evidence.os.close
+    real_fchmod = integration_evidence.os.fchmod
+
+    class SyntheticLockOpenError(Exception):
+        pass
+
+    def record_open(path, flags, *args, **kwargs):
+        fd = real_open(path, flags, *args, **kwargs)
+        if path == "created.lock":
+            opened.append(fd)
+        return fd
+
+    def interrupt_fchmod(fd, mode):
+        if opened and fd == opened[-1]:
+            raise SyntheticLockOpenError("synthetic lock open primary")
+        return real_fchmod(fd, mode)
+
+    def fail_target_close(fd: int) -> None:
+        if opened and fd == opened[-1]:
+            raise OSError("synthetic lock close failure")
+        real_close(fd)
+
+    monkeypatch.setattr(integration_evidence.os, "open", record_open)
+    monkeypatch.setattr(integration_evidence.os, "fchmod", interrupt_fchmod)
+    monkeypatch.setattr(integration_evidence.os, "close", fail_target_close)
+    try:
+        with pytest.raises(ExceptionGroup) as exc_info:
+            integration_evidence._open_lock_file(root_fd, "created.lock", create=True)
+        leaves = private_io._base_exception_leaves(exc_info.value.exceptions)
+        assert any(isinstance(error, SyntheticLockOpenError) for error in leaves)
+        assert any(
+            isinstance(error, OSError)
+            and "synthetic lock close failure" in str(error)
+            for error in leaves
+        )
+    finally:
+        for fd in opened:
+            try:
+                real_close(fd)
+            except OSError:
+                pass
+        real_close(root_fd)
 
 
 def test_publish_does_not_swap_current_when_second_active_digest_changes(
@@ -2325,6 +3559,311 @@ def test_publish_rejects_generation_directory_swap(
             verified_active_manifest=verified,
         )
     assert (state_home / "codex-usage/integration/current.json").read_bytes() == current_bytes
+
+
+def test_publish_generation_no_replace_rejects_raced_empty_target_before_current(
+    published_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if generation publish used replacing rename after the namespace scan."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceError
+
+    state_home, data_home, _entrypoint, payload, verified, current_bytes = (
+        published_evidence_layout
+    )
+    generations = state_home / "codex-usage/integration/generations"
+    real_no_replace = integration_evidence.private_io._rename_private_lock_residue_no_replace
+    raced_generation: str | None = None
+
+    def create_empty_generation_target_before_no_replace(
+        *,
+        source_fd,
+        source_name,
+        destination_fd,
+        destination_name,
+    ):
+        nonlocal raced_generation
+        if (
+            raced_generation is None
+            and isinstance(source_name, str)
+            and isinstance(destination_name, str)
+            and source_name.startswith(".tmp-")
+            and len(destination_name) == 32
+            and all(character in "0123456789abcdef" for character in destination_name)
+        ):
+            raced_generation = destination_name
+            os.mkdir(destination_name, mode=0o700, dir_fd=destination_fd)
+        return real_no_replace(
+            source_fd=source_fd,
+            source_name=source_name,
+            destination_fd=destination_fd,
+            destination_name=destination_name,
+        )
+
+    monkeypatch.setattr(
+        integration_evidence.private_io,
+        "_rename_private_lock_residue_no_replace",
+        create_empty_generation_target_before_no_replace,
+    )
+
+    with pytest.raises(IntegrationEvidenceError):
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+
+    assert raced_generation is not None
+    assert (state_home / "codex-usage/integration/current.json").read_bytes() == current_bytes
+    assert (generations / raced_generation).is_dir()
+    assert list((generations / raced_generation).iterdir()) == []
+
+
+@pytest.mark.parametrize("mutation", ("delete", "replace"))
+def test_publish_rejects_generation_race_inside_current_replace(
+    published_evidence_layout,
+    monkeypatch,
+    mutation,
+):
+    """Would fail if post-callback generation drift could commit invalid Current."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, data_home, _entrypoint, payload, verified, old_current = (
+        published_evidence_layout
+    )
+    integration = state_home / "codex-usage/integration"
+    generations = integration / "generations"
+    old_pointer = integration_evidence.parse_pointer(old_current)
+    real_replace = integration_evidence.os.replace
+    mutated_generation: str | None = None
+
+    def mutate_generation_inside_current_replace(src, dst, *args, **kwargs):
+        nonlocal mutated_generation
+        if dst == "current.json" and mutated_generation is None:
+            src_fd = kwargs["src_dir_fd"]
+            temp_fd = os.open(
+                src,
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=src_fd,
+            )
+            try:
+                pointer = integration_evidence.parse_pointer(os.read(temp_fd, 4096))
+            finally:
+                os.close(temp_fd)
+            mutated_generation = pointer.current_generation_id
+            generation = generations / pointer.current_generation_id
+            if mutation == "delete":
+                shutil.rmtree(generation)
+            else:
+                generation.rename(generations / f"old-{pointer.current_generation_id}")
+                generation.mkdir(mode=0o700)
+                generation.chmod(0o700)
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(
+        integration_evidence.os,
+        "replace",
+        mutate_generation_inside_current_replace,
+    )
+
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+
+    assert mutated_generation is not None
+    assert (integration / "current.json").read_bytes() == old_current
+    assert integration_evidence.parse_pointer(
+        (integration / "current.json").read_bytes()
+    ) == old_pointer
+
+
+def test_publish_crash_after_current_replace_cannot_persist_invalid_pointer(
+    published_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if a crash seam after current replace could leave invalid Current."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, payload, verified, old_current = (
+        published_evidence_layout
+    )
+    integration = state_home / "codex-usage/integration"
+    generations = integration / "generations"
+    old_pointer = integration_evidence.parse_pointer(old_current)
+    real_replace = integration_evidence.os.replace
+    crashed_generation: str | None = None
+
+    class SyntheticCrashAfterReplace(BaseException):
+        pass
+
+    def replace_current_then_crash(src, dst, *args, **kwargs):
+        nonlocal crashed_generation
+        if dst == "current.json" and crashed_generation is None:
+            src_fd = kwargs["src_dir_fd"]
+            temp_fd = os.open(
+                src,
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=src_fd,
+            )
+            try:
+                pointer = integration_evidence.parse_pointer(os.read(temp_fd, 4096))
+            finally:
+                os.close(temp_fd)
+            crashed_generation = pointer.current_generation_id
+            real_replace(src, dst, *args, **kwargs)
+            shutil.rmtree(generations / pointer.current_generation_id)
+            raise SyntheticCrashAfterReplace()
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(integration_evidence.os, "replace", replace_current_then_crash)
+
+    with pytest.raises(SyntheticCrashAfterReplace):
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+
+    assert crashed_generation is not None
+    assert (integration / "current.json").read_bytes() == old_current
+    assert integration_evidence.parse_pointer(
+        (integration / "current.json").read_bytes()
+    ) == old_pointer
+
+
+def test_publish_rollback_does_not_overwrite_current_replaced_after_commit_failure(
+    published_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if rollback used check-then-replace on current.json."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, data_home, _entrypoint, payload, verified, _old_current = (
+        published_evidence_layout
+    )
+    integration = state_home / "codex-usage/integration"
+    attacker_current = b'{"attacker":"newer-current"}\n'
+    parent_rechecks = 0
+    raced = False
+
+    def fail_after_current_commit(_state_home, _integration_fd):
+        nonlocal parent_rechecks
+        parent_rechecks += 1
+        if parent_rechecks == 2:
+            raise IntegrationEvidenceInvalid()
+
+    def replace_current_before_rollback_swap(_integration_fd):
+        nonlocal raced
+        raced = True
+        (integration / "current.json").write_bytes(attacker_current)
+        (integration / "current.json").chmod(0o600)
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_before_publish_pointer_parent_recheck",
+        fail_after_current_commit,
+    )
+    monkeypatch.setattr(
+        integration_evidence,
+        "_before_current_rollback_swap",
+        replace_current_before_rollback_swap,
+        raising=False,
+    )
+
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+
+    assert parent_rechecks == 2
+    assert raced
+    assert (integration / "current.json").read_bytes() == attacker_current
+
+
+def test_publish_rollback_does_not_overwrite_current_created_during_stash_window(
+    published_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if rollback replace overwrote a current created after stashing."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, data_home, _entrypoint, payload, verified, _old_current = (
+        published_evidence_layout
+    )
+    integration = state_home / "codex-usage/integration"
+    attacker_current = b'{"attacker":"created-during-stash-window"}\n'
+    parent_rechecks = 0
+    raced = False
+    real_rename = integration_evidence.os.rename
+    real_unlink = integration_evidence.os.unlink
+
+    def fail_after_current_commit(_state_home, _integration_fd):
+        nonlocal parent_rechecks
+        parent_rechecks += 1
+        if parent_rechecks == 2:
+            raise IntegrationEvidenceInvalid()
+
+    def create_current_after_stash(src, dst, *args, **kwargs):
+        nonlocal raced
+        real_rename(src, dst, *args, **kwargs)
+        if (
+            src == "current.json"
+            and isinstance(dst, str)
+            and (
+                dst.startswith(".tmp-current.committed-")
+                or dst.startswith(".tmp-current.rollback-stash-")
+            )
+            and not raced
+        ):
+            raced = True
+            (integration / "current.json").write_bytes(attacker_current)
+            (integration / "current.json").chmod(0o600)
+
+    def create_current_after_unlink(name, *args, **kwargs):
+        nonlocal raced
+        result = real_unlink(name, *args, **kwargs)
+        if name == "current.json" and not raced:
+            raced = True
+            (integration / "current.json").write_bytes(attacker_current)
+            (integration / "current.json").chmod(0o600)
+        return result
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_before_publish_pointer_parent_recheck",
+        fail_after_current_commit,
+    )
+    monkeypatch.setattr(integration_evidence.os, "rename", create_current_after_stash)
+    monkeypatch.setattr(integration_evidence.os, "unlink", create_current_after_unlink)
+
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+
+    assert parent_rechecks == 2
+    assert raced
+    assert (integration / "current.json").read_bytes() == attacker_current
 
 
 @pytest.mark.parametrize(
@@ -2621,6 +4160,220 @@ def test_publish_teardown_failures_return_committed_pointer_and_attempt_all_clea
     observed_unlock_targets = tuple(Path(target) for target in unlock_targets)
     assert len({target.parent for target in observed_unlock_targets}) == 1
     assert {target.name for target in observed_unlock_targets} == expected_unlock_names
+
+
+def test_publish_postcommit_cleanup_errors_emit_bounded_committed_diagnostic(
+    published_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if committed cleanup failures were silently discarded."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, payload, verified, old_current = (
+        published_evidence_layout
+    )
+    current = state_home / "codex-usage/integration/current.json"
+    real_private_path_lock = integration_evidence.private_path_lock
+    real_fsync = integration_evidence.os.fsync
+    real_close = integration_evidence.os.close
+    close_attempts: list[int] = []
+    diagnostics: list[dict[str, object]] = []
+    failed_close = False
+
+    class FailingRelease:
+        def __init__(self, context) -> None:
+            self._context = context
+
+        def __enter__(self):
+            return self._context.__enter__()
+
+        def __exit__(self, *args) -> bool:
+            self._context.__exit__(*args)
+            raise _SyntheticEvidenceCleanupCancellation(
+                "synthetic source lock cleanup secret sk-proj-test"
+            )
+
+    def source_lock_with_failing_release(path: Path, **kwargs):
+        context = real_private_path_lock(path, **kwargs)
+        if kwargs.get("label") == "pool authority source lock":
+            return FailingRelease(context)
+        return context
+
+    def fail_postcommit_fsync(fd: int) -> None:
+        if current.read_bytes() != old_current:
+            raise OSError("synthetic post-commit fsync secret sk-proj-test")
+        real_fsync(fd)
+
+    def fail_first_postcommit_close(fd: int) -> None:
+        nonlocal failed_close
+        try:
+            opened_path = Path(os.readlink(f"/proc/self/fd/{fd}"))
+        except OSError:
+            opened_path = None
+        if (
+            not failed_close
+            and current.read_bytes() != old_current
+            and opened_path is not None
+            and state_home in {opened_path, *opened_path.parents}
+        ):
+            failed_close = True
+            close_attempts.append(fd)
+            real_close(fd)
+            raise OSError("synthetic post-commit close secret sk-proj-test")
+        real_close(fd)
+
+    def capture_diagnostic(diagnostic: dict[str, object]) -> None:
+        diagnostics.append(diagnostic)
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "private_path_lock",
+        source_lock_with_failing_release,
+    )
+    monkeypatch.setattr(integration_evidence.os, "fsync", fail_postcommit_fsync)
+    monkeypatch.setattr(integration_evidence.os, "close", fail_first_postcommit_close)
+    monkeypatch.setattr(
+        integration_evidence,
+        "_record_committed_cleanup_error",
+        capture_diagnostic,
+        raising=False,
+    )
+
+    pointer = integration_evidence.publish_evidence_generation(
+        payload,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified,
+    )
+
+    assert current.read_bytes() != old_current
+    assert integration_evidence.parse_pointer(current.read_bytes()) == pointer
+    assert close_attempts
+    assert diagnostics == [
+        {
+            "token": "committed-with-cleanup-error",
+            "cleanup_error_count": 2,
+            "cleanup_error_types": ("OSError", "_SyntheticEvidenceCleanupCancellation"),
+            "cleanup_error_types_truncated": False,
+        }
+    ]
+    assert "sk-proj-test" not in repr(diagnostics)
+
+
+def test_committed_cleanup_diagnostic_flattens_baseexception_groups():
+    """Would fail if post-commit diagnostics hid nested cleanup failures."""
+    from codex_usage import integration_evidence
+
+    diagnostic = integration_evidence._committed_cleanup_diagnostic(
+        [
+            BaseExceptionGroup(
+                "outer",
+                [
+                    _SyntheticEvidenceCleanupCancellation("cancelled cleanup"),
+                    ExceptionGroup(
+                        "inner",
+                        [
+                            OSError("fsync failed"),
+                            RuntimeError("close failed"),
+                        ],
+                    ),
+                ],
+            ),
+            ValueError("diagnostic write failed"),
+        ]
+    )
+
+    assert diagnostic == {
+        "token": "committed-with-cleanup-error",
+        "cleanup_error_count": 4,
+        "cleanup_error_types": (
+            "OSError",
+            "RuntimeError",
+            "ValueError",
+            "_SyntheticEvidenceCleanupCancellation",
+        ),
+        "cleanup_error_types_truncated": False,
+    }
+
+
+def test_record_committed_cleanup_error_emits_bounded_secret_safe_json(capsys):
+    """Would fail while committed cleanup diagnostics were a test-only no-op."""
+    from codex_usage import integration_evidence
+
+    integration_evidence._record_committed_cleanup_error(
+        {
+            "token": "committed-with-cleanup-error",
+            "cleanup_error_count": 2,
+            "cleanup_error_types": ("OSError", "_SyntheticEvidenceCleanupCancellation"),
+            "cleanup_error_types_truncated": False,
+            "message": "secret sk-proj-test must not be emitted",
+        }
+    )
+
+    err = capsys.readouterr().err.strip()
+    assert err
+    assert "sk-proj-test" not in err
+    assert len(err.encode("utf-8")) <= 1024
+    payload = json.loads(err)
+    assert payload == {
+        "cleanup_error_count": 2,
+        "cleanup_error_types": ["OSError", "_SyntheticEvidenceCleanupCancellation"],
+        "cleanup_error_types_truncated": False,
+        "token": "committed-with-cleanup-error",
+    }
+
+
+def test_publish_precommit_baseexception_aggregates_cleanup_failures(
+    published_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if pre-current BaseException primary was masked by cleanup failure."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, payload, verified, _old_current = (
+        published_evidence_layout
+    )
+    real_close = integration_evidence.os.close
+    failed_fd: int | None = None
+    primary_seen = False
+
+    def abort_before_current(*_args, **_kwargs) -> None:
+        nonlocal primary_seen
+        primary_seen = True
+        raise _SyntheticEvidenceCleanupCancellation("synthetic publish cancellation")
+
+    def fail_first_state_close(fd: int) -> None:
+        nonlocal failed_fd
+        if primary_seen and failed_fd is None:
+            failed_fd = fd
+            raise OSError("synthetic precommit close failure")
+        real_close(fd)
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_before_publish_active_reverify",
+        abort_before_current,
+    )
+    monkeypatch.setattr(integration_evidence.os, "close", fail_first_state_close)
+    try:
+        with pytest.raises(BaseExceptionGroup) as exc:
+            integration_evidence.publish_evidence_generation(
+                payload,
+                state_home=state_home,
+                data_home=data_home,
+                verified_active_manifest=verified,
+            )
+    finally:
+        if failed_fd is not None:
+            try:
+                real_close(failed_fd)
+            except OSError:
+                pass
+
+    assert [type(error).__name__ for error in exc.value.exceptions[:2]] == [
+        "_SyntheticEvidenceCleanupCancellation",
+        "OSError",
+    ]
 
 
 def test_fd_private_io_round_trip_and_identity(tmp_path):

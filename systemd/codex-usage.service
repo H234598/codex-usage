@@ -1,13 +1,19 @@
 [Unit]
-Description=Watch ChatGPT Codex usage analytics and block exhausted accounts
-Documentation=man:systemd.service(5)
+Description=Watch ChatGPT Codex usage analytics
+Documentation=https://github.com/H234598/codex-usage
+X-Codex-Usage-Managed=true
 
 [Service]
-Type=simple
-ExecStart=%h/.local/bin/codex-usage watchdog --format table
+Type=oneshot
+ExecStart="%h/.local/bin/codex-usage-integration-watchdog" "--config" "%h/.config/codex-usage/config.toml"
 Environment=PYTHONUNBUFFERED=1
-TimeoutStartSec=120
-RuntimeMaxSec=180
+Environment=PYTHONSAFEPATH=1
+Environment=PYTHONNOUSERSITE=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment="XDG_DATA_HOME=%h/.local/share"
+Environment="XDG_STATE_HOME=%h/.local/state"
+UnsetEnvironment=PYTHONPATH PYTHONHOME PYTHONUSERBASE PYTHONSTARTUP PYTHONINSPECT PYTHONEXECUTABLE PYTHONBREAKPOINT PYTHONDEBUG PYTHONVERBOSE PYTHONCASEOK PYTHONPYCACHEPREFIX PYTHONPLATLIBDIR LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT LD_DEBUG LD_ORIGIN_PATH LD_PROFILE LD_USE_LOAD_BIAS DYLD_LIBRARY_PATH DYLD_INSERT_LIBRARIES
+TimeoutStartSec=270
 TimeoutStopSec=15
 KillMode=mixed
 MemoryMax=1G
@@ -22,7 +28,10 @@ ProtectClock=true
 ProtectHostname=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/.config/codex-usage %h/.local/share/codex-usage %h/.cache/ms-playwright
+ReadWritePaths="%h/.cache/ms-playwright"
+ReadWritePaths="%h/.local/share/codex-usage"
+ReadWritePaths="%h/.local/state/codex-usage/integration"
+ReadWritePaths="%h/.local/state/codex-usage/locks"
 RestrictSUIDSGID=true
 ProtectKernelTunables=true
 ProtectKernelModules=true

@@ -306,18 +306,26 @@ def test_entrypoint_uses_release_then_current_exclusive_lock_set(
     staged = replace(
         staged,
         state_home_identity=FileIdentity(
-            state_item.st_dev, state_item.st_ino, stat.S_IMODE(state_item.st_mode)
+            state_item.st_dev,
+            state_item.st_ino,
+            stat.S_IMODE(state_item.st_mode),
+            state_item.st_gid,
         ),
         integration_parent_identity=FileIdentity(
             integration_item.st_dev,
             integration_item.st_ino,
             stat.S_IMODE(integration_item.st_mode),
+            integration_item.st_gid,
         ),
         active_file_identity=FileIdentity(
-            active_item.st_dev, active_item.st_ino, stat.S_IMODE(active_item.st_mode)
+            active_item.st_dev,
+            active_item.st_ino,
+            stat.S_IMODE(active_item.st_mode),
+            active_item.st_gid,
         ),
     )
-    lock_root = private_io._private_lock_root()
+    lock_root = tmp_path / "lock-root"
+    monkeypatch.setattr(private_io, "_private_lock_root", lambda: lock_root)
     private_io.ensure_private_directory(lock_root, label="test lock root")
     for target in (integration / "producer-install", integration / "current.json"):
         lock_path = lock_root / integration_evidence._evidence_lock_name(target)
@@ -338,9 +346,9 @@ def test_entrypoint_uses_release_then_current_exclusive_lock_set(
         },
     )
     monkeypatch.setattr(
-        integration_evidence,
-        "_verify_active_manifest_for_publish",
-        lambda **kwargs: staged,
+        integration_entrypoint,
+        "_publish_evidence_generation_locked",
+        lambda *_args, **_kwargs: None,
     )
     lock_calls: list[dict[str, object]] = []
 

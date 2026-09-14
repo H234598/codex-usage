@@ -1651,8 +1651,14 @@ def _block_state(usage: AccountUsage, *, now: datetime) -> tuple[datetime | None
     pool_forces_block = _pool_forces_watchdog_block(usage.main)
     if pool_forces_block and not watchdog_windows:
         return None, "usage limit reached: main; reset time unknown"
-    for window in watchdog_windows:
-        if window is None or (not pool_forces_block and not _window_is_exhausted(window)):
+    exhausted_windows = tuple(
+        window
+        for window in watchdog_windows
+        if window is not None and _window_is_exhausted(window)
+    )
+    selected_windows = exhausted_windows or (watchdog_windows if pool_forces_block else ())
+    for window in selected_windows:
+        if window is None:
             continue
         reset_at = getattr(window, "reset_at", None)
         if reset_at is None:

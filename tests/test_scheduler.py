@@ -5659,6 +5659,48 @@ def test_watchdog_blocks_main_pool_flags_even_with_remaining_value(field, value)
     )
 
 
+def test_watchdog_pool_flag_does_not_extend_block_to_free_window_reset():
+    usage = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime(2026, 9, 14, 10, 0, tzinfo=ZoneInfo("UTC")),
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(
+                LimitWindow(
+                    name="5h",
+                    remaining=0,
+                    reset_at=datetime(2026, 9, 14, 11, 0, tzinfo=ZoneInfo("UTC")),
+                ),
+                LimitWindow(
+                    name="weekly",
+                    remaining=80,
+                    reset_at=datetime(2026, 9, 20, 10, 0, tzinfo=ZoneInfo("UTC")),
+                ),
+            ),
+            limit_reached=True,
+        ),
+    )
+
+    blocked = _apply_watchdog_block(
+        usage,
+        now=datetime(2026, 9, 14, 10, 0, tzinfo=ZoneInfo("UTC")),
+    )
+
+    assert (
+        blocked.status,
+        blocked.blocked_until,
+        blocked.blocked_reason,
+        blocked.error,
+    ) == (
+        AccountStatus.BLOCKED,
+        datetime(2026, 9, 14, 11, 0, tzinfo=ZoneInfo("UTC")),
+        "usage limit reached: 5h; release at 2026-09-14T11:00:00+00:00",
+        "usage limit reached: 5h; release at 2026-09-14T11:00:00+00:00",
+    )
+
+
 def test_watchdog_blocks_until_latest_reset_when_multiple_windows_are_exhausted(monkeypatch):
     accounts = (Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked"),)
     exhausted_usage = AccountUsage(

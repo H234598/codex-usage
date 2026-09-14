@@ -17,7 +17,6 @@ import stat
 import subprocess
 import sys
 import time
-import venv
 import zipfile
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -46,6 +45,7 @@ from .integration_evidence import (
 )
 from .json_utils import loads_strict
 from .private_io import (
+    _base_exception_leaves,
     ensure_private_directory,
     read_private_bytes_at,
     read_private_text,
@@ -85,12 +85,17 @@ DIST_INFO_FILES = frozenset({"METADATA", "WHEEL", "RECORD", "top_level.txt"})
 EXPECTED_WHEEL_NAME = "codex_usage_integration_producer-0.6.537-py3-none-any.whl"
 BUILDER_PREFLIGHT_TIMEOUT_SECONDS = 30
 BUILDER_PREFLIGHT_MAX_OUTPUT_BYTES = 64 * 1024
+BUILDER_VENV_TIMEOUT_SECONDS = 60
 BUILDER_WHEEL_TIMEOUT_SECONDS = 120
+BUILDER_CLEANUP_WAIT_SECONDS = 2.0
 MAX_INSTALL_FILE_BYTES = MAX_ATTESTATION_FILE_BYTES
+MAX_PYTHON_EXECUTABLE_BYTES = 128 * 1024 * 1024
 MAX_INTEGRATION_MANIFEST_BYTES = 128 * 1024
 MAX_ACTIVE_TRANSACTION_ARTIFACTS = 8
 MAX_INTEGRATION_DIRECTORY_ENTRIES = 64
 MAX_LEGACY_EVIDENCE_GENERATIONS = 257
+_KERNEL_OVERFLOW_UID_PATH = Path("/proc/sys/kernel/overflowuid")
+_SYSTEM_PYTHON_ROOT = Path("/usr/bin")
 _LEGACY_EVIDENCE_CUTOVER_PREFIX = ".evidence-v1-cutover-"
 _LEGACY_EVIDENCE_CUTOVER_RE = re.compile(
     r"\A\.evidence-v1-cutover-(?P<kind>current|generations)-"
@@ -140,6 +145,28 @@ _BUILDER_PREFLIGHT_CODE = (
     "print(json.dumps({'backend':'setuptools.command.bdist_wheel.bdist_wheel',"
     "'setuptools':setuptools.__version__}, sort_keys=True))\n"
 )
+_WHEEL_BUILDER_CODE = (
+    "import os, sys\n"
+    "from setuptools import build_meta\n"
+    "args=sys.argv[1:]\n"
+    "wheel_dir=None\n"
+    "build_root=None\n"
+    "for index, argument in enumerate(args):\n"
+    "    if argument == '--wheel-dir' and index + 1 < len(args):\n"
+    "        wheel_dir=args[index + 1]\n"
+    "if args:\n"
+    "    build_root=args[-1]\n"
+    "if wheel_dir is None or build_root is None:\n"
+    "    raise SystemExit(2)\n"
+    "old_umask=os.umask(0o077)\n"
+    "try:\n"
+    "    os.chdir(build_root)\n"
+    "    built=build_meta.build_wheel(wheel_dir)\n"
+    "finally:\n"
+    "    os.umask(old_umask)\n"
+    f"if built != {EXPECTED_WHEEL_NAME!r}:\n"
+    "    raise SystemExit(3)\n"
+)
 _GENERATED_PYPROJECT = """[build-system]
 requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
@@ -181,6 +208,7 @@ class _DirectoryIdentity:
     device: int
     inode: int
     permissions: int
+    gid: int
 
 
 @dataclass(frozen=True)
@@ -188,6 +216,7 @@ class _FileIdentity:
     device: int
     inode: int
     permissions: int
+    gid: int
 
 
 @dataclass(frozen=True)
@@ -197,6 +226,20 @@ class _ProvisionalIdentity:
     uid: int
     file_type: int
     permissions: int
+    gid: int
+
+
+@dataclass(frozen=True)
+class _PythonExecutableBinding:
+    identity: _ProvisionalIdentity
+    nlink: int
+    size: int
+    mtime_ns: int
+    ctime_ns: int
+    sha256: str
+
+
+_RESOLVED_PYTHON_EXECUTABLES: dict[Path, _PythonExecutableBinding] = {}
 
 
 @dataclass(frozen=True)
@@ -292,7 +335,12 @@ def _identity(path: Path) -> _DirectoryIdentity:
         or stat.S_IMODE(item.st_mode) != 0o700
     ):
         _fail()
-    return _DirectoryIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
+    return _DirectoryIdentity(
+        item.st_dev,
+        item.st_ino,
+        stat.S_IMODE(item.st_mode),
+        item.st_gid,
+    )
 
 
 def _directory_identity(path: Path) -> _DirectoryIdentity:
@@ -303,7 +351,12 @@ def _directory_identity(path: Path) -> _DirectoryIdentity:
         _fail()
     if not stat.S_ISDIR(item.st_mode) or item.st_uid != os.getuid():
         _fail()
-    return _DirectoryIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
+    return _DirectoryIdentity(
+        item.st_dev,
+        item.st_ino,
+        stat.S_IMODE(item.st_mode),
+        item.st_gid,
+    )
 
 
 def _file_identity_for_mode(path: Path, mode: int) -> _FileIdentity:
@@ -319,7 +372,12 @@ def _file_identity_for_mode(path: Path, mode: int) -> _FileIdentity:
         or stat.S_IMODE(item.st_mode) != mode
     ):
         _fail()
-    return _FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
+    return _FileIdentity(
+        item.st_dev,
+        item.st_ino,
+        stat.S_IMODE(item.st_mode),
+        item.st_gid,
+    )
 
 
 def _file_identity(path: Path) -> _FileIdentity:
@@ -333,6 +391,7 @@ def _provisional_from_stat(item: os.stat_result) -> _ProvisionalIdentity:
         item.st_uid,
         stat.S_IFMT(item.st_mode),
         stat.S_IMODE(item.st_mode),
+        item.st_gid,
     )
 
 
@@ -462,6 +521,7 @@ def _remove_owned_entry(
                 parent_item.st_dev,
                 parent_item.st_ino,
                 stat.S_IMODE(parent_item.st_mode),
+                parent_item.st_gid,
             )
             != parent_identity
         ):
@@ -481,13 +541,19 @@ def _remove_owned_entry(
                     item.st_dev,
                     item.st_ino,
                     stat.S_IMODE(item.st_mode),
+                    item.st_gid,
                 )
                 != identity
             ):
                 return False
         elif (
             item.st_uid != os.getuid()
-            or _FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
+            or _FileIdentity(
+                item.st_dev,
+                item.st_ino,
+                stat.S_IMODE(item.st_mode),
+                item.st_gid,
+            )
             != identity
         ):
             return False
@@ -588,6 +654,7 @@ def _rename_owned_directory(
                 parent_item.st_dev,
                 parent_item.st_ino,
                 stat.S_IMODE(parent_item.st_mode),
+                parent_item.st_gid,
             )
             != parent_identity
         ):
@@ -600,6 +667,7 @@ def _rename_owned_directory(
                 source_item.st_dev,
                 source_item.st_ino,
                 stat.S_IMODE(source_item.st_mode),
+                source_item.st_gid,
             )
             != source_identity
         ):
@@ -626,6 +694,7 @@ def _rename_owned_directory(
                 final_item.st_dev,
                 final_item.st_ino,
                 stat.S_IMODE(final_item.st_mode),
+                final_item.st_gid,
             )
             != source_identity
         ):
@@ -686,6 +755,7 @@ def _create_private_directory(
                 parent_item.st_dev,
                 parent_item.st_ino,
                 stat.S_IMODE(parent_item.st_mode),
+                parent_item.st_gid,
             )
             != parent_identity
         ):
@@ -708,6 +778,7 @@ def _create_private_directory(
             final_item.st_dev,
             final_item.st_ino,
             stat.S_IMODE(final_item.st_mode),
+            final_item.st_gid,
         )
         if (
             not stat.S_ISDIR(final_item.st_mode)
@@ -722,6 +793,7 @@ def _create_private_directory(
             parent_final.st_dev,
             parent_final.st_ino,
             stat.S_IMODE(parent_final.st_mode),
+            parent_final.st_gid,
         ) != parent_identity:
             _fail()
         return final
@@ -835,6 +907,7 @@ def _require_private_dir(
                     parent_item.st_dev,
                     parent_item.st_ino,
                     stat.S_IMODE(parent_item.st_mode),
+                    parent_item.st_gid,
                 )
                 != parent_identity
             ):
@@ -851,6 +924,7 @@ def _require_private_dir(
                 parent_final.st_dev,
                 parent_final.st_ino,
                 stat.S_IMODE(parent_final.st_mode),
+                parent_final.st_gid,
             ) != parent_identity:
                 _fail()
             if _directory_identity(path.parent) != parent_identity:
@@ -928,6 +1002,7 @@ def _open_bound_parent_fd(
                 item.st_dev,
                 item.st_ino,
                 stat.S_IMODE(item.st_mode),
+                item.st_gid,
             )
             != parent_identity
         ):
@@ -955,7 +1030,12 @@ def _read_bound_integration_manifest(
         )
     finally:
         os.close(parent_fd)
-    return payload, _FileIdentity(identity.device, identity.inode, identity.mode)
+    return payload, _FileIdentity(
+        identity.device,
+        identity.inode,
+        identity.mode,
+        identity.gid,
+    )
 
 
 def _prepare_install_provenance(
@@ -1223,6 +1303,7 @@ def _legacy_evidence_cutover_artifacts(
                         item.st_dev,
                         item.st_ino,
                         stat.S_IMODE(item.st_mode),
+                        item.st_gid,
                     )
                 else:
                     if (
@@ -1236,6 +1317,7 @@ def _legacy_evidence_cutover_artifacts(
                         item.st_dev,
                         item.st_ino,
                         stat.S_IMODE(item.st_mode),
+                        item.st_gid,
                     )
     except (OSError, ValueError):
         _fail()
@@ -1575,7 +1657,7 @@ def _rollback_legacy_evidence_v1_cutover(
                 == cutover.current_identity
             )
         )
-    except (IntegrationInstallError, OSError, ValueError):
+    except BaseException:
         return False
     finally:
         if parent_fd >= 0:
@@ -1611,6 +1693,7 @@ def _provisional_from_file_identity(identity: _FileIdentity) -> _ProvisionalIden
         os.getuid(),
         stat.S_IFREG,
         identity.permissions,
+        identity.gid,
     )
 
 
@@ -1669,6 +1752,7 @@ def _transaction_identity(device_text: str, inode_text: str) -> _ProvisionalIden
         os.getuid(),
         stat.S_IFREG,
         0o600,
+        os.getgid(),
     )
 
 
@@ -1902,7 +1986,7 @@ def _rollback_active_publish_at(
             except OSError:
                 pass
         return True
-    except (IntegrationInstallError, OSError, ValueError):
+    except BaseException:
         return False
 
 
@@ -1921,7 +2005,7 @@ def _rollback_active_publish(
             integration_identity,
             parent_fd,
         )
-    except (IntegrationInstallError, OSError, ValueError):
+    except BaseException:
         return False
     finally:
         if parent_fd >= 0:
@@ -1998,7 +2082,7 @@ def _begin_active_publish(
             _fail()
         os.fsync(parent_fd)
         return publish_record
-    except Exception as publish_error:
+    except BaseException as publish_error:
         recovery_ok = True
         if published:
             recovery_ok = _rollback_active_publish_at(
@@ -2104,6 +2188,7 @@ def _copy_regular(
                     source_stat.st_dev,
                     source_stat.st_ino,
                     stat.S_IMODE(source_stat.st_mode),
+                    source_stat.st_gid,
                 )
                 != source_identity
             )
@@ -2113,6 +2198,7 @@ def _copy_regular(
             source_stat.st_dev,
             source_stat.st_ino,
             stat.S_IMODE(source_stat.st_mode),
+            source_stat.st_gid,
         )
         ensure_private_directory(target.parent, label="integration target directory")
         target_parent_identity = _directory_identity(target.parent)
@@ -2132,6 +2218,7 @@ def _copy_regular(
                 parent_item.st_dev,
                 parent_item.st_ino,
                 stat.S_IMODE(parent_item.st_mode),
+                parent_item.st_gid,
             )
             != target_parent_identity
         ):
@@ -2158,7 +2245,12 @@ def _copy_regular(
                 or stat.S_IMODE(item.st_mode) != mode
             ):
                 _fail()
-            return _FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
+            return _FileIdentity(
+                item.st_dev,
+                item.st_ino,
+                stat.S_IMODE(item.st_mode),
+                item.st_gid,
+            )
     except IntegrationInstallError:
         if provisional is not None and target_parent_identity is not None:
             _cleanup_provisional_after_failure(
@@ -2216,6 +2308,7 @@ def _read_nofollow(
                         parent_item.st_dev,
                         parent_item.st_ino,
                         stat.S_IMODE(parent_item.st_mode),
+                        parent_item.st_gid,
                     )
                     != expected_parent_identity
                 )
@@ -2230,7 +2323,12 @@ def _read_nofollow(
         ):
             _fail()
         if expected_file_identity is not None and (
-            _FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
+            _FileIdentity(
+                item.st_dev,
+                item.st_ino,
+                stat.S_IMODE(item.st_mode),
+                item.st_gid,
+            )
             != expected_file_identity
         ):
             _fail()
@@ -2256,6 +2354,141 @@ def _read_nofollow(
             os.close(parent_fd)
 
 
+def _python_binding_from_open_fd(fd: int) -> _PythonExecutableBinding:
+    item = os.fstat(fd)
+    if (
+        not stat.S_ISREG(item.st_mode)
+        or item.st_nlink < 1
+        or item.st_size <= 0
+        or item.st_size > MAX_PYTHON_EXECUTABLE_BYTES
+    ):
+        _fail()
+    hasher = hashlib.sha256()
+    remaining = item.st_size
+    while remaining > 0:
+        chunk = os.read(fd, min(1024 * 1024, remaining))
+        if not chunk:
+            _fail()
+        hasher.update(chunk)
+        remaining -= len(chunk)
+    final = os.fstat(fd)
+    if (
+        final.st_dev != item.st_dev
+        or final.st_ino != item.st_ino
+        or final.st_mode != item.st_mode
+        or final.st_uid != item.st_uid
+        or final.st_gid != item.st_gid
+        or final.st_nlink != item.st_nlink
+        or final.st_size != item.st_size
+        or final.st_mtime_ns != item.st_mtime_ns
+        or final.st_ctime_ns != item.st_ctime_ns
+    ):
+        _fail()
+    return _PythonExecutableBinding(
+        identity=_provisional_from_stat(final),
+        nlink=final.st_nlink,
+        size=final.st_size,
+        mtime_ns=final.st_mtime_ns,
+        ctime_ns=final.st_ctime_ns,
+        sha256=hasher.hexdigest(),
+    )
+
+
+def _kernel_overflow_uid() -> int:
+    try:
+        raw = _KERNEL_OVERFLOW_UID_PATH.read_text(encoding="ascii")
+    except (OSError, ValueError):
+        return -1
+    value_text = raw.strip()
+    if not value_text or not value_text.isdecimal() or len(value_text) > 10:
+        return -1
+    value = int(value_text)
+    if value < 0 or value > 2**32 - 1:
+        return -1
+    return value
+
+
+def _system_python_root_has_unmapped_root_owner(uid: int) -> bool:
+    try:
+        root_item = Path("/usr").lstat()
+        bin_item = _SYSTEM_PYTHON_ROOT.lstat()
+    except (OSError, ValueError):
+        return False
+    return (
+        stat.S_ISDIR(root_item.st_mode)
+        and stat.S_ISDIR(bin_item.st_mode)
+        and root_item.st_uid == uid
+        and bin_item.st_uid == uid
+        and not bool(stat.S_IMODE(root_item.st_mode) & 0o022)
+        and not bool(stat.S_IMODE(bin_item.st_mode) & 0o022)
+    )
+
+
+def _python_executable_owner_is_allowed(path: Path, uid: int) -> bool:
+    if uid in {0, os.getuid()}:
+        return True
+    if uid != _kernel_overflow_uid():
+        return False
+    try:
+        if not path.is_relative_to(_SYSTEM_PYTHON_ROOT):
+            return False
+    except ValueError:
+        return False
+    return _system_python_root_has_unmapped_root_owner(uid)
+
+
+def _read_python_executable_binding(path: Path) -> _PythonExecutableBinding:
+    fd = -1
+    try:
+        fd = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+        )
+        binding = _python_binding_from_open_fd(fd)
+        if not _python_executable_owner_is_allowed(path, binding.identity.uid):
+            _fail()
+        return binding
+    except IntegrationInstallError:
+        raise
+    except (OSError, ValueError):
+        _fail()
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _open_bound_python_executable_for_spawn(path: Path) -> tuple[int, str]:
+    expected = _RESOLVED_PYTHON_EXECUTABLES.get(path)
+    if expected is None:
+        _fail()
+    fd = -1
+    try:
+        fd = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        )
+        binding = _python_binding_from_open_fd(fd)
+        if (
+            binding != expected
+            or not _python_executable_owner_is_allowed(path, binding.identity.uid)
+        ):
+            _fail()
+        os.set_inheritable(fd, True)
+        result = (fd, f"/proc/self/fd/{fd}")
+        fd = -1
+        return result
+    except IntegrationInstallError:
+        raise
+    except (OSError, ValueError):
+        _fail()
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def _resolve_python_executable(path: Path) -> Path:
     path = _absolute(path)
     _no_symlink_ancestors(path.parent)
@@ -2274,6 +2507,36 @@ def _resolve_python_executable(path: Path) -> Path:
     if (
         _provisional_from_stat(final_item) != _provisional_from_stat(item)
         or final_item.st_nlink != item.st_nlink
+    ):
+        _fail()
+    binding = _read_python_executable_binding(resolved)
+    if (
+        binding.identity != _provisional_from_stat(final_item)
+        or binding.nlink != final_item.st_nlink
+    ):
+        _fail()
+    _RESOLVED_PYTHON_EXECUTABLES[resolved] = binding
+    return resolved
+
+
+def _revalidate_python_executable_for_spawn(path: Path) -> Path:
+    resolved = _absolute(path)
+    expected = _RESOLVED_PYTHON_EXECUTABLES.get(resolved)
+    if expected is None:
+        return _resolve_python_executable(resolved)
+    try:
+        current = resolved.lstat()
+    except (OSError, ValueError):
+        _fail()
+    if (
+        not stat.S_ISREG(current.st_mode)
+        or not os.access(resolved, os.X_OK)
+        or _provisional_from_stat(current) != expected.identity
+        or current.st_nlink != expected.nlink
+        or current.st_size != expected.size
+        or current.st_mtime_ns != expected.mtime_ns
+        or current.st_ctime_ns != expected.ctime_ns
+        or _read_python_executable_binding(resolved) != expected
     ):
         _fail()
     return resolved
@@ -2345,6 +2608,62 @@ def _sanitized_build_environment() -> dict[str, str]:
     }
 
 
+def _before_private_virtualenv_builder_exec(_python_fd_path: str) -> None:
+    return None
+
+
+def _before_wheel_builder_exec(_python_fd_path: str) -> None:
+    return None
+
+
+def _create_private_virtualenv(venv_root: Path) -> None:
+    python_executable = _revalidate_python_executable_for_spawn(Path(sys.executable))
+    python_fd = -1
+    python_fd, python_fd_path = _open_bound_python_executable_for_spawn(
+        python_executable
+    )
+    command = (
+        python_fd_path,
+        "-I",
+        "-c",
+        (
+            "from __future__ import annotations\n"
+            "import os, sys, venv\n"
+            "old_umask = os.umask(0o077)\n"
+            "try:\n"
+            "    venv.EnvBuilder(\n"
+            "        system_site_packages=False,\n"
+            "        clear=False,\n"
+            "        symlinks=False,\n"
+            "        with_pip=False,\n"
+            "    ).create(sys.argv[1])\n"
+            "finally:\n"
+            "    os.umask(old_umask)\n"
+        ),
+        str(venv_root),
+    )
+    try:
+        _before_private_virtualenv_builder_exec(python_fd_path)
+        completed = _run_builder_bounded(
+            list(command),
+            env=_sanitized_build_environment(),
+            cwd=venv_root.parent,
+            pass_fds=(python_fd,),
+            timeout_seconds=BUILDER_VENV_TIMEOUT_SECONDS,
+        )
+    except OSError as exc:
+        raise IntegrationInstallError("could not launch virtualenv builder") from exc
+    except IntegrationCleanupError:
+        raise
+    except Exception as exc:
+        raise IntegrationInstallError("private virtualenv builder failed") from exc
+    finally:
+        if python_fd >= 0:
+            os.close(python_fd)
+    if completed.returncode != 0:
+        raise IntegrationInstallError("private virtualenv builder failed")
+
+
 def _terminate_preflight_process(process: subprocess.Popen[bytes]) -> None:
     pid = getattr(process, "pid", None)
     if type(pid) is int and pid > 0:
@@ -2362,13 +2681,86 @@ def _terminate_preflight_process(process: subprocess.Popen[bytes]) -> None:
         pass
 
 
+def _collect_builder_process_cleanup_errors(
+    process: subprocess.Popen[bytes],
+    process_group_id: int | None,
+) -> list[BaseException]:
+    cleanup_errors: list[BaseException] = []
+    if process_group_id is not None:
+        try:
+            _kill_process_group(process_group_id)
+        except IntegrationCleanupError as exc:
+            cleanup_errors.append(exc.__cause__ or exc)
+        except BaseException as exc:
+            cleanup_errors.append(exc)
+    else:
+        pid = getattr(process, "pid", None)
+        if type(pid) is int and pid > 0:
+            try:
+                _kill_process_group(pid)
+            except IntegrationCleanupError as exc:
+                cleanup_errors.append(exc.__cause__ or exc)
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+    try:
+        leader_running = process.poll() is None
+    except BaseException as exc:
+        cleanup_errors.append(exc)
+        leader_running = True
+    if leader_running:
+        try:
+            process.kill()
+        except BaseException as exc:
+            cleanup_errors.append(exc)
+    try:
+        process.wait(timeout=1)
+    except BaseException as exc:
+        cleanup_errors.append(exc)
+    return cleanup_errors
+
+
 def _kill_process_group(process_group_id: int) -> None:
     if type(process_group_id) is not int or process_group_id <= 0:
         return
-    try:
-        os.killpg(process_group_id, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    cleanup_errors: list[BaseException] = []
+    for signum in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(process_group_id, signum)
+        except ProcessLookupError:
+            return
+        except BaseException as exc:
+            cleanup_errors.append(exc)
+        deadline = time.monotonic() + max(0.0, BUILDER_CLEANUP_WAIT_SECONDS)
+        while True:
+            try:
+                os.killpg(process_group_id, 0)
+            except ProcessLookupError:
+                if cleanup_errors:
+                    raise IntegrationCleanupError() from _builder_cleanup_group(
+                        cleanup_errors
+                    )
+                return
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+                break
+            if BUILDER_CLEANUP_WAIT_SECONDS <= 0 or time.monotonic() >= deadline:
+                break
+            time.sleep(0.01)
+    raise IntegrationCleanupError() from _builder_cleanup_group(cleanup_errors)
+
+
+def _builder_cleanup_group(errors: list[BaseException]) -> BaseException:
+    errors = _base_exception_leaves(errors)
+    if not errors:
+        return IntegrationCleanupError()
+    if len(errors) == 1:
+        return errors[0]
+    if all(isinstance(error, Exception) for error in errors):
+        return ExceptionGroup(
+            "builder process group cleanup failed",
+            cast("list[Exception]", errors),
+        )
+    return BaseExceptionGroup("builder process group cleanup failed", errors)
 
 
 def _run_builder_preflight(
@@ -2376,17 +2768,29 @@ def _run_builder_preflight(
     python_executable: Path,
     environment: Mapping[str, str],
 ) -> subprocess.CompletedProcess[str]:
-    command = [str(python_executable), "-B", "-I", "-c", _BUILDER_PREFLIGHT_CODE]
-    process = subprocess.Popen(
-        command,
-        env=dict(environment),
-        cwd=None,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
-        start_new_session=True,
+    python_executable = _revalidate_python_executable_for_spawn(python_executable)
+    python_fd = -1
+    python_fd, python_fd_path = _open_bound_python_executable_for_spawn(
+        python_executable
     )
+    command = [python_fd_path, "-B", "-I", "-c", _BUILDER_PREFLIGHT_CODE]
+    try:
+        process = subprocess.Popen(
+            command,
+            env=dict(environment),
+            cwd=None,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            start_new_session=True,
+            pass_fds=(python_fd,),
+        )
+    except BaseException:
+        os.close(python_fd)
+        raise
+    os.close(python_fd)
+    python_fd = -1
     stream = process.stdout
     if stream is None:
         _terminate_preflight_process(process)
@@ -2486,6 +2890,7 @@ def _build_verified_wheel(
         python_executable=python_executable,
         environment=environment,
     )
+    python_executable = _revalidate_python_executable_for_spawn(python_executable)
     _require_private_dir(build_root, None, False)
     wheel_parent_identity = _require_private_dir(wheel_dir.parent, None, False)
     wheel_identity = _require_private_dir(
@@ -2494,29 +2899,35 @@ def _build_verified_wheel(
         True,
         parent_identity=wheel_parent_identity,
     )
+    python_fd = -1
+    python_fd, python_fd_path = _open_bound_python_executable_for_spawn(
+        python_executable
+    )
     command = [
-        str(python_executable),
+        python_fd_path,
         "-B",
         "-I",
-        "-m",
-        "pip",
-        "wheel",
-        "--no-deps",
-        "--no-build-isolation",
-        "--no-index",
-        "--no-cache-dir",
+        "-c",
+        _WHEEL_BUILDER_CODE,
         "--wheel-dir",
         str(wheel_dir),
         str(build_root),
     ]
     try:
+        _before_wheel_builder_exec(python_fd_path)
         result = _run_builder_bounded(
             command,
             env=dict(environment),
             cwd=build_root,
+            pass_fds=(python_fd,),
         )
+    except IntegrationCleanupError:
+        raise
     except Exception:
         _fail()
+    finally:
+        if python_fd >= 0:
+            os.close(python_fd)
     if result.returncode != 0:
         _fail()
     wheels: list[tuple[Path, _FileIdentity]] = []
@@ -2540,6 +2951,7 @@ def _build_verified_wheel(
                 wheel_item.st_dev,
                 wheel_item.st_ino,
                 stat.S_IMODE(wheel_item.st_mode),
+                wheel_item.st_gid,
             )
             != wheel_identity
         ):
@@ -2562,6 +2974,7 @@ def _build_verified_wheel(
                                 item.st_dev,
                                 item.st_ino,
                                 stat.S_IMODE(item.st_mode),
+                                item.st_gid,
                             ),
                         )
                     )
@@ -2583,7 +2996,15 @@ def _run_builder_bounded(
     *,
     env: Mapping[str, str],
     cwd: Path,
+    pass_fds: tuple[int, ...] = (),
+    timeout_seconds: int | float = BUILDER_WHEEL_TIMEOUT_SECONDS,
 ) -> subprocess.CompletedProcess[bytes]:
+    inherited_fds = tuple(pass_fds)
+    if (
+        any(type(fd) is not int or fd < 0 for fd in inherited_fds)
+        or len(frozenset(inherited_fds)) != len(inherited_fds)
+    ):
+        _fail()
     process: subprocess.Popen[bytes] | None = None
     process_group_id: int | None = None
     try:
@@ -2596,6 +3017,7 @@ def _run_builder_bounded(
             stderr=subprocess.DEVNULL,
             close_fds=True,
             start_new_session=True,
+            pass_fds=inherited_fds,
         )
         pid = getattr(process, "pid", None)
         if type(pid) is int and pid > 0:
@@ -2603,14 +3025,22 @@ def _run_builder_bounded(
                 process_group_id = os.getpgid(pid)
             except OSError:
                 process_group_id = pid
-        returncode = process.wait(timeout=BUILDER_WHEEL_TIMEOUT_SECONDS)
+        returncode = process.wait(timeout=timeout_seconds)
         if process_group_id is not None:
             _kill_process_group(process_group_id)
-    except BaseException:
-        if process is not None and process.poll() is None:
-            _terminate_preflight_process(process)
-        elif process_group_id is not None:
-            _kill_process_group(process_group_id)
+    except BaseException as exc:
+        if isinstance(exc, IntegrationCleanupError):
+            raise
+        cleanup_errors: list[BaseException] = []
+        if process is not None:
+            cleanup_errors = _collect_builder_process_cleanup_errors(
+                process,
+                process_group_id,
+            )
+        if cleanup_errors:
+            raise IntegrationCleanupError() from _builder_cleanup_group(
+                [exc, *cleanup_errors]
+            )
         raise
     return subprocess.CompletedProcess(command, returncode)
 
@@ -2836,6 +3266,7 @@ def _safe_extract_wheel(
                     destination_item.st_dev,
                     destination_item.st_ino,
                     stat.S_IMODE(destination_item.st_mode),
+                    destination_item.st_gid,
                 )
                 != destination_identity
             ):
@@ -2870,6 +3301,7 @@ def _safe_extract_wheel(
                             child_item.st_dev,
                             child_item.st_ino,
                             stat.S_IMODE(child_item.st_mode),
+                            child_item.st_gid,
                         )
                         if (
                             not stat.S_ISDIR(child_item.st_mode)
@@ -2890,6 +3322,7 @@ def _safe_extract_wheel(
                                 opened_item.st_dev,
                                 opened_item.st_ino,
                                 stat.S_IMODE(opened_item.st_mode),
+                                opened_item.st_gid,
                             )
                             if (
                                 not stat.S_ISDIR(opened_item.st_mode)
@@ -2963,6 +3396,7 @@ def _safe_extract_wheel(
                                 item.st_dev,
                                 item.st_ino,
                                 stat.S_IMODE(item.st_mode),
+                                item.st_gid,
                             ),
                         )
                 finally:
@@ -3068,6 +3502,7 @@ def _postwalk_release(
             root_stat.st_dev,
             root_stat.st_ino,
             stat.S_IMODE(root_stat.st_mode),
+            root_stat.st_gid,
         )
         if (
             not stat.S_ISDIR(root_stat.st_mode)
@@ -3241,6 +3676,7 @@ def _find_site_packages(
                 venv_item.st_dev,
                 venv_item.st_ino,
                 stat.S_IMODE(venv_item.st_mode),
+                venv_item.st_gid,
             )
             != venv_identity
         ):
@@ -3262,6 +3698,7 @@ def _find_site_packages(
             lib_item.st_dev,
             lib_item.st_ino,
             stat.S_IMODE(lib_item.st_mode),
+            lib_item.st_gid,
         )
         lib_fd = os.open("lib", flags, dir_fd=venv_fd)
         opened_lib = os.fstat(lib_fd)
@@ -3272,6 +3709,7 @@ def _find_site_packages(
                 opened_lib.st_dev,
                 opened_lib.st_ino,
                 stat.S_IMODE(opened_lib.st_mode),
+                opened_lib.st_gid,
             )
             != lib_identity
         ):
@@ -3292,6 +3730,7 @@ def _find_site_packages(
                     python_item.st_dev,
                     python_item.st_ino,
                     stat.S_IMODE(python_item.st_mode),
+                    python_item.st_gid,
                 )
                 python_fd = -1
                 try:
@@ -3308,6 +3747,7 @@ def _find_site_packages(
                             opened_python.st_dev,
                             opened_python.st_ino,
                             stat.S_IMODE(opened_python.st_mode),
+                            opened_python.st_gid,
                         )
                         != python_identity
                     ):
@@ -3327,6 +3767,7 @@ def _find_site_packages(
                                 site_item.st_dev,
                                 site_item.st_ino,
                                 stat.S_IMODE(site_item.st_mode),
+                                site_item.st_gid,
                             )
                             site_fd = -1
                             try:
@@ -3343,6 +3784,7 @@ def _find_site_packages(
                                         opened_site.st_dev,
                                         opened_site.st_ino,
                                         stat.S_IMODE(opened_site.st_mode),
+                                        opened_site.st_gid,
                                     )
                                     != site_identity
                                 ):
@@ -3362,6 +3804,7 @@ def _find_site_packages(
                                             final_site.st_dev,
                                             final_site.st_ino,
                                             stat.S_IMODE(final_site.st_mode),
+                                            final_site.st_gid,
                                         ),
                                     )
                                 )
@@ -3418,6 +3861,7 @@ def _write_exclusive(
                 parent_item.st_dev,
                 parent_item.st_ino,
                 stat.S_IMODE(parent_item.st_mode),
+                parent_item.st_gid,
             )
             != parent_identity
         ):
@@ -3487,6 +3931,7 @@ def _write_exclusive(
             final_item.st_dev,
             final_item.st_ino,
             stat.S_IMODE(final_item.st_mode),
+            final_item.st_gid,
         )
     except IntegrationInstallError:
         if provisional is not None:
@@ -3757,12 +4202,7 @@ def _install_release(
             )
             _require_private_dir(staging, staging_identity, False)
             venv_root = staging / "venv"
-            venv.EnvBuilder(
-                system_site_packages=False,
-                clear=False,
-                symlinks=False,
-                with_pip=False,
-            ).create(venv_root)
+            _create_private_virtualenv(venv_root)
             ensure_private_directory(venv_root, label="integration venv directory")
             venv_root_identity = _require_private_dir(venv_root, None, False)
             _require_private_dir(staging, staging_identity, False)
@@ -3926,7 +4366,7 @@ def _install_release(
                     integration_identity=integration_identity,
                     transaction_kind="install",
                 )
-            except Exception as publish_error:
+            except BaseException as publish_error:
                 if legacy_evidence_cutover is not None and not (
                     _rollback_legacy_evidence_v1_cutover(
                         legacy_evidence_cutover
@@ -3959,13 +4399,13 @@ def _install_release(
                         label="previous integration manifest",
                         mode=0o600,
                     )
-            except Exception as publish_error:
+            except BaseException as publish_error:
                 try:
                     restored = _rollback_active_publish(
                         publish,
                         integration_identity,
                     )
-                except Exception as restore_error:
+                except BaseException as restore_error:
                     raise IntegrationCleanupError() from restore_error
                 evidence_restored = (
                     legacy_evidence_cutover is None
@@ -3992,47 +4432,79 @@ def _install_release(
     finally:
         active_error = sys.exc_info()[1]
         cleanup_failed = False
+        cleanup_errors: list[BaseException] = []
         if candidate_identity is not None and candidate_parent_identity is not None:
-            if not _cleanup_owned_file(
-                candidate_path,
-                candidate_identity,
-                candidate_parent_identity,
-            ):
-                cleanup_failed = True
+            try:
+                candidate_cleaned = _cleanup_owned_file(
+                    candidate_path,
+                    candidate_identity,
+                    candidate_parent_identity,
+                )
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+            else:
+                cleanup_failed = cleanup_failed or not candidate_cleaned
         if (
             build_root is not None
             and build_identity is not None
             and build_parent_identity is not None
         ):
-            if not _cleanup_owned_directory(
-                build_root,
-                build_identity,
-                build_parent_identity,
-            ):
-                cleanup_failed = True
+            try:
+                build_cleaned = _cleanup_owned_directory(
+                    build_root,
+                    build_identity,
+                    build_parent_identity,
+                )
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+            else:
+                cleanup_failed = cleanup_failed or not build_cleaned
         if (
             wheel_root is not None
             and wheel_identity is not None
             and wheel_parent_identity is not None
         ):
-            if not _cleanup_owned_directory(
-                wheel_root,
-                wheel_identity,
-                wheel_parent_identity,
-            ):
-                cleanup_failed = True
+            try:
+                wheel_cleaned = _cleanup_owned_directory(
+                    wheel_root,
+                    wheel_identity,
+                    wheel_parent_identity,
+                )
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+            else:
+                cleanup_failed = cleanup_failed or not wheel_cleaned
         if (
             staging is not None
             and staging_identity is not None
             and staging_parent_identity is not None
             and not final_renamed
-            and not _cleanup_owned_directory(
-                staging,
-                staging_identity,
-                staging_parent_identity,
-            )
         ):
-            cleanup_failed = True
+            try:
+                staging_cleaned = _cleanup_owned_directory(
+                    staging,
+                    staging_identity,
+                    staging_parent_identity,
+                )
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+            else:
+                cleanup_failed = cleanup_failed or not staging_cleaned
+        if cleanup_errors:
+            errors = (
+                [*cleanup_errors]
+                if active_error is None
+                else [active_error, *cleanup_errors]
+            )
+            group_type = (
+                ExceptionGroup
+                if all(isinstance(error, Exception) for error in errors)
+                else BaseExceptionGroup
+            )
+            raise IntegrationCleanupError() from group_type(
+                "integration transaction cleanup failed",
+                errors,
+            )
         if cleanup_failed:
             if active_error is not None:
                 raise IntegrationCleanupError() from active_error
@@ -4135,13 +4607,13 @@ def rollback_active_release(*, state_home: Path, data_home: Path) -> ActiveRelea
                     data_home=data_home,
                     expected_entrypoint_path=None,
                 )
-            except Exception as publish_error:
+            except BaseException as publish_error:
                 try:
                     restored = _rollback_active_publish(
                         publish,
                         integration_identity,
                     )
-                except Exception as restore_error:
+                except BaseException as restore_error:
                     raise IntegrationCleanupError() from restore_error
                 if not restored:
                     raise IntegrationCleanupError() from publish_error

@@ -22,6 +22,56 @@ ihm referenzierte immutable V2-Generation mit exakt `account-usage-v2.json`,
 Der frühere feste V1-Cachepfad ist nach dem Cutover keine Consumerquelle;
 es gibt weder Legacy-Read noch Dual-Write.
 
+Die systemd-User-Unit startet nicht mehr den allgemeinen CLI-Watchdog direkt.
+Sie startet ausschließlich den dedizierten sequenziellen Wrapper
+`codex-usage-integration-watchdog --config ABS_CONFIG`. Dieser Wrapper führt
+zuerst den allgemeinen Watchdog mit exakt
+`--config ABS_CONFIG watchdog --format json` aus. Nur dessen Status `0` oder
+`2` ist eine zulässige Vorstufe; jeder andere Status beendet die Unit
+fail-closed vor Attestierung und Publish. Danach attestiert der Wrapper den
+aktiven Producer. Direkt vor dem Publisherstart attestiert er zusätzlich die
+bereits importierte Watchdog-Runtime gegen denselben extern verankerten
+Core-0.6.537-Modulsatz und ruft erst danach ausschließlich den attestierten
+Release-Launcher mit `integration-snapshot --schema 2 --format json` auf.
+Fehlende oder
+malformed Producer-Authority bleibt dabei der gebundene Publisher-Fehler
+`65`/`integration_snapshot_invalid_source`; der Wrapper erzeugt keine
+Authority-Datei und erfindet keine Authority-Werte. Der Publisher-Subprozess
+hat intern `180` Sekunden Timeout; die systemd-Unit begrenzt den gesamten
+sequenziellen Wrapper mit `TimeoutStartSec=270`. Der Wrapper erzwingt ein
+monotones internes Gesamtbudget von `258` Sekunden: `30` Sekunden für den
+allgemeinen Watchdog, `20` Sekunden für die Trusted-Core-Attestierung, `20`
+Sekunden für Runtime-Self-Attestation und bis zu `180` Sekunden für den
+Publisher. Zusätzlich reserviert der Wrapper ein explizites
+`8`-Sekunden-Cleanupbudget für Prozessgruppen-Reaping; alle Stufen werden
+durch das verbleibende Gesamtbudget begrenzt. Damit ist
+`75`/temporärer Stage-Timeout vor dem systemd-Outer-Kill beobachtbar; die Unit
+behält `12` Sekunden positive Grace. Publisher-Fehlerdiagnostik für
+`64`/`65`/`69`/`70`/`75` ist strikt bounded, sanitisiert und darf weder
+unbegrenzt stdout/stderr puffern noch den allgemeinen Watchdog-Output
+einsammeln.
+
+Die Unit überschreibt die Python-Laufzeitumgebung für den Wrapper explizit mit
+`PYTHONSAFEPATH=1`, `PYTHONNOUSERSITE=1`, `PYTHONDONTWRITEBYTECODE=1` und
+`PYTHONUNBUFFERED=1` und entfernt bekannte Python-/Loader-Shadow-Kanäle per
+`UnsetEnvironment`, darunter `PYTHONPATH`, `PYTHONHOME`, `PYTHONUSERBASE`,
+`PYTHONSTARTUP`, `PYTHONINSPECT`, `PYTHONEXECUTABLE`, `LD_PRELOAD`,
+`LD_LIBRARY_PATH`, `LD_AUDIT` und `DYLD_INSERT_LIBRARIES`. Damit darf ein
+User-Manager-Environment weder ein fremdes `codex_usage.integration_watchdog`
+noch Loader-Interposition vor die installierte, per `RECORD` gebundene
+Distribution schieben; der Wrapper validiert diese Laufzeitumgebung beim
+Start selbst noch einmal fail-closed.
+
+`service install` und `service enable` schreiben die Unit nur, wenn beide
+Console-Scripts (`codex-usage` und `codex-usage-integration-watchdog`) direkt
+vor dem Unitwrite erneut dieselbe no-follow gelesene Identität besitzen wie
+beim Resolve. Beide Scripts müssen regulär, einfach verlinkt, ausführbar, mit
+dem erwarteten Interpreter geshebangt und über `RECORD`, `METADATA`, Modulbytes
+und Version exakt an die installierte Distribution `codex-usage==0.6.537`
+gebunden sein. Ein fehlender Resolve-Cache, ein anderer Interpreter, ein
+Kommentar-Fake, ein Hard-/Symlink, ein fremder Release, `0.6.536` mit gleichen
+Bytes oder RECORD-/Modul-/Script-Drift stoppt fail-closed vor Partial-Write.
+
 ## Exaktes Schema 2
 
 Top-Level erlaubt exakt `schema_version`, `generated_at`, `accounts`.
@@ -362,6 +412,43 @@ generischen Altversionsfallback. Ein ungültiges oder nicht exakt als
 nicht aus `previous.json`, Cache oder anderen Altpfaden repariert oder
 gelöscht.
 
+Der Runtime-Wrapper bindet die Codeidentität zusätzlich außerhalb von
+`active.json`: Er verwendet den installierten Core-Pfad
+`codex_usage.integration_entrypoint.__file__` als vertrauenswürdigen Anchor,
+liest ihn no-follow als reguläre owner-eigene Datei mit festem Modus und
+vergleicht seine Bytes mit dem vollständig manifest-, RECORD- und
+Releasebaum-attestierten Producer-Entry-Point. Zusätzlich muss derselbe
+`site-packages`-Root exakt ein no-follow gelesenes
+`codex_usage-0.6.537.dist-info` für Distribution `codex-usage` enthalten.
+`METADATA` wird als echte Headerstruktur ausgewertet, nicht per
+Substring-Suche, und `RECORD` muss die tatsächlich gelesenen Entry-Point- und
+Metadata-Bytes samt Größe und SHA-256 sowie die eigene RECORD-Row binden.
+Der zentrale vertrauenswürdige Core-Satz enthält auch
+`integration_watchdog.py` und `integration_timeout_contract.py`. Die isolierte
+Producer-Release enthält diese Wrapper-/Controller-Module dagegen nicht; sie
+enthält ausschließlich den least-privilege Publisher-Modulsatz, der für
+`integration-snapshot --schema 2 --format json` und dessen Imports benötigt
+wird. Die Core-Distribution muss den vollständigen Core-Satz ohne
+Missing/Duplicate/Extra bei identischen Bytes und passenden RECORD-Rows
+erfüllen; die Active Producer Release muss den separaten Producer-Modulsatz
+ohne fehlende oder zusätzliche Publisher-Abhängigkeiten erfüllen. Source-
+Manifest, Attestierungsmanifest und Entry-Point-Identität dürfen dabei nicht
+auseinanderlaufen.
+Vertrauenswürdige Directory-Identitäten enthalten Device, Inode, Mode, UID,
+GID und ctime; ein Owner- oder ctime-Wechsel zwischen weiterhin erlaubten
+Eigentümern ist ein Identity-Drift und bleibt fail-closed.
+Parallele stale oder mehrdeutige `codex_usage-*.dist-info`-Bäume, Metadata-/
+RECORD-Inodewechsel und identische Entry-Point-Bytes aus lokalem Core
+`0.6.536` gegen aktiven Producer `0.6.537` bleiben fail-closed, bis Core und
+Producer kohärent installiert sind. `active.json` liefert nur den untrusted
+Kandidatenpfad für die bestehende Release-Attestierung; es wird nie derselbe
+selbstdeklarierte Pfad als erwartete externe Identität akzeptiert.
+Die Runtime-Self-Attestation liest danach Interpreter, `__file__` und
+`__spec__.origin` der bereits importierten Watchdog-/Attestation-/IO-Module
+bounded/no-follow gegen diesen Core-Satz und wiederholt die Prüfung direkt vor
+dem Publisher-Seam. Jede Rebind-, RECORD-, Dist-Info-Mode- oder
+Modulbyte-Drift stoppt fail-closed, bevor der Publisherchild gestartet wird.
+
 ## V2-Evidence-Consumervertrag
 
 Dieser Abschnitt ist maschinenbindender Producer-Handoff für Masterjet. Es gibt
@@ -514,12 +601,16 @@ Accountstatus. Sie enthält keine realen Accountdaten oder Secrets.
 
 ### Synchronisation und sichere I/O
 
-Reader nehmen beide persistenten `flock`-Inodes in dieser festen Reihenfolge:
-erst Releaseziel `state_home/codex-usage/integration/producer-install`, dann
-Pointerziel `state_home/codex-usage/integration/current.json`. Reader nehmen
-beide `LOCK_SH`, Publish, Rollback, Staging-Recovery und GC beide `LOCK_EX`.
-Nicht sofort verfügbare Locks ergeben `busy`; Runtime erzeugt fehlende Lockdateien
-nie. Nur Installer-Bootstrap darf sie einmal anlegen.
+Installer-Bootstrap provisioniert die persistenten `flock`-Inodes für
+`state_home/codex-usage/integration/producer-install`,
+`state_home/codex-usage/integration/current.json` und
+`state_home/codex-usage/integration/pool-authority-source-v2.json`. Reader
+nehmen Release und Pointer in dieser festen Reihenfolge: erst Releaseziel, dann
+Pointerziel. Reader nehmen beide `LOCK_SH`, Publish, Rollback, Staging-Recovery
+und GC beide `LOCK_EX`. Der Publisher nimmt den Authority-Source-Lock
+ausschließlich `create=False` nach Bootstrap-Provisioning. Nicht sofort
+verfügbare Locks ergeben `busy`; Runtime erzeugt fehlende Lockdateien nie. Nur
+Installer-Bootstrap darf sie einmal anlegen.
 
 Die Lockdateien liegen unter
 `pwd.getpwuid(os.geteuid()).pw_dir/.local/state/codex-usage/locks/` als
@@ -531,6 +622,56 @@ gehörende `0700`-Verzeichnisse. Vertrauensgrenze: Prozesse unter derselben
 effektiven UID kooperieren; ein bösartiger Prozess derselben UID ist nicht
 abgewehrt.
 
+Ein fehlender Lockroot wird als letzte Pfadkomponente unter einem fd-gepinnten,
+no-follow validierten Parent veröffentlicht. Der Code erzeugt zuerst ein
+privates temporäres Verzeichnis im gepinnten Parent, öffnet dessen Inode,
+veröffentlicht es per atomarer no-replace-Rename-Semantik auf den finalen
+Namen und akzeptiert es nur, wenn der finale Pfad erneut denselben Inode bindet.
+Wenn der Root nach einem initialen `ENOENT` gleichzeitig erscheint, behandelt
+der Code `EEXIST` ausschließlich als read-only/no-follow Restart durch den
+bestehenden Validierungs- und Namespace-Scanpfad. Ein bereits vorhandener oder
+gerade erschienener Lockroot wird vor jeder Mode-, CTime-, Lockdatei- oder
+Lockstate-Mutation validiert; ein kontaminierter `0700`-Root behält dabei
+seinen Approval-Hash, ein `0755`-Root wird nicht still auf `0700` chmoded.
+
+Der globale Lock-Namespace ist geschlossen. Jeder Name muss exakt
+`<64-lowercase-hex>.lock` sein und auf eine reguläre owner-eigene `0600`-
+Datei mit Linkcount 1 und höchstens 4096 Byte zeigen. Noncanonical
+`*.lock.moved`/`*.lock.moved-nested`, canonical benannte Verzeichnisse,
+Symlinks oder Sonderdateien blockieren Producer-/Evidence-Locks fail-closed.
+Der Scanner kann solche Residuen read-only und bounded mit vollständiger
+no-follow Evidence klassifizieren: Name, Typ, Device, Inode, Modus, UID, GID,
+Linkcount, Größe, mtime, ctime und bei Symlinks das Linkziel. Canonical benannte
+Directory-/Symlink-Residuen sind im Defaultscan nicht approve-eligible, auch
+wenn sie zu bekannten alten Testpfaden passen. Reconcile-Fähigkeit entsteht nur,
+wenn der Operator dieselben Residuen explizit mit `PrivateLockResidueApproval`
+bindet. Diese Approval enthält Name, Grund und den exakten aktuellen Snapshot;
+stale Inode-, Modus-, Linkcount-, Zeit- oder Symlinkziel-Abweichungen bleiben
+fail-closed. Leere owner-eigene Directories mit Modus `0700` oder dem real
+beobachteten umask-`0755` und owner-eigene dangling Symlinks mit Linkcount 1
+können damit manuell genehmigt werden; world-writable, nicht-leere, hardlinked
+oder nicht dangling Residuen nicht.
+
+Reconcile ist kein automatischer Watchdog-, Publisher- oder Installerpfad. Er
+ist ausschließlich ein expliziter Operatorpfad: erst read-only scannen, dann
+den exakt aus Report und Quarantäne-Zielpfad berechneten Approval-Hash
+übergeben, dann werden nur die im Report gebundenen Residuen in ein privates
+Quarantäne-Verzeichnis außerhalb des Lockroots umbenannt. Lockroot,
+Quarantäne-Root, Quarantäne-Parent und die vollständige Quarantäne-Ancestor-
+Kette bleiben über offene FDs bis zur finalen Named-Revalidation und bis zur
+Partial-Commit-Evidence gebunden. Vor jedem Rename werden Name, Typ, Device,
+Inode, Modus, UID, GID, Linkcount, Größe, mtime, ctime und Symlinkziel erneut
+gebunden; Symlinks werden nie verfolgt. Der Rename nutzt atomare no-replace
+Semantik, damit eine konkurrierend erzeugte Quarantäne-Evidence nie
+überschrieben wird. Ein stale Approval, ein Race oder ein unbekannter
+Residuentyp stoppt ohne Mutation. Ein Fehler nach einem
+erfolgreichen Forward-Rename beansprucht keinen automatischen All-or-nothing
+Rollback: Reconcile stoppt fail-closed mit expliziter Partial-Commit-Evidence,
+meldet committed und unmoved Residuen exakt und verschiebt keine
+namensbasierten Sources zurück in den Lockroot. Genehmigte Quarantäne-Evidence
+bleibt recoverable erhalten; fremde Originalnamen oder Quarantäne-Namen werden
+nicht überschrieben. Es wird nicht blind gelöscht.
+
 EntryPoint erwirbt beide EX-Locks vor Uhrzeit-, Quellen-, History-, Build- und
 Serialisierungsschritt und hält sie durch Retention und Current-Commit. Der
 interne Publisher erwirbt sie nicht erneut. Auch direkte Publisheraufrufe
@@ -539,6 +680,12 @@ verwerfen unter denselben Locks ein `generated_at` vor dem gültigen aktuellen
 nicht gegen ein inzwischen rotiertes Active geprüft. Eine ältere Invocation
 kann Current daher nicht zurücksetzen, während die erste Publikation nach
 einer gültigen Release-Rotation möglich bleibt.
+
+Fehler beim post-Commit-`fsync`, Source-Lock-Release oder FD-Close machen einen
+bereits ersetzten `current.json` nicht retrybar. Der Publisher liefert weiter
+den gebundenen Pointer und meldet ausschließlich die bounded Diagnose
+`committed-with-cleanup-error` mit Fehleranzahl und gekürzten Fehlertypen, nie
+Exception-Nachrichten, Secrets oder lokale Payloads.
 
 Nach `openat`/`dir_fd`-Traversal mit `O_NOFOLLOW` prüft Reader vor und nach
 jeder Lektüre Device, Inode, Modus, UID, Linkcount, Größe, mtime und ctime,
@@ -550,15 +697,33 @@ sowie den gebundenen Namen erneut. Er liest und vergleicht `active.json` und
 
 Ein Hard-Crash direkt nach `O_CREAT|O_EXCL` oder nach dem `fsync` der Pointer-
 Tempdatei kann ausschließlich
-`integration/.tmp-current.json-<32-lowercase-hex>` hinterlassen. Die öffentliche
-Recovery und alle Publish-, Evidence-Rollback-, GC-, Installer- und
-Installer-Rollback-Pfade klassifizieren diesen Root-Namespace unter derselben
-Release→Current-EX-Sperre vor Pointer-Publikation beziehungsweise vor dem
-Installer-Artefaktscan. Es werden höchstens 128 Root-Einträge und darin
-höchstens 64 exakt benannte Pointer-Temps materialisiert. Damit sind bis zu
-64 Crashreste zusätzlich zum 64-Einträge-Vertrag des bereinigten Installer-
-Namespaces endlich behandelbar; der 129. Root-Eintrag oder 65. Pointer-Temp
-ist vor jeder Löschung `invalid`.
+`integration/.tmp-current.json-<32-lowercase-hex>` hinterlassen. Ab dem
+Commit-Seam von `current.json` existiert zusätzlich höchstens ein langlebiger
+Commitmarker `integration/.tmp-current.commit-marker-<32-lowercase-hex>`.
+Dieser Marker enthält kanonisches JSON mit Typ
+`current-commit-marker`, Target `current.json`, Schema 2 sowie exakt dem
+Kandidaten-Pointer und dem vorherigen Pointer oder `null`. Ein laufender
+Rollback darf zusätzlich einen disjunkten strukturierten Rollback-Stash
+`integration/.tmp-current.rollback-stash-<32-lowercase-hex>` hinterlassen. Der
+Stash enthält kanonisches JSON mit Typ `current-rollback-stash`, Target
+`current.json`, Schema 1 und dem gestashten Current-Pointer; rohes
+`current.json` wird nicht im Commitmarker-Namespace abgelegt. Recovery liest
+Marker, Stash und Pointer no-follow/bounded und prüft Typ und Target
+fail-closed. Wenn der Kandidaten-Pointer nicht mehr vollständig gegen seine
+Generation bindbar ist, wird der vorherige gültige Pointer atomar
+wiederhergestellt oder `current.json` entfernt, falls es keinen vorherigen
+Pointer gab. Ein fehlender Current wird aus einem Stash nur wiederhergestellt,
+wenn dessen Pointer-Bindings gültig sind; sonst bleibt Recovery `invalid` und
+exponiert keinen invaliden Current. Marker und Stash werden erst nach normalem
+Commit oder abgeschlossener Recovery gelöscht. Die öffentliche Recovery und
+alle Publish-, Evidence-Rollback-, GC-, Installer- und Installer-Rollback-Pfade
+klassifizieren diesen Root-Namespace unter derselben Release→Current-EX-Sperre
+vor Pointer-Publikation beziehungsweise vor dem Installer-Artefaktscan. Es
+werden höchstens 128 Root-Einträge und darin je höchstens 64 exakt benannte
+Pointer-Temps, Commitmarker und Rollback-Stashes materialisiert. Damit sind bis
+zu 64 Crashreste zusätzlich zum 64-Einträge-Vertrag des bereinigten Installer-
+Namespaces endlich behandelbar; der 129. Root-Eintrag, 65. Pointer-Temp, 65.
+Commitmarker oder 65. Rollback-Stash ist vor jeder Löschung `invalid`.
 
 Ein löschbarer Pointer-Temp ist eine reguläre, nicht verlinkte, der effektiven
 UID eigene `0600`-Datei mit Linkcount 1 und 0..4096 Byte. Größe 0 ist exakt
@@ -607,6 +772,14 @@ Historische Manifest-/Release-Digests ändern diese Löschreihenfolge nicht;
 malformed Binding, Usage- oder Authority-Hash-/Größendrift, abweichende
 Cross-Bindung oder ungültiges `published_at` bleiben auch bei ungeschützten
 Generationen fail-closed.
+
+Manueller Lock-Namespace-Reconcile ist ein expliziter Zwei-Phasen-Vorgang:
+Scan/Approval-Hash binden alle genehmigten Residuen, und Apply verschiebt nur
+die exakt erneut belegten Namen no-follow in eine recoverable Quarantäne
+außerhalb des Lockroots. Quarantäne-Root, Zielnamen und verschobene Einträge
+werden bis zum finalen Report per dev/inode/mode/uid/nlink/size/mtime/ctime
+und Symlink-Ziel gebunden. Ein Rebind im finalen parent-fsync-/Report-Fenster
+liefert fail-closed Partial-Evidence statt Erfolg auf einem Fremdinode.
 
 ## Kanonisches verifiziertes Installationsverfahren
 

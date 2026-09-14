@@ -12,7 +12,9 @@ import multiprocessing
 import os
 import py_compile
 import queue
+import shlex
 import shutil
+import signal
 import stat
 import struct
 import subprocess
@@ -31,8 +33,28 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = PROJECT_ROOT / "scripts" / "install_integration_producer.py"
 BOOTSTRAP_PROCESS_TIMEOUT_SECONDS = 30
 
-TEST_SOURCE_MANIFEST_FILES = (
-    "pyproject.toml",
+TEST_TRUSTED_CORE_MODULE_FILES = (
+    "__init__.py",
+    "account_lock.py",
+    "config.py",
+    "consumption.py",
+    "extractor.py",
+    "integration_attestation.py",
+    "integration_evidence.py",
+    "integration_entrypoint.py",
+    "integration_pool_authority.py",
+    "integration_snapshot.py",
+    "integration_timeout_contract.py",
+    "integration_watchdog.py",
+    "json_utils.py",
+    "models.py",
+    "history.py",
+    "private_io.py",
+    "state.py",
+    "usage_limits.py",
+    "usage_resets.py",
+)
+TEST_PRODUCER_RELEASE_MODULE_FILES = (
     "src/codex_usage/__init__.py",
     "src/codex_usage/account_lock.py",
     "src/codex_usage/config.py",
@@ -51,6 +73,31 @@ TEST_SOURCE_MANIFEST_FILES = (
     "src/codex_usage/usage_limits.py",
     "src/codex_usage/usage_resets.py",
 )
+TEST_SOURCE_MANIFEST_FILES = (
+    "pyproject.toml",
+    *TEST_PRODUCER_RELEASE_MODULE_FILES,
+)
+
+
+def test_installer_source_manifest_uses_producer_boundary_without_controller_modules():
+    """Would fail if controller-only modules leaked into the Producer source set."""
+    from codex_usage import integration_attestation, integration_installer
+
+    assert set(integration_installer.SOURCE_MANIFEST_FILES) == set(
+        TEST_SOURCE_MANIFEST_FILES
+    )
+    assert tuple(integration_attestation.TRUSTED_CORE_MODULES) == (
+        TEST_TRUSTED_CORE_MODULE_FILES
+    )
+    assert tuple(integration_attestation.PRODUCER_RELEASE_MODULES) == tuple(
+        path.removeprefix("src/codex_usage/")
+        for path in TEST_PRODUCER_RELEASE_MODULE_FILES
+    )
+    assert "integration_watchdog.py" not in integration_attestation.PRODUCER_RELEASE_MODULES
+    assert (
+        "integration_timeout_contract.py"
+        not in integration_attestation.PRODUCER_RELEASE_MODULES
+    )
 
 
 class _BrokenInt(int):
@@ -627,7 +674,11 @@ def verified_lock_targets(state_home: Path) -> set[str]:
     assert root_item.st_uid == os.getuid()
     assert stat.S_IMODE(root_item.st_mode) == 0o700
     verified: set[str] = set()
-    for logical_name in ("producer-install", "current.json"):
+    for logical_name in (
+        "producer-install",
+        "current.json",
+        integration_evidence.POOL_AUTHORITY_SOURCE_FILENAME,
+    ):
         lock_name = integration_evidence._evidence_lock_name(integration / logical_name)
         item = (lock_root / lock_name).lstat()
         assert stat.S_ISREG(item.st_mode)
@@ -2065,10 +2116,14 @@ def test_release_tree_rejects_pyc_and_builder_invokes_python_with_b_and_env(tmp_
     assert captured_python_argv(tmp_path)[:2] == ("-B", "-I")
 
 
-def test_installer_bootstraps_exact_evidence_lock_root_and_two_inodes(tmp_path):
+def test_installer_bootstraps_exact_evidence_lock_root_and_authority_inode(tmp_path):
     _, _, state_home = _install(tmp_path)
 
-    assert verified_lock_targets(state_home) == {"producer-install", "current.json"}
+    assert verified_lock_targets(state_home) == {
+        "producer-install",
+        "current.json",
+        "pool-authority-source-v2.json",
+    }
 
 
 def test_install_creates_attested_private_active_release(tmp_path):
@@ -3238,6 +3293,97 @@ def test_publish_exchange_fsync_failure_atomically_restores_active(
 
 
 @pytest.mark.parametrize("operation", ["install", "rollback"])
+def test_install_and_rollback_close_active_publish_after_baseexception(
+    tmp_path,
+    monkeypatch,
+    operation,
+):
+    """Would fail if BaseException left active.json swapped with transaction evidence."""
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, operation)
+    interrupted = False
+
+    def interrupt_active_validation(**_kwargs) -> None:
+        nonlocal interrupted
+        interrupted = True
+        raise KeyboardInterrupt("active publish validation interrupted")
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_validate_active_publish",
+        interrupt_active_validation,
+    )
+
+    with pytest.raises(KeyboardInterrupt, match="active publish validation interrupted"):
+        prepared.run()
+
+    assert interrupted
+    assert prepared.active_path.read_bytes() == prepared.active_before
+    assert prepared.previous_path.read_bytes() == prepared.previous_before
+    assert not [
+        path
+        for path in prepared.integration.iterdir()
+        if path.name.startswith(".active.json.publish-")
+    ]
+
+
+@pytest.mark.parametrize("transaction_kind", ["install", "rollback"])
+def test_begin_active_publish_rolls_back_exchange_after_baseexception(
+    tmp_path,
+    monkeypatch,
+    transaction_kind,
+):
+    """Would fail if BaseException inside the active swap left transaction debris."""
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, transaction_kind)
+    integration_identity = integration_installer._directory_identity(
+        prepared.integration
+    )
+    prior_identity = integration_installer._provisional_from_stat(
+        prepared.active_path.stat()
+    )
+    original_entry_matches = integration_installer._entry_matches_at
+    interrupted = False
+
+    def interrupt_after_active_swap(parent_fd, name, identity):
+        nonlocal interrupted
+        matched = original_entry_matches(parent_fd, name, identity)
+        if (
+            name == prepared.active_path.name
+            and matched
+            and prepared.active_path.read_bytes() != prepared.active_before
+        ):
+            interrupted = True
+            raise KeyboardInterrupt("active swap interrupted")
+        return matched
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_entry_matches_at",
+        interrupt_after_active_swap,
+    )
+
+    with pytest.raises(KeyboardInterrupt, match="active swap interrupted"):
+        integration_installer._begin_active_publish(
+            active_path=prepared.active_path,
+            published_text=prepared.active_before.decode("utf-8") + "\n",
+            prior_identity=prior_identity,
+            integration_identity=integration_identity,
+            transaction_kind=transaction_kind,
+        )
+
+    assert interrupted
+    assert prepared.active_path.read_bytes() == prepared.active_before
+    assert not [
+        path
+        for path in prepared.integration.iterdir()
+        if path.name.startswith(".active.json.publish-")
+    ]
+
+
+@pytest.mark.parametrize("operation", ["install", "rollback"])
 def test_commit_cleanup_failure_returns_success_with_bounded_evidence(
     tmp_path, monkeypatch, operation
 ):
@@ -3890,6 +4036,174 @@ def test_attestation_requires_launcher_bytecode_environment(tmp_path):
         )
 
 
+def test_install_release_restores_umask_when_venv_create_fails(tmp_path, monkeypatch):
+    """Would fail if isolated venv builder failure leaked the parent umask."""
+    from codex_usage import integration_installer
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    real_run_builder_bounded = integration_installer._run_builder_bounded
+
+    def fail_venv_builder(command, **kwargs):
+        if "venv.EnvBuilder" not in command[3]:
+            return real_run_builder_bounded(command, **kwargs)
+        assert command[0].startswith("/proc/self/fd/")
+        assert int(command[0].rsplit("/", 1)[1]) in kwargs["pass_fds"]
+        assert command[1] == "-I"
+        assert "os.umask(0o077)" in command[3]
+        assert kwargs["cwd"] == Path(command[-1]).parent
+        return subprocess.CompletedProcess(command, 1)
+
+    previous = os.umask(0o027)
+    os.umask(previous)
+    monkeypatch.setattr(
+        integration_installer,
+        "_run_builder_bounded",
+        fail_venv_builder,
+    )
+    try:
+        with pytest.raises(integration_installer.IntegrationInstallError):
+            integration_installer.install_release(
+                source_root=_temporary_source_copy(tmp_path),
+                state_home=state_home,
+                data_home=data_home,
+                python_executable=Path(sys.executable),
+                temporary_root=temporary_root,
+            )
+        restored = os.umask(0o022)
+        os.umask(restored)
+    finally:
+        os.umask(previous)
+
+    assert restored == previous
+
+
+def test_private_virtualenv_uses_isolated_child_umask_contract(tmp_path, monkeypatch):
+    """Would fail if venv creation still changed umask in the parent process."""
+    from codex_usage import integration_installer
+
+    venv_root = tmp_path / "venv"
+    calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+    def create_venv_in_child(command, **kwargs):
+        calls.append((tuple(command), kwargs))
+        assert command[0].startswith("/proc/self/fd/")
+        assert int(command[0].rsplit("/", 1)[1]) in kwargs["pass_fds"]
+        Path(command[-1]).mkdir(mode=0o700)
+        return subprocess.CompletedProcess(command, 0)
+
+    previous = os.umask(0o027)
+    os.umask(previous)
+    monkeypatch.setattr(
+        integration_installer,
+        "_run_builder_bounded",
+        create_venv_in_child,
+    )
+    try:
+        integration_installer._create_private_virtualenv(venv_root)
+        restored = os.umask(0o022)
+        os.umask(restored)
+    finally:
+        os.umask(previous)
+
+    assert restored == previous
+    assert venv_root.is_dir()
+    assert len(calls) == 1
+    command, kwargs = calls[0]
+    assert command[0].startswith("/proc/self/fd/")
+    assert command[1] == "-I"
+    assert command[2] == "-c"
+    assert "os.umask(0o077)" in command[3]
+    assert command[-1] == str(venv_root)
+    assert kwargs["env"] == integration_installer._sanitized_build_environment()
+    assert kwargs["cwd"] == venv_root.parent
+    assert kwargs["timeout_seconds"] == integration_installer.BUILDER_VENV_TIMEOUT_SECONDS
+
+
+def test_private_virtualenv_propagates_builder_cleanup_error(tmp_path, monkeypatch):
+    """Would fail if the virtualenv wrapper degraded a builder cleanup error."""
+    from codex_usage import integration_installer
+
+    cleanup_error = integration_installer.IntegrationCleanupError(
+        "synthetic virtualenv builder cleanup failure"
+    )
+
+    def fail_builder(*_args, **_kwargs):
+        raise cleanup_error
+
+    monkeypatch.setattr(integration_installer, "_run_builder_bounded", fail_builder)
+
+    with pytest.raises(
+        integration_installer.IntegrationCleanupError,
+        match="synthetic virtualenv builder cleanup failure",
+    ) as exc_info:
+        integration_installer._create_private_virtualenv(tmp_path / "venv")
+
+    assert exc_info.value is cleanup_error
+
+
+def test_private_virtualenv_umask_is_process_isolated_from_foreign_thread(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if venv creation changed the parent process umask."""
+    import threading
+
+    from codex_usage import integration_installer
+
+    venv_root = tmp_path / "venv"
+    builder_active = tmp_path / "builder-active"
+    builder_release = tmp_path / "builder-release"
+
+    def blocking_child_builder(command, **kwargs):
+        assert command[0].startswith("/proc/self/fd/")
+        assert int(command[0].rsplit("/", 1)[1]) in kwargs["pass_fds"]
+        builder_active.write_text("active", encoding="utf-8")
+        deadline = time.monotonic() + 5
+        while not builder_release.exists():
+            if time.monotonic() > deadline:
+                return subprocess.CompletedProcess(command, 1)
+            time.sleep(0.01)
+        Path(command[-1]).mkdir(mode=0o700)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_run_builder_bounded",
+        blocking_child_builder,
+    )
+    previous = os.umask(0o027)
+    os.umask(previous)
+    errors: list[BaseException] = []
+
+    def create_virtualenv() -> None:
+        try:
+            integration_installer._create_private_virtualenv(venv_root)
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=create_virtualenv)
+    try:
+        worker.start()
+        deadline = time.monotonic() + 5
+        while not builder_active.exists():
+            if time.monotonic() > deadline:
+                raise TimeoutError("synthetic venv builder did not start")
+            time.sleep(0.01)
+        observed = os.umask(0o022)
+        os.umask(observed)
+        builder_release.write_text("release", encoding="utf-8")
+        worker.join(timeout=5)
+    finally:
+        builder_release.write_text("release", encoding="utf-8")
+        worker.join(timeout=5)
+        os.umask(previous)
+
+    assert not worker.is_alive()
+    assert errors == []
+    assert observed == previous
+    assert venv_root.is_dir()
+
+
 def test_launcher_rejects_schema1_active_manifest_without_repair(tmp_path):
     from codex_usage.private_io import write_private_text
 
@@ -4093,7 +4407,7 @@ def test_installer_build_subprocess_is_no_index_and_sanitized(tmp_path, monkeypa
             environment=integration_installer._sanitized_build_environment(),
         )
     assert "--no-index" in observed["argv"]
-    assert observed["argv"][:3] == (str(Path(sys.executable)), "-B", "-I")
+    assert observed["argv"][:3] == (str(Path(sys.executable).resolve()), "-B", "-I")
     assert observed["env"]["PIP_NO_INDEX"] == "1"
     assert observed["env"]["PYTHONDONTWRITEBYTECODE"] == "1"
     assert "PYTHONPATH" not in observed["env"]
@@ -4103,6 +4417,42 @@ def test_installer_build_subprocess_is_no_index_and_sanitized(tmp_path, monkeypa
     assert observed["cwd"] == tmp_path
     assert observed["start_new_session"] is True
     assert killed == [4321]
+
+
+def test_verified_wheel_propagates_builder_cleanup_error(tmp_path, monkeypatch):
+    """Would fail if the wheel wrapper degraded a builder cleanup error."""
+    from codex_usage import integration_installer
+
+    build_root = tmp_path / "build"
+    wheel_dir = tmp_path / "wheel"
+    build_root.mkdir(mode=0o700)
+    wheel_dir.mkdir(mode=0o700)
+    cleanup_error = integration_installer.IntegrationCleanupError(
+        "synthetic wheel builder cleanup failure"
+    )
+
+    def fail_builder(*_args, **_kwargs):
+        raise cleanup_error
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_require_offline_builder",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(integration_installer, "_run_builder_bounded", fail_builder)
+
+    with pytest.raises(
+        integration_installer.IntegrationCleanupError,
+        match="synthetic wheel builder cleanup failure",
+    ) as exc_info:
+        integration_installer._build_verified_wheel(
+            python_executable=Path(sys.executable),
+            environment=integration_installer._sanitized_build_environment(),
+            build_root=build_root,
+            wheel_dir=wheel_dir,
+        )
+
+    assert exc_info.value is cleanup_error
 
 
 def test_installer_preflight_cleanup_rejects_boolean_pid(monkeypatch):
@@ -4361,6 +4711,160 @@ def test_installer_successful_builder_kills_descendants(tmp_path):
         pytest.fail("successful builder left descendant process running")
 
 
+def test_installer_builder_normal_exit_requires_process_group_gone(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if a normal leader exit returned while descendants survived."""
+    from codex_usage import integration_installer
+
+    calls: list[tuple[str, object]] = []
+
+    class FakeProcess:
+        pid = 4321
+
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout))
+            return 0
+
+        def poll(self):
+            calls.append(("poll", None))
+            return 0
+
+    def fake_killpg(process_group_id, signum):
+        calls.append(("killpg", (process_group_id, signum)))
+        if signum == 0:
+            return None
+        return None
+
+    monkeypatch.setattr(
+        integration_installer.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: FakeProcess(),
+    )
+    monkeypatch.setattr(integration_installer.os, "getpgid", lambda _pid: 4321)
+    monkeypatch.setattr(integration_installer.os, "killpg", fake_killpg)
+    monkeypatch.setattr(
+        integration_installer,
+        "BUILDER_CLEANUP_WAIT_SECONDS",
+        0,
+        raising=False,
+    )
+
+    with pytest.raises(integration_installer.IntegrationCleanupError):
+        integration_installer._run_builder_bounded(["builder"], env={}, cwd=tmp_path)
+
+    assert ("killpg", (4321, 0)) in calls
+
+
+def test_installer_builder_timeout_reports_live_leader_cleanup_failures(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if timeout cleanup swallowed kill/wait errors for a live leader."""
+    from codex_usage import integration_installer
+
+    calls: list[object] = []
+
+    class FakeProcess:
+        pid = 4321
+
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout))
+            if timeout == integration_installer.BUILDER_WHEEL_TIMEOUT_SECONDS:
+                raise subprocess.TimeoutExpired(["builder"], timeout)
+            raise OSError("leader wait failed")
+
+        def poll(self):
+            calls.append(("poll", None))
+            return None
+
+        def kill(self):
+            calls.append("kill")
+            raise OSError("leader kill failed")
+
+    def fake_killpg(process_group_id, signum):
+        calls.append(("killpg", process_group_id, signum))
+        raise OSError(f"group signal {signum} failed")
+
+    monkeypatch.setattr(
+        integration_installer.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: FakeProcess(),
+    )
+    monkeypatch.setattr(integration_installer.os, "getpgid", lambda _pid: 4321)
+    monkeypatch.setattr(integration_installer.os, "killpg", fake_killpg)
+
+    with pytest.raises(integration_installer.IntegrationCleanupError) as exc_info:
+        integration_installer._run_builder_bounded(["builder"], env={}, cwd=tmp_path)
+
+    def leaves(error: BaseException) -> list[BaseException]:
+        if isinstance(error, BaseExceptionGroup):
+            flattened: list[BaseException] = []
+            for nested in error.exceptions:
+                flattened.extend(leaves(nested))
+            return flattened
+        return [error]
+
+    flattened = leaves(exc_info.value.__cause__)
+    assert any(isinstance(error, subprocess.TimeoutExpired) for error in flattened)
+    assert sorted(
+        str(error)
+        for error in flattened
+        if isinstance(error, OSError)
+    ) == [
+        "group signal 0 failed",
+        "group signal 0 failed",
+        "group signal 15 failed",
+        "group signal 9 failed",
+        "leader kill failed",
+        "leader wait failed",
+    ]
+    assert "kill" in calls
+    assert ("wait", 1) in calls
+
+
+def test_installer_builder_cleanup_reaped_leader_without_group_id_uses_pid_group(
+    monkeypatch,
+):
+    """Would fail if already-reaped leaders skipped bounded process-group cleanup."""
+    from codex_usage import integration_installer
+
+    calls: list[object] = []
+
+    class FakeProcess:
+        pid = 4321
+
+        def poll(self):
+            calls.append(("poll", None))
+            return 0
+
+        def kill(self):
+            calls.append("kill")
+
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout))
+            return 0
+
+    def fake_killpg(process_group_id, signum):
+        calls.append(("killpg", process_group_id, signum))
+        if signum == 0:
+            raise ProcessLookupError()
+
+    monkeypatch.setattr(integration_installer.os, "killpg", fake_killpg)
+
+    errors = integration_installer._collect_builder_process_cleanup_errors(
+        FakeProcess(),
+        None,
+    )
+
+    assert errors == []
+    assert ("killpg", 4321, signal.SIGTERM) in calls
+    assert ("killpg", 4321, 0) in calls
+    assert ("wait", 1) in calls
+    assert "kill" not in calls
+
+
 def test_install_cleanup_failure_preserves_original_error_as_cause(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 
@@ -4385,6 +4889,82 @@ def test_install_cleanup_failure_preserves_original_error_as_cause(tmp_path, mon
             temporary_root=temporary_root,
         )
     assert isinstance(error.value.__cause__, integration_installer.IntegrationInstallError)
+
+
+def test_install_cleanup_attempts_all_artifacts_and_preserves_primary_error(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if transaction cleanup stopped after the first cleanup exception."""
+    from codex_usage import integration_installer
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    source = _temporary_source_copy(tmp_path)
+    original_rename = integration_installer._rename_owned_directory
+    cleanup_attempts: list[str] = []
+
+    def fail_final_release_rename(source_path, destination_path, *args, **kwargs):
+        if Path(destination_path).name.startswith("0.6.537-"):
+            raise integration_installer.IntegrationInstallError("synthetic primary failure")
+        return original_rename(source_path, destination_path, *args, **kwargs)
+
+    def fail_candidate_cleanup(path, *_args):
+        if Path(path).name.startswith("candidate-"):
+            cleanup_attempts.append("candidate")
+            raise OSError("synthetic candidate cleanup failure")
+        return True
+
+    def fail_directory_cleanup(path, *_args):
+        name = Path(path).name
+        if name.startswith("producer-build-"):
+            cleanup_attempts.append("build")
+            raise OSError("synthetic build cleanup failure")
+        if name.startswith("producer-wheel-"):
+            cleanup_attempts.append("wheel")
+            raise OSError("synthetic wheel cleanup failure")
+        if ".staging-" in name:
+            cleanup_attempts.append("staging")
+            raise OSError("synthetic staging cleanup failure")
+        return True
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_rename_owned_directory",
+        fail_final_release_rename,
+    )
+    monkeypatch.setattr(
+        integration_installer,
+        "_cleanup_owned_file",
+        fail_candidate_cleanup,
+    )
+    monkeypatch.setattr(
+        integration_installer,
+        "_cleanup_owned_directory",
+        fail_directory_cleanup,
+    )
+
+    with pytest.raises(integration_installer.IntegrationCleanupError) as error:
+        integration_installer.install_release(
+            source_root=source,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+
+    assert sorted(cleanup_attempts) == ["build", "candidate", "staging", "wheel"]
+    leaves = integration_installer._base_exception_leaves([error.value.__cause__])
+    assert any("synthetic primary failure" in str(leaf) for leaf in leaves)
+    assert sorted(
+        str(leaf)
+        for leaf in leaves
+        if isinstance(leaf, OSError) and "synthetic" in str(leaf)
+    ) == [
+        "synthetic build cleanup failure",
+        "synthetic candidate cleanup failure",
+        "synthetic staging cleanup failure",
+        "synthetic wheel cleanup failure",
+    ]
 
 
 def test_builder_preflight_has_bounded_timeout_and_streams_only_json(monkeypatch):
@@ -5424,6 +6004,7 @@ def test_copy_regular_binds_target_to_parent_descriptor(tmp_path, monkeypatch):
         old_parent.stat().st_dev,
         (old_parent / "target").stat().st_ino,
         0o600,
+        (old_parent / "target").stat().st_gid,
     )
     assert (old_parent / "target").read_bytes() == b"source"
     assert not (parent / "target").exists()
@@ -6497,9 +7078,11 @@ def test_two_valid_releases_bind_runtime_to_executing_entrypoint_and_rollback(tm
 
 def test_runtime_wheel_import_closure_is_exact_and_utc_precedes_python_import(tmp_path):
     release, _, _ = _install(tmp_path)
-    from codex_usage import integration_installer
+    from codex_usage import integration_attestation, integration_installer
 
-    allowed = {f"codex_usage/{name}" for name in integration_installer.SOURCE_MODULES}
+    allowed = {
+        f"codex_usage/{name}" for name in integration_attestation.PRODUCER_RELEASE_MODULES
+    }
     allowed_dist_info = {
         f"{integration_installer.DIST_INFO_PREFIX}/{name}"
         for name in integration_installer.DIST_INFO_FILES
@@ -6512,8 +7095,26 @@ def test_runtime_wheel_import_closure_is_exact_and_utc_precedes_python_import(tm
         integration_installer._validate_runtime_import_closure(
             {name: wheel.read(name) for name in package_members}
         )
+    assert "codex_usage/integration_watchdog.py" not in package_members
+    assert "codex_usage/integration_timeout_contract.py" not in package_members
     launcher = release.launcher_path.read_text(encoding="utf-8")
     assert launcher.index("TZ=UTC") < launcher.index("exec ")
+
+
+def test_runtime_import_gate_rejects_missing_producer_dependency():
+    """Would fail if the Producer module list could omit an imported dependency."""
+    from codex_usage import integration_attestation, integration_installer
+
+    modules = {
+        f"codex_usage/{module_name}": (
+            PROJECT_ROOT / "src" / "codex_usage" / module_name
+        ).read_bytes()
+        for module_name in integration_attestation.PRODUCER_RELEASE_MODULES
+        if module_name != "integration_snapshot.py"
+    }
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._validate_runtime_import_closure(modules)
 
 
 @pytest.mark.parametrize(
@@ -6749,8 +7350,6 @@ def rollback_active_release(**kwargs):
             "/",
             "--dev",
             "/dev",
-            "--dir",
-            str(production_lock_root),
             "--bind",
             str(lock_root),
             str(production_lock_root),
@@ -7805,6 +8404,40 @@ def test_owned_file_cleanup_rejects_replaced_entry_before_unlink(
     assert target.read_bytes() == b"foreign"
 
 
+def test_owned_file_cleanup_rejects_group_owner_drift_before_unlink(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if installer file identity ignored gid changes."""
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    target = parent / "target"
+    target.write_bytes(b"payload")
+    target.chmod(0o600)
+    parent_identity = integration_installer._directory_identity(parent)
+    identity = integration_installer._file_identity(target)
+    real_stat = integration_installer.os.stat
+
+    def stat_with_group_owner_drift(path, *args, **kwargs):
+        item = real_stat(path, *args, **kwargs)
+        if kwargs.get("dir_fd") is not None and path == target.name:
+            values = list(item)
+            values[5] = item.st_gid + 1
+            return os.stat_result(values)
+        return item
+
+    monkeypatch.setattr(integration_installer.os, "stat", stat_with_group_owner_drift)
+
+    assert not integration_installer._cleanup_owned_file(
+        target,
+        identity,
+        parent_identity,
+    )
+    assert target.exists()
+
+
 def test_provisional_directory_cleanup_rejects_parent_swap_before_rmdir(
     tmp_path, monkeypatch
 ):
@@ -8528,6 +9161,94 @@ def test_interpreter_resolver_accepts_final_symlink_and_rejects_bad_targets(tmp_
         integration_installer._resolve_python_executable(directory)
 
 
+def test_python_executable_owner_allows_only_bounded_unmapped_root_overflow(
+    monkeypatch,
+):
+    """Would fail if the outer user namespace accepted arbitrary nobody-owned Python."""
+    from codex_usage import integration_installer
+
+    monkeypatch.setattr(integration_installer.os, "getuid", lambda: 1000)
+    monkeypatch.setattr(integration_installer, "_kernel_overflow_uid", lambda: 65534)
+
+    def fake_lstat(path):
+        normalized = Path(path)
+        if normalized in {Path("/usr"), Path("/usr/bin")}:
+            return SimpleNamespace(
+                st_mode=stat.S_IFDIR | 0o755,
+                st_uid=65534,
+            )
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr(integration_installer.Path, "lstat", fake_lstat)
+
+    assert integration_installer._python_executable_owner_is_allowed(
+        Path("/usr/bin/python3.14"),
+        65534,
+    )
+    assert integration_installer._python_executable_owner_is_allowed(
+        Path("/usr/bin/python3.14"),
+        0,
+    )
+    assert integration_installer._python_executable_owner_is_allowed(
+        Path("/tmp/user-python"),
+        1000,
+    )
+    assert not integration_installer._python_executable_owner_is_allowed(
+        Path("/tmp/python"),
+        65534,
+    )
+    assert not integration_installer._python_executable_owner_is_allowed(
+        Path("/usr/local/bin/python"),
+        65534,
+    )
+
+
+def test_python_executable_owner_rejects_overflow_when_system_root_is_mapped(
+    monkeypatch,
+):
+    """Would fail if normal-host nobody ownership was treated as root-owned Python."""
+    from codex_usage import integration_installer
+
+    monkeypatch.setattr(integration_installer.os, "getuid", lambda: 1000)
+    monkeypatch.setattr(integration_installer, "_kernel_overflow_uid", lambda: 65534)
+
+    def fake_lstat(path):
+        normalized = Path(path)
+        if normalized in {Path("/usr"), Path("/usr/bin")}:
+            return SimpleNamespace(
+                st_mode=stat.S_IFDIR | 0o755,
+                st_uid=0,
+            )
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr(integration_installer.Path, "lstat", fake_lstat)
+
+    assert not integration_installer._python_executable_owner_is_allowed(
+        Path("/usr/bin/python3.14"),
+        65534,
+    )
+
+
+def test_kernel_overflow_uid_reader_accepts_only_bounded_decimal(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if malformed overflow-uid state could widen interpreter owners."""
+    from codex_usage import integration_installer
+
+    source = tmp_path / "overflowuid"
+    monkeypatch.setattr(integration_installer, "_KERNEL_OVERFLOW_UID_PATH", source)
+
+    source.write_text("65534\n", encoding="ascii")
+    assert integration_installer._kernel_overflow_uid() == 65534
+
+    source.write_text("not-a-uid\n", encoding="ascii")
+    assert integration_installer._kernel_overflow_uid() == -1
+
+    source.write_text(str(2**32) + "\n", encoding="ascii")
+    assert integration_installer._kernel_overflow_uid() == -1
+
+
 def test_interpreter_resolver_rejects_target_replacement_before_return(
     tmp_path, monkeypatch
 ):
@@ -8556,6 +9277,269 @@ def test_interpreter_resolver_rejects_target_replacement_before_return(
     assert replaced
     assert old_target.read_bytes() == b"owned executable"
     assert target.read_bytes() == b"foreign executable"
+
+
+def test_build_verified_wheel_rejects_python_swap_after_resolve_before_spawn(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if a resolved interpreter identity was not carried to spawn."""
+    from codex_usage import integration_installer
+
+    target = tmp_path / "python-target"
+    target.write_bytes(b"owned executable")
+    target.chmod(0o700)
+    resolved = integration_installer._resolve_python_executable(target)
+    old_target = tmp_path / "python-target-old"
+    target.rename(old_target)
+    target.write_bytes(b"replacement executable")
+    target.chmod(0o700)
+    spawned: list[tuple[str, ...]] = []
+
+    class FakeProcess:
+        pid = 4321
+
+        def wait(self, timeout=None):
+            return 0
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_run_builder_preflight",
+        lambda **kwargs: subprocess.CompletedProcess(
+            [str(kwargs["python_executable"])],
+            0,
+            '{"backend":"setuptools.command.bdist_wheel.bdist_wheel",'
+            '"setuptools":"80.10.2"}\n',
+            "",
+        ),
+    )
+    monkeypatch.setattr(
+        integration_installer.subprocess,
+        "Popen",
+        lambda argv, **_kwargs: spawned.append(tuple(argv)) or FakeProcess(),
+    )
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._build_verified_wheel(
+            build_root=tmp_path,
+            python_executable=resolved,
+            wheel_dir=tmp_path / "wheel",
+            environment=integration_installer._sanitized_build_environment(),
+        )
+
+    assert spawned == []
+    assert old_target.read_bytes() == b"owned executable"
+    assert target.read_bytes() == b"replacement executable"
+
+
+def test_python_spawn_revalidation_rejects_in_place_byte_change(
+    tmp_path,
+):
+    """Would fail if Python binding omitted executable content and timestamps."""
+    from codex_usage import integration_installer
+
+    target = tmp_path / "python-target"
+    target.write_bytes(b"owned executable")
+    target.chmod(0o700)
+    resolved = integration_installer._resolve_python_executable(target)
+    target.write_bytes(b"evil executable!!")
+    target.chmod(0o700)
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._revalidate_python_executable_for_spawn(resolved)
+
+
+def test_builder_preflight_execs_fd_bound_python_after_spawn_race(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if Popen reopened a revalidated Python executable by path."""
+    from codex_usage import integration_installer
+
+    target = tmp_path / "python-target"
+    target.write_bytes(b"owned executable")
+    target.chmod(0o700)
+    resolved = integration_installer._resolve_python_executable(target)
+    old_target = tmp_path / "python-target-old"
+    spawned: list[tuple[tuple[str, ...], tuple[int, ...]]] = []
+
+    class FakeProcess:
+        pid = 4321
+
+        def __init__(self) -> None:
+            read_fd, write_fd = os.pipe()
+            os.write(
+                write_fd,
+                b'{"backend":"setuptools.command.bdist_wheel.bdist_wheel",'
+                b'"setuptools":"80.10.2"}\n',
+            )
+            os.close(write_fd)
+            self.stdout = os.fdopen(read_fd, "rb")
+
+        def wait(self, timeout=None):
+            return 0
+
+        def poll(self):
+            return 0
+
+        def kill(self):
+            return None
+
+    def race_path_before_spawn(argv, **kwargs):
+        target.rename(old_target)
+        target.write_bytes(b"replacement executable")
+        target.chmod(0o700)
+        spawned.append((tuple(argv), tuple(kwargs.get("pass_fds", ()))))
+        return FakeProcess()
+
+    monkeypatch.setattr(integration_installer.subprocess, "Popen", race_path_before_spawn)
+
+    result = integration_installer._run_builder_preflight(
+        python_executable=resolved,
+        environment=integration_installer._sanitized_build_environment(),
+    )
+
+    assert result.returncode == 0
+    assert spawned
+    argv, pass_fds = spawned[0]
+    assert argv[0].startswith("/proc/self/fd/")
+    assert int(argv[0].rsplit("/", 1)[1]) in pass_fds
+    assert old_target.read_bytes() == b"owned executable"
+    assert target.read_bytes() == b"replacement executable"
+
+
+def test_create_private_virtualenv_execs_fd_bound_python_after_path_shadow(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if venv creation reopened sys.executable by path at spawn."""
+    from codex_usage import integration_installer as module
+
+    python_path = tmp_path / "python"
+    detached_python = tmp_path / "python-detached"
+    marker = tmp_path / "venv-python-marker"
+    venv_root = tmp_path / "venv"
+    real_python = shlex.quote(sys.executable)
+    python_path.write_text(
+        "#!/bin/sh\n"
+        "printf 'trusted\\n' > \"$CODEX_USAGE_SPAWN_MARKER\"\n"
+        f"exec {real_python} \"$@\"\n",
+        encoding="utf-8",
+    )
+    python_path.chmod(0o700)
+    environment = module._sanitized_build_environment()
+    environment["CODEX_USAGE_SPAWN_MARKER"] = str(marker)
+    monkeypatch.setattr(module.sys, "executable", str(python_path))
+    monkeypatch.setattr(module, "_sanitized_build_environment", lambda: dict(environment))
+    swapped = False
+
+    def shadow_python(_python_fd_path: str) -> None:
+        nonlocal swapped
+        python_path.rename(detached_python)
+        python_path.write_text(
+            "#!/bin/sh\n"
+            "printf 'shadow\\n' > \"$CODEX_USAGE_SPAWN_MARKER\"\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        python_path.chmod(0o700)
+        swapped = True
+
+    monkeypatch.setattr(
+        module,
+        "_before_private_virtualenv_builder_exec",
+        shadow_python,
+        raising=False,
+    )
+
+    module._create_private_virtualenv(venv_root)
+
+    assert swapped
+    assert marker.read_text(encoding="utf-8") == "trusted\n"
+    assert (venv_root / "pyvenv.cfg").is_file()
+    assert detached_python.read_text(encoding="utf-8").startswith("#!/bin/sh")
+
+
+def test_build_verified_wheel_execs_fd_bound_python_after_path_shadow(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if wheel build reopened the validated interpreter path."""
+    from codex_usage import integration_installer as module
+
+    python_path = tmp_path / "python"
+    detached_python = tmp_path / "python-detached"
+    marker = tmp_path / "wheel-python-marker"
+    build_root = tmp_path / "build"
+    wheel_dir = tmp_path / "wheel"
+    build_root.mkdir(mode=0o700)
+    build_root.chmod(0o700)
+    expected_wheel = module.EXPECTED_WHEEL_NAME
+    python_path.write_text(
+        "#!/bin/sh\n"
+        "printf 'trusted\\n' > \"$CODEX_USAGE_SPAWN_MARKER\"\n"
+        "wheel_dir=''\n"
+        "previous=''\n"
+        "for argument in \"$@\"; do\n"
+        "  if [ \"$previous\" = '--wheel-dir' ]; then wheel_dir=\"$argument\"; fi\n"
+        "  previous=\"$argument\"\n"
+        "done\n"
+        "mkdir -p \"$wheel_dir\"\n"
+        f"printf 'wheel\\n' > \"$wheel_dir/{expected_wheel}\"\n"
+        f"chmod 600 \"$wheel_dir/{expected_wheel}\"\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    python_path.chmod(0o700)
+    resolved = module._resolve_python_executable(python_path)
+    environment = module._sanitized_build_environment()
+    environment["CODEX_USAGE_SPAWN_MARKER"] = str(marker)
+    monkeypatch.setattr(module, "_require_offline_builder", lambda **_kwargs: None)
+    swapped = False
+
+    def shadow_python(_python_fd_path: str) -> None:
+        nonlocal swapped
+        python_path.rename(detached_python)
+        python_path.write_text(
+            "#!/bin/sh\n"
+            "printf 'shadow\\n' > \"$CODEX_USAGE_SPAWN_MARKER\"\n"
+            "wheel_dir=''\n"
+            "previous=''\n"
+            "for argument in \"$@\"; do\n"
+            "  if [ \"$previous\" = '--wheel-dir' ]; then wheel_dir=\"$argument\"; fi\n"
+            "  previous=\"$argument\"\n"
+            "done\n"
+            "mkdir -p \"$wheel_dir\"\n"
+            f"printf 'wheel\\n' > \"$wheel_dir/{expected_wheel}\"\n"
+            f"chmod 600 \"$wheel_dir/{expected_wheel}\"\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        python_path.chmod(0o700)
+        swapped = True
+
+    monkeypatch.setattr(
+        module,
+        "_before_wheel_builder_exec",
+        shadow_python,
+        raising=False,
+    )
+
+    wheel_path, identity = module._build_verified_wheel(
+        python_executable=resolved,
+        environment=environment,
+        build_root=build_root,
+        wheel_dir=wheel_dir,
+    )
+
+    assert swapped
+    assert marker.read_text(encoding="utf-8") == "trusted\n"
+    assert wheel_path == wheel_dir / expected_wheel
+    assert identity.permissions == 0o600
+    assert detached_python.read_text(encoding="utf-8").startswith("#!/bin/sh")
 
 
 def test_install_revalidates_temporary_root_and_child_identities(tmp_path, monkeypatch):
@@ -8664,7 +9648,8 @@ def test_builder_scans_wheel_directory_by_descriptor(tmp_path, monkeypatch):
     wheel_identity = integration_installer._directory_identity(wheel_dir)
     monkeypatch.setattr(integration_installer, "_require_offline_builder", lambda **_: None)
 
-    def fake_builder(command, *, env, cwd):
+    def fake_builder(command, *, env, cwd, pass_fds=()):
+        del env, cwd, pass_fds
         (wheel_dir / integration_installer.EXPECTED_WHEEL_NAME).write_bytes(b"wheel")
         return subprocess.CompletedProcess(command, 0)
 
@@ -8690,6 +9675,7 @@ def test_builder_scans_wheel_directory_by_descriptor(tmp_path, monkeypatch):
         wheel_item.st_dev,
         wheel_item.st_ino,
         stat.S_IMODE(wheel_item.st_mode),
+        wheel_item.st_gid,
     )
 
 
@@ -8703,7 +9689,8 @@ def test_builder_rejects_wrong_wheel_basename_before_release_use(tmp_path, monke
 
     monkeypatch.setattr(integration_installer, "_require_offline_builder", lambda **_: None)
 
-    def fake_builder(command, *, env, cwd):
+    def fake_builder(command, *, env, cwd, pass_fds=()):
+        del env, cwd, pass_fds
         (wheel_dir / "wrong-name-0.6.537-py3-none-any.whl").write_bytes(b"wheel")
         return subprocess.CompletedProcess(command, 0)
 
@@ -8820,6 +9807,57 @@ def test_installer_parser_errors_are_data_sparse(tmp_path):
     assert completed.stdout == ""
     assert completed.stderr == "integration_producer_unavailable\n"
     assert "secret-marker" not in completed.stderr
+
+
+def test_installer_entrypoint_maps_cleanup_error_to_70(tmp_path, monkeypatch):
+    import conftest as test_conftest
+
+    monkeypatch.setattr(subprocess, "Popen", test_conftest._REAL_SUBPROCESS_POPEN)
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    wrapper = """\
+import runpy
+import sys
+
+namespace = runpy.run_path(sys.argv[1], run_name="synthetic_installer")
+cleanup_error = namespace["IntegrationCleanupError"]("synthetic mapper cleanup")
+
+def fail_install(**_kwargs):
+    raise cleanup_error
+
+main = namespace["main"]
+main.__globals__["install_release"] = fail_install
+result = main([
+    "--source-root", "/tmp/source",
+    "--state-home", "/tmp/state",
+    "--data-home", "/tmp/data",
+    "--python", "/usr/bin/python",
+    "--temporary-root", "/tmp/temporary",
+])
+print(result)
+"""
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            wrapper,
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+        ],
+        cwd=repo_root,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == "70\n"
+    assert completed.stderr == "integration_producer_cleanup_failed\n"
 
 
 def test_installer_cleanup_errors_have_distinct_data_sparse_result(tmp_path):
@@ -9754,6 +10792,7 @@ def test_installer_cleanup_and_rename_guards(tmp_path, monkeypatch):
         parent_identity.device,
         parent_identity.inode,
         0o701,
+        parent_identity.gid,
     )
     assert not module._remove_owned_entry(
         regular,
@@ -9782,6 +10821,7 @@ def test_installer_cleanup_and_rename_guards(tmp_path, monkeypatch):
         provisional.uid,
         provisional.file_type,
         provisional.permissions,
+        provisional.gid,
     )
     assert not module._remove_owned_entry(
         regular,
@@ -9793,6 +10833,7 @@ def test_installer_cleanup_and_rename_guards(tmp_path, monkeypatch):
         regular_identity.device,
         regular_identity.inode,
         regular_identity.permissions + 1,
+        regular_identity.gid,
     )
     assert not module._remove_owned_entry(
         regular,
@@ -9804,6 +10845,7 @@ def test_installer_cleanup_and_rename_guards(tmp_path, monkeypatch):
         regular_identity.device,
         regular_identity.inode + 1,
         regular_identity.permissions,
+        regular_identity.gid,
     )
     assert not module._remove_owned_entry(
         regular,
@@ -9907,6 +10949,7 @@ def test_installer_cleanup_and_rename_guards(tmp_path, monkeypatch):
         source_identity.device,
         source_identity.inode + 1,
         source_identity.permissions,
+        source_identity.gid,
     )
     with pytest.raises(module.IntegrationInstallError):
         module._rename_owned_directory(source, target, parent_identity, wrong_source)
@@ -9966,6 +11009,7 @@ def test_installer_private_directory_and_bootstrap_guards(tmp_path, monkeypatch)
         parent_identity.device,
         parent_identity.inode,
         0o701,
+        parent_identity.gid,
     )
     with pytest.raises(module.IntegrationInstallError):
         module._create_private_directory(target, wrong_parent)
@@ -10187,6 +11231,7 @@ def test_installer_copy_reader_resolver_and_builder_guards(tmp_path, monkeypatch
                     parent_identity.device,
                     parent_identity.inode,
                     0o701,
+                    parent_identity.gid,
                 )
             return original_identity(path)
 
@@ -10261,6 +11306,7 @@ def test_installer_copy_reader_resolver_and_builder_guards(tmp_path, monkeypatch
         parent_identity.device,
         parent_identity.inode,
         0o701,
+        parent_identity.gid,
     )
     with pytest.raises(module.IntegrationInstallError):
         module._read_nofollow(file_path, expected_parent_identity=wrong_parent)
@@ -10471,9 +11517,13 @@ def test_installer_builder_import_and_record_guards(tmp_path, monkeypatch):
     monkeypatch.setattr(module.subprocess, "Popen", lambda *_args, **_kwargs: FakeBuilderProcess())
     monkeypatch.setattr(module.os, "getpgid", lambda _pid: 456)
     monkeypatch.setattr(module, "_kill_process_group", killed.append)
-    with pytest.raises(RuntimeError, match="builder"):
+    with pytest.raises(module.IntegrationCleanupError) as exc_info:
         module._run_builder_bounded(["builder"], env={}, cwd=tmp_path)
     assert killed == [456]
+    assert isinstance(exc_info.value.__cause__, BaseExceptionGroup)
+    assert [
+        type(error).__name__ for error in exc_info.value.__cause__.exceptions
+    ] == ["RuntimeError", "RuntimeError"]
 
     class NoGroupProcess:
         pid = True
@@ -10486,8 +11536,12 @@ def test_installer_builder_import_and_record_guards(tmp_path, monkeypatch):
 
     with monkeypatch.context() as context:
         context.setattr(module.subprocess, "Popen", lambda *_args, **_kwargs: NoGroupProcess())
-        with pytest.raises(RuntimeError, match="builder without group"):
+        with pytest.raises(module.IntegrationCleanupError) as no_group_exc:
             module._run_builder_bounded(["builder"], env={}, cwd=tmp_path)
+    assert isinstance(no_group_exc.value.__cause__, BaseExceptionGroup)
+    assert [
+        type(error).__name__ for error in no_group_exc.value.__cause__.exceptions
+    ] == ["RuntimeError", "RuntimeError"]
 
     assert module._resolve_local_import_targets(node=ast.parse("import os").body[0]) == frozenset()
     assert module._resolve_local_import_targets(
@@ -11060,6 +12114,7 @@ def test_installer_find_site_packages_remaining_guards(tmp_path, monkeypatch):
         identity.device,
         identity.inode,
         identity.permissions + 1,
+        identity.gid,
     )
     with pytest.raises(module.IntegrationInstallError):
         module._find_site_packages(valid, wrong_identity)
@@ -11344,8 +12399,8 @@ def test_installer_build_wheel_directory_guards(tmp_path, monkeypatch):
 
     wheel_dir = wheel_parent / "wheel"
 
-    def run_and_create(command, *, env, cwd):
-        del command, env, cwd
+    def run_and_create(command, *, env, cwd, pass_fds=()):
+        del command, env, cwd, pass_fds
         wheel_dir.mkdir(mode=0o700, exist_ok=True)
         wheel = wheel_dir / module.EXPECTED_WHEEL_NAME
         wheel.write_bytes(b"wheel")
@@ -11368,8 +12423,8 @@ def test_installer_build_wheel_directory_guards(tmp_path, monkeypatch):
 
     invalid_identity_dir = wheel_parent / "invalid-identity"
 
-    def run_invalid_identity(command, *, env, cwd):
-        del command, env, cwd
+    def run_invalid_identity(command, *, env, cwd, pass_fds=()):
+        del command, env, cwd, pass_fds
         invalid_identity_dir.mkdir(mode=0o700, exist_ok=True)
         wheel = invalid_identity_dir / module.EXPECTED_WHEEL_NAME
         wheel.write_bytes(b"wheel")
@@ -11403,8 +12458,8 @@ def test_installer_build_wheel_directory_guards(tmp_path, monkeypatch):
 
     scan_error_dir = wheel_parent / "scan-error"
 
-    def run_scan_error(command, *, env, cwd):
-        del command, env, cwd
+    def run_scan_error(command, *, env, cwd, pass_fds=()):
+        del command, env, cwd, pass_fds
         scan_error_dir.mkdir(mode=0o700, exist_ok=True)
         return subprocess.CompletedProcess(["builder"], 0)
 
@@ -11453,6 +12508,7 @@ def test_installer_release_entry_guards_and_public_wrapper(tmp_path, monkeypatch
         build_identity.device,
         build_identity.inode,
         build_identity.permissions + 1,
+        build_identity.gid,
     )
     with pytest.raises(module.IntegrationInstallError):
         module._copy_source_into_project(
