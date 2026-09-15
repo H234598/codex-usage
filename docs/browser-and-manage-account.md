@@ -2,8 +2,10 @@
 
 Der Browser-Abruf verwendet pro Account ein persistentes Profil. Unterstützte
 Abrufbrowser sind `firefox` und `chromium`; die isolierte Reaktivierung erlaubt
-`auto`, `vivaldi`, `chromium` und `firefox`. `auto` bevorzugt laut CLI-Hilfe
-Vivaldi.
+`auto`, `vivaldi`, `chromium` und `firefox`. Bei `auto` versucht die
+Reaktivierung zunächst den für den Account konfigurierten Abrufbrowser. Nur
+wenn diese Auswahl fehlschlägt, verwendet sie die allgemeine automatische
+Browserauswahl.
 
 ## Sichtbarer Login und Account-Verwaltung
 

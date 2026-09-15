@@ -27,7 +27,7 @@ Jeder Account hat eine eindeutige ID, ein Label, ein eigenes Profilverzeichnis, 
 
 - Der Standardprofilpfad liegt unter dem XDG-Datenverzeichnis in `codex-usage/profiles/<account-id>`.
 - Ein Accountprofil darf nicht mit einem anderen Account geteilt werden. Die Konfiguration akzeptiert höchstens 100 Accounts und eine Polling-Periode ab 60 Sekunden; der Default beträgt 300 Sekunden.
-- Das kanonische Codex-Home eines Profils enthält `codex-home/auth.json`. Wenn ein direkter Abruf konfiguriert ist, wird sein `auth_json_path` pro Account geführt; ein globales `--auth-json` ist nur für genau einen ausgewählten Account zulässig.
+- Profil- und Authentisierungszustände bleiben je Account isoliert. Beim direkten Abruf muss die lokale Authentisierung dem gewählten Account eindeutig zugeordnet sein; nicht eindeutig zuordenbare Quellen ergeben keinen behaupteten Accountstatus.
 - `codex-usage account backend ACCOUNT direct|app-server` stellt den Abrufweg um. Die App-Server-Kontostatusabfrage startet keine Modellanfrage.
 
 Details zu Profileinrichtung, Authentifizierung, Browserverwaltung und Migration stehen in [docs/accounts-and-authentication.md](docs/accounts-and-authentication.md) und [docs/browser-and-manage-account.md](docs/browser-and-manage-account.md).
@@ -57,7 +57,7 @@ codex-usage service enable
 codex-usage service status --format json
 ```
 
-Weitere wichtige Gruppen sind `account`, `profile`, `history`, `consumption`, `health`, `bridge`, `policy` und `masterjet`. Der Dienst startet den dedizierten Integrations-Watchdog, nicht einen beliebigen CLI-Aufruf. Betrieb, Integration und Fehlerdiagnose sind in [docs/operations.md](docs/operations.md), [docs/integration-api.md](docs/integration-api.md) und [docs/troubleshooting.md](docs/troubleshooting.md) dokumentiert.
+Weitere wichtige Gruppen und Befehle sind `account`, `profile`, `history`, `consumption`, `health`, `bridge-snippet`, `bridge-extension`, `bridge-server`, `policy` und `masterjet`. Der Dienst startet den dedizierten Integrations-Watchdog, nicht einen beliebigen CLI-Aufruf. Betrieb, Integration und Fehlerdiagnose sind in [docs/operations.md](docs/operations.md), [docs/integration-api.md](docs/integration-api.md) und [docs/troubleshooting.md](docs/troubleshooting.md) dokumentiert.
 
 ## Cinnamon-Applet
 
