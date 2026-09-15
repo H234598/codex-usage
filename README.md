@@ -1,378 +1,80 @@
 # codex-usage
 
-Polls the ChatGPT Codex analytics page for multiple accounts and prints only the current usage values plus reset times.
+`codex-usage` ist ein lokales Multi-Account-Werkzeug für aktuelle ChatGPT-Codex-Nutzungs- und Limitstände. Es bietet eine Python-CLI, persistente, voneinander getrennte Accountprofile, einen Cinnamon-Applet und einen optionalen `systemd --user`-Dienst. Die erfassten Werte stammen je Account aus dem konfigurierten Abrufweg; sie sind keine Zusage zu einem bestimmten Tarif, Limit oder Resetzeitpunkt.
 
-This is browser automation against `https://chatgpt.com/codex/cloud/settings/analytics`, not an official public API. Use it only for accounts you control, at low frequency, and do not use it to bypass limits or access controls. Enterprise workspaces with Codex Enterprise Analytics access should prefer the official API surface.
+Die Dokumentation beschreibt den geprüften Quellstand `0.6.537`. Die vollständige Navigation steht in [docs/README.md](docs/README.md); der Implementierungsstatus steht in [ROADMAP.md](ROADMAP.md).
 
-## Install
+## Schnellstart
 
-```bash
-python -m pip install -e ".[dev]"
-python -m playwright install chromium firefox
-```
-
-## Configure Accounts
-
-Each account gets its own persistent Playwright profile. These profiles contain login state and are created with private permissions.
+Voraussetzung ist Python 3.11 oder neuer. Für den Standardbrowser Firefox müssen die zugehörigen Playwright-Browserdateien verfügbar sein.
 
 ```bash
-codex-usage account add privat --label "Privat"
-codex-usage account add arbeit --label "Arbeit"
-codex-usage account overview
-```
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e .
+python -m playwright install firefox
 
-Each account can use the existing direct WHAM reader or the Codex App Server.
-Existing accounts keep `direct` until changed explicitly:
-
-```bash
-codex-usage account backend privat app-server
-codex-usage account backend arbeit direct
-codex-usage account overview --format json
-```
-
-The App Server path calls only `account/read` and `account/rateLimits/read`.
-It does not start a model thread or turn and therefore does not consume model
-usage tokens. Codex can refresh its own OAuth tokens through this path.
-
-Firefox is the default browser. If Cloudflare blocks one browser, change the account browser and log in again:
-
-```bash
-codex-usage account add privat --browser firefox
-codex-usage account add privat --browser chromium
-```
-
-Log in once per account:
-
-```bash
+codex-usage account add privat --label Privat
 codex-usage login privat
-codex-usage login arbeit
-```
-
-The login command opens the configured browser visibly. Sign in normally, including MFA, then press Enter in the terminal.
-
-Remove an account from the config:
-
-```bash
-codex-usage account delete privat
-```
-
-This keeps the browser profile by default. To also delete the stored profile:
-
-```bash
-codex-usage account delete privat --delete-profile
-```
-
-## Masterjet account control
-
-Codex Usage owns local OpenAI profile configuration, its canonical
-`PROFILE/codex-home/auth.json`, and usage polling. Masterjet remains the only
-authority for remote credential generations, Google inventory, plans, and
-applies. Google pages receive strictly redacted projections; they never read
-provider inventory files or persist provider credentials. CLI, MCP, and HTTPS
-are separate clients of that same Masterjet authority. The Master-MCP process
-may therefore run on another host.
-
-One canonical connection profile selects either a local `AF_UNIX` socket or a
-remote HTTPS endpoint:
-
-```bash
-codex-usage masterjet connection-set --transport local \
-  --endpoint /run/user/1000/masterjet.sock
-codex-usage masterjet connection-set --transport https \
-  --endpoint https://masterjet.example.test/control
-codex-usage masterjet connection-show --json
-codex-usage masterjet connection-test --json
-```
-
-HTTPS keeps certificate and hostname verification enabled and rejects
-redirects. Settings actions run the CLI in a transient `systemd --user` service
-with `--pipe --wait --collect`. HTTPS loads only
-`masterjet-control-bearer`; local AF_UNIX loads only
-`masterjet-local-attestation-key`. `systemd` creates `CREDENTIALS_DIRECTORY`
-for that process. Missing systemd user-manager support or credential fails
-closed; there is no plaintext fallback.
-
-Provision fixed encrypted sources once. Replace `/home/USER` with the home
-directory from the local account database, not an environment override. Input
-is read transiently by `systemd-ask-password`; no secret belongs in the command,
-environment, config, cache, or shell history:
-
-```bash
-install -d -m 0700 /home/USER/.config/codex-usage/credentials
-chmod 0700 /home/USER /home/USER/.config /home/USER/.config/codex-usage
-systemd-ask-password --user --echo=no -n "Masterjet HTTPS bearer" |
-  systemd-creds encrypt --user --name=masterjet-control-bearer - \
-  /home/USER/.config/codex-usage/credentials/masterjet-control-bearer.cred
-systemd-ask-password --user --echo=no -n "Masterjet local attestation key" |
-  systemd-creds encrypt --user --name=masterjet-local-attestation-key - \
-  /home/USER/.config/codex-usage/credentials/masterjet-local-attestation-key.cred
-chmod 0400 /home/USER/.config/codex-usage/credentials/*.cred
-```
-
-Provision only the credential for transports this desktop uses. Step-up TOTP
-stays in the same running CLI process through the Settings dialog/stdin pipe.
-Local secret ingress uses a private file descriptor; HTTPS ingress uses a
-bounded raw request body. Do not store secrets in the endpoint or config.
-
-OpenAI re-login only marks synchronization as required. Upload of the canonical
-`auth.json` is always a separate explicit action:
-
-```bash
-codex-usage account auth-sync ACCOUNT --format json
-```
-
-Google OAuth-client import, browser OAuth, inventory refresh, planning, and
-apply remain separate operations. `provision-apply` needs the complete preview
-digest plus explicit confirmation:
-
-```bash
-codex-usage google add ACCOUNT --label "Google Account" --oauth-client-json /private/client.json --json
-codex-usage google oauth-begin ACCOUNT --browser firefox --json
-codex-usage google inventory-refresh ACCOUNT --json
-codex-usage google provision-plan ACCOUNT --json
-codex-usage google provision-apply ACCOUNT PLAN_ID \
-  --plan-digest sha256:DIGEST --confirm --json
-```
-
-On control failure, a redacted cache can preserve read-only display for at most
-30 seconds. Older or invalid data is `STALE`; account mutations, apply, and any
-direct settings write stay disabled. Recovery always starts with a fresh
-projection.
-
-Maintainer self-check uses only local fixtures: real `AF_UNIX` and TLS servers,
-the shipped CLI through the bounded page runner, both account-page callbacks,
-cache fallback after endpoint shutdown, and fail-closed action guards:
-
-```bash
-pytest -q tests/test_masterjet_client.py tests/test_masterjet_cache.py \
-  tests/test_openai_accounts_page.py tests/test_google_accounts_page.py
-```
-
-### Fleet management and Ollama
-
-Codex Usage ist das Control-Frontend für die begrenzten asynchronen
-Ollama-Flottenaktionen von Applet und CLI. Es stellt Ollama nicht als OpenAI-
-oder Google-Account dar und besitzt weder Fleet-Runtime noch Hostagent-Runtime.
-Fleetmanagement und Hostagent besitzen Runtime, Orchestrierung und den
-ausführenden Zustand; Codex Usage leitet nur die validierten Control-Aufträge
-über die konfigurierte Masterjet-Verbindung weiter. `codex --oss` ist eine
-getrennte Consumer-Schicht.
-
-## Run
-
-One poll:
-
-```bash
-codex-usage
-codex-usage once
 codex-usage once --format json
 ```
 
-`codex-usage` ohne Subcommand ist gleichbedeutend mit `codex-usage once`.
-`once`, `watch` und `watchdog` holen Accounts mit `auth_json_path` direkt ab
-und fallen fuer die anderen Accounts auf den Browser zurueck, solange
-`--headed` nicht gesetzt ist.
+`login` öffnet den persistenten Browser des ausgewählten Accounts sichtbar. Melde dich dort selbst an; Zugangsdaten, MFA-Codes und Token gehören weder in Befehle noch in diese Dokumentation. Mit `codex-usage account overview --config-only` lässt sich die lokale Konfiguration prüfen, ohne einen Live-Abruf anzufordern. Die vollständige Befehlsreferenz liefert `codex-usage --help`.
 
-Terminal dashboard, refreshed every five minutes:
+## Accounts und Profile
+
+Jeder Account hat eine eindeutige ID, ein Label, ein eigenes Profilverzeichnis, einen Browser und einen Abrufweg. Firefox und `direct` sind die Defaults; zulässige Account-Browser sind Firefox und Chromium, zulässige Abrufwege `direct` und `app-server`.
+
+- Der Standardprofilpfad liegt unter dem XDG-Datenverzeichnis in `codex-usage/profiles/<account-id>`.
+- Ein Accountprofil darf nicht mit einem anderen Account geteilt werden. Die Konfiguration akzeptiert höchstens 100 Accounts und eine Polling-Periode ab 60 Sekunden; der Default beträgt 300 Sekunden.
+- Das kanonische Codex-Home eines Profils enthält `codex-home/auth.json`. Wenn ein direkter Abruf konfiguriert ist, wird sein `auth_json_path` pro Account geführt; ein globales `--auth-json` ist nur für genau einen ausgewählten Account zulässig.
+- `codex-usage account backend ACCOUNT direct|app-server` stellt den Abrufweg um. Die App-Server-Kontostatusabfrage startet keine Modellanfrage.
+
+Details zu Profileinrichtung, Authentifizierung, Browserverwaltung und Migration stehen in [docs/accounts-and-authentication.md](docs/accounts-and-authentication.md) und [docs/browser-and-manage-account.md](docs/browser-and-manage-account.md).
+
+## Limits, Zeitfenster, Credits und Resets
+
+Das Datenmodell erkennt diese kanonischen Fensteridentitäten: fünf Stunden (`18000` Sekunden), Woche (`604800` Sekunden) und 30 Tage (`2592000` Sekunden). Die kompakten Hauptfelder eines Account-Snapshots sind `five_hour` und `weekly`; zusätzliche Modellpools und Credits bleiben providerabhängig. Ein eigener Spark-Pool wird nur verarbeitet, wenn der Anbieter ihn als Nutzungsquelle liefert.
+
+Credits sind optional. Ein absoluter Credit-Saldo ohne Nenner wird nicht in einen Prozentsatz umgerechnet; widersprüchliche oder ungültige Creditdaten werden nicht als gültiger Stand ausgegeben. Reset-Zähler können als bekannter, unbekannter oder nullwertiger Stand dargestellt werden. Eine Reset-Einlösung ist nicht implementiert und wird nicht automatisch ausgeführt.
+
+Verbrauchsberechnung, Forecasts, Tokenende und die Behandlung von unbekannten oder veralteten Werten sind in [docs/usage-forecast-and-token-end.md](docs/usage-forecast-and-token-end.md) beschrieben. Die Creditregeln stehen in [docs/credits.md](docs/credits.md).
+
+## CLI und Dienste
+
+Für einen einmaligen Abruf, fortlaufende Anzeige oder Limit-Sperrlogik gibt es:
 
 ```bash
+codex-usage once --format table
 codex-usage watch --interval 300
-```
-
-One-shot watchdog that blocks exhausted accounts until the next reset and
-releases them afterwards:
-
-```bash
-codex-usage watchdog --format table
 codex-usage watchdog --format json
 ```
 
-Probe one account if extraction is incomplete:
-
-```bash
-codex-usage probe privat
-codex-usage probe privat --save-dir probe-output
-```
-
-`probe` prints only response summaries by default. `--save-dir` writes local raw JSON/body fixtures with `0600` permissions; use that only when debugging extraction.
-
-Diagnose login, Cloudflare, and page state without printing cookies or tokens:
-
-```bash
-codex-usage diagnose privat
-codex-usage diagnose privat --headed --screenshot --save-dir diagnose-output
-codex-usage diagnose privat --auth-json ~/.codex/auth.json
-```
-
-## Browser Bridge
-
-Local bridge snippets and extensions use loopback HTTP by default. Use `--endpoint`
-when generated code must send to a remote TLS bridge:
-
-```bash
-codex-usage bridge-server
-codex-usage bridge-snippet privat
-codex-usage bridge-extension privat
-codex-usage bridge-snippet privat --endpoint https://bridge.example.test:8765/ingest
-codex-usage bridge-extension privat --endpoint https://bridge.example.test:8765/ingest
-```
-
-Remote binding is TLS-only. Provide a certificate and a private key with
-permissions `0600` or stricter:
-
-```bash
-codex-usage bridge-server --host 0.0.0.0 --allow-remote \
-  --tls-cert /path/to/bridge.crt --tls-key /path/to/bridge.key
-```
-
-The default remains loopback HTTP. Do not expose it beyond the local machine.
-
-## systemd User Timer
-
-Install and enable the generated, hardened user timer:
+Der verwaltete Benutzer-Timer wird nur auf ausdrücklichen Aufruf eingerichtet:
 
 ```bash
 codex-usage service enable
 codex-usage service status --format json
 ```
 
-Use `codex-usage service disable` or `codex-usage service uninstall` to stop or
-remove the managed units. The generated service grants write access only to
-the configured codex-usage config, state, account profile and auth paths plus
-the Playwright browser cache.
+Weitere wichtige Gruppen sind `account`, `profile`, `history`, `consumption`, `health`, `bridge`, `policy` und `masterjet`. Der Dienst startet den dedizierten Integrations-Watchdog, nicht einen beliebigen CLI-Aufruf. Betrieb, Integration und Fehlerdiagnose sind in [docs/operations.md](docs/operations.md), [docs/integration-api.md](docs/integration-api.md) und [docs/troubleshooting.md](docs/troubleshooting.md) dokumentiert.
 
-Check output:
+## Cinnamon-Applet
 
-```bash
-journalctl --user -u codex-usage.service -n 100 --no-pager
-```
-
-## Cinnamon Applet
-
-Install the local Cinnamon applet and add `Codex Usage` to the panel:
+Das Cinnamon-Applet trägt die UUID `codex-usage@H234598`. Die Installation prüft die ausgelieferten Applet-Dateien und installiert sie lokal:
 
 ```bash
 make install-local
 ```
 
-`make install-local` reloads a currently running Codex Usage applet through
-Cinnamon Looking Glass. A direct script installation can request the same
-behavior with `python3 scripts/install_cinnamon_applet.py --reload-running`.
-If Cinnamon is not running, the files are still installed and the reload is
-reported as unavailable.
+Die Kompatibilitätstabelle `account-panel-settings` enthält vier Legacy-Wertfelder: `slot1`, `slot2`, `slot3` und `slot4`. Sie sind ausdrücklich **nicht** auf zwei Slots beschränkt. Der Applet-Editor kann die sichtbare Anzahl der Wertspalten konfigurieren und erhält versteckte Legacy-Werte beim Wechsel der Anzahl. Installation, Konfiguration und sichere Deinstallation werden in [docs/installation.md](docs/installation.md) und [docs/operations.md](docs/operations.md) erläutert.
 
-The applet loads saved snapshots immediately and runs a fresh mixed-mode poll
-every five minutes. Its settings control whether the panel shows one value per
-account slot. Each account has two independent slots; a slot can be off, show
-the five-hour value, the weekly value, or the mean of both. The slots can be
-ordered, muted, tagged with a short label, and separated with `|`, `·`, `//`,
-or brackets. Duplicate sources in one account are normalized to one visible
-slot. Muting affects only the panel; hover, click-menu values, polling, and
-notifications continue to work. Warnings are available but disabled by
-default.
+## Sicherheit und bekannte Grenzen
 
-The panel always labels its sources as `5h`, `W`, or `Ø`. Reset dates and times
-remain attached to their corresponding values. The click menu exposes
-persistent per-account switches for panel visibility, warnings, and errors.
+- Nutze nur Accounts, die du verwalten darfst. Der Abruf hängt von Anbieteroberflächen und deren Daten ab; Login, Cloudflare, unvollständige Werte und geänderte Anbieterantworten können einen Accountstatus auf `partial`, `login_required` oder `error` setzen.
+- Konfiguration, Profile und diagnostische Ausgabepfade werden als private Pfade behandelt; symbolische Links an sicherheitsrelevanten Stellen werden abgewiesen. Diagnose- und Probeausgaben können dennoch sensible Nutzungs- oder Seitendaten enthalten und gehören in einen geschützten lokalen Ordner.
+- Die Browser-Bridge lauscht ohne `--allow-remote` nur auf Loopback. Remote-Bindung erfordert TLS-Zertifikat und privaten Schlüssel.
+- Der verwaltete `systemd --user`-Dienst arbeitet mit eingeschränkten Schreibpfaden und Hardening-Optionen. Installation oder Aktivierung ist keine Voraussetzung für die CLI.
+- Es gibt keine offizielle öffentliche Codex-Usage-API-Garantie in diesem Repository und keine automatische Umgehung oder Einlösung von Limits.
 
-The applet settings include an account table for switching each account between
-the direct and App Server readers. Poll ownership is selectable between the
-applet, the systemd user timer, and automatic detection. Per-account locks
-prevent concurrent token refreshes when both surfaces overlap.
-
-The `Hervorhebungen und Design:` settings section keeps separate rows for
-every account's `OpenAI - Reset: Datum des Reset`, `OpenAI - Reset: Uhrzeit`,
-`OpenAI - Reset: Restlaufzeit in Tagen bis Limitreset`, and `Verbleibendes
-Tokenlimit in %`. Each part has its own display format, font family, font size, bold,
-italic, font color, and background setting; the theme remains the default until
-changed. Every style supports four modes: always format, format only below the
-threshold, always format with a separate below-threshold style, or disable
-formatting. The threshold and both style profiles are configured per account.
-The corresponding five-hour or weekly remaining value is evaluated
-independently for each reset timestamp.
-
-`Restlaufzeit` is the live countdown until the corresponding five-hour or
-weekly reset. It has its own per-account format, threshold, font, size, bold,
-italic, font color, background, and below-threshold style settings. The formats
-are compact (`2h 05m`), clock-like (`02:05`), long German text, and total hours.
-It can independently be enabled for the status bar, hover tooltip, and click
-menu, and refreshes once per minute without triggering a new backend fetch.
-
-Percentage values have the same font, size, emphasis, font color, background,
-threshold, and below-threshold profile controls. The `Anzeige:` target table
-selects visibility for percentage, date, time, restlaufzeit, consumption,
-forecast, Usage-Resets, Account-ID, Label, and Kürzel independently on the
-panel status line, hover tooltip, and click menu. Mode `Aus` leaves an active
-target visible but unformatted; a disabled target is hidden on that surface.
-
-Expired direct-auth accounts get a reactivation action in the applet menu. It
-runs `codex login` against that account's configured `auth_json_path` and opens
-the OAuth page in a dedicated browser profile. Normal Vivaldi, Chrome, or
-Firefox cookies are not reused. The isolated browser can be selected in the
-applet settings; automatic mode prefers Vivaldi.
-
-The same flow is available from the terminal:
-
-```bash
-codex-usage reactivate ACCOUNT --browser auto
-```
-
-Consumption and reset display are read-only. The applet can show configured
-percent-point consumption, a backend-calculated time-to-token-end projection,
-and the provider-reported reset balance per account on the panel, hover
-tooltip, and click menu. Unknown values stay unknown; zero is not turned into
-a positive balance.
-
-Reset redemption is currently unavailable. No provider redemption endpoint has
-passed the required capability, nonce/replay, account-lock, confirmation, and
-postcondition checks. The CLI and applet therefore expose no redeem action and
-never redeem automatically.
-
-## Health and recovery
-
-The CLI keeps a bounded, redacted health log containing only timestamps,
-component/event codes, optional durations, account ids, and error classes:
-
-```bash
-codex-usage health
-codex-usage health --format json
-codex-usage health --clear
-```
-
-The applet protects Cinnamon with bounded incremental process output,
-generation checks for stale callbacks, idempotent timer/process cleanup, a
-15-minute circuit breaker after repeated refresh failures, and a safe mode
-after repeated internal failures. Safe mode keeps the last valid panel value
-and offers only retry, health, analytics, and settings. It never reloads
-Cinnamon or the applet automatically.
-
-The `auto` poll owner installs and enables the managed systemd user timer when
-needed. The timer has explicit runtime, memory, task, and stop limits. If the
-cache becomes stale, the applet repairs the managed timer first and allows at
-most one fallback poll every 15 minutes. Managed unit files, configuration,
-snapshots, current values, and health data are written atomically.
-
-Remove the applet files with:
-
-```bash
-make uninstall-local
-```
-
-## Output
-
-Example:
-
-```text
-Stand: 08.06.2026 04:20
-
-Account  5h genutzt    5h Reset          Woche genutzt  Woche Reset       Status
-Privat   42 / 100 42%  08.06.2026 04:26  310 / 1000 31% 14.06.2026 04:26 ok
-```
-
-## Checks
-
-```bash
-python -m ruff check .
-python -m pytest
-node --test tests/applet_runtime.test.js
-```
+Siehe außerdem [docs/troubleshooting.md](docs/troubleshooting.md) und [docs/releases.md](docs/releases.md).
