@@ -6209,7 +6209,12 @@ def test_lock_isolation_subprocess_wrapper_covers_codex_usage_entry_forms(
             "/",
             "--bind",
         )
-        assert wrapped[5:8] == (str(test_root), str(production_root), "--")
+        assert wrapped[5:7] == (str(test_root), str(production_root))
+        if "executable" in kwargs:
+            assert wrapped[7:10] == ("--argv0", args[0], "--")
+            assert wrapped[10:] == (kwargs["executable"], *args[1:])
+        else:
+            assert wrapped[7] == "--"
         assert ("--dir", str(production_root)) not in itertools.pairwise(
             wrapped,
         )
