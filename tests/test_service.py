@@ -2369,6 +2369,96 @@ def test_resolve_codex_usage_rejects_duplicate_metadata_fields(
         service_module._resolve_codex_usage()
 
 
+def test_resolve_codex_usage_accepts_metadata_24_repeated_requires_dist(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if valid repeatable Core Metadata fields blocked unit attestation."""
+    codex_usage, wrapper, _record = _write_recorded_distribution(
+        tmp_path,
+        monkeypatch,
+        metadata_suffix=(
+            "Requires-Dist: playwright>=1.52\n"
+            "Requires-Dist: pytest>=8.0; extra == 'dev'\n"
+            "Requires-Dist: ruff>=0.11; extra == 'dev'\n"
+        ),
+    )
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(wrapper)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+
+    assert service_module._resolve_codex_usage() == codex_usage.absolute()
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "Classifier",
+        "Dynamic",
+        "License-File",
+        "Obsoletes",
+        "Obsoletes-Dist",
+        "Platform",
+        "Provides",
+        "Provides-Dist",
+        "Provides-Extra",
+        "Requires",
+        "Requires-Dist",
+        "Requires-External",
+        "Supported-Platform",
+        "Project-URL",
+    ],
+)
+def test_metadata_headers_accepts_only_repeatable_core_metadata_fields(field):
+    """Would fail if an allowed repeatable field was treated as an identity duplicate."""
+    headers = service_module._metadata_headers(
+        (
+            "Metadata-Version: 2.4\n"
+            "Name: codex-usage\n"
+            "Version: 0.6.537\n"
+            f"{field}: first\n"
+            f"{field.lower()}: second\n"
+        ).encode()
+    )
+
+    assert headers == {
+        "metadata-version": "2.4",
+        "name": "codex-usage",
+        "version": "0.6.537",
+    }
+
+
+@pytest.mark.parametrize(
+    "metadata_suffix",
+    [
+        pytest.param("Name: codex-usage\n", id="duplicate-name"),
+        pytest.param("Version: 0.6.537\n", id="duplicate-version"),
+        pytest.param("Metadata-Version: 2.4\n", id="duplicate-metadata-version"),
+        pytest.param(
+            "Unrecognized-Field: first\nunrecognized-field: second\n",
+            id="duplicate-unknown-field",
+        ),
+    ],
+)
+def test_metadata_headers_rejects_duplicate_identity_or_unknown_field(metadata_suffix):
+    """Would fail if non-repeatable or unrecognized METADATA fields were accepted."""
+    with pytest.raises(ServiceError, match="METADATA"):
+        service_module._metadata_headers(
+            (
+                "Metadata-Version: 2.4\n"
+                "Name: codex-usage\n"
+                "Version: 0.6.537\n"
+                f"{metadata_suffix}"
+            ).encode()
+        )
+
+
 def test_resolve_codex_usage_rejects_duplicate_record_paths(
     tmp_path,
     monkeypatch,

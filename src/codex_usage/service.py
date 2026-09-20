@@ -54,6 +54,24 @@ PACKAGE_RECORD_MAX_BYTES = 2 * 1024 * 1024
 MAX_DISTRIBUTION_FILES = 4096
 EXPECTED_DISTRIBUTION_NAME = "codex-usage"
 EXPECTED_DISTRIBUTION_VERSION = "0.6.537"
+REPEATABLE_CORE_METADATA_FIELDS = frozenset(
+    {
+        "classifier",
+        "dynamic",
+        "license-file",
+        "obsoletes",
+        "obsoletes-dist",
+        "platform",
+        "provides",
+        "provides-dist",
+        "provides-extra",
+        "requires",
+        "requires-dist",
+        "requires-external",
+        "supported-platform",
+        "project-url",
+    }
+)
 SERVICE_RUNTIME_UNSET_ENVIRONMENT_NAMES = (
     "PYTHONPATH",
     "PYTHONHOME",
@@ -1257,6 +1275,8 @@ def _metadata_headers(payload: bytes) -> dict[str, str]:
         if not separator:
             continue
         normalized = key.strip().lower()
+        if normalized in REPEATABLE_CORE_METADATA_FIELDS:
+            continue
         if normalized in headers:
             raise ServiceError("codex-usage METADATA has duplicate fields")
         headers[normalized] = value.strip()
