@@ -998,46 +998,88 @@ def _is_console_script_main_guard(statement: ast.stmt) -> bool:
 
 
 def _console_main_guard_calls_main(statement: ast.If) -> bool:
-    if statement.orelse or len(statement.body) != 1:
+    if statement.orelse:
         return False
-    guarded = statement.body[0]
-    call: ast.Call | None = None
+    body = statement.body
+    if len(body) == 2:
+        if not _is_pip_261_argv0_normalization(body[0]):
+            return False
+        body = body[1:]
+    if len(body) != 1:
+        return False
+    guarded = body[0]
     if isinstance(guarded, ast.Expr) and isinstance(guarded.value, ast.Call):
-        call = guarded.value
-    elif (
-        isinstance(guarded, ast.Raise)
-        and isinstance(guarded.exc, ast.Call)
-        and isinstance(guarded.exc.func, ast.Name)
-        and guarded.exc.func.id == "SystemExit"
-        and guarded.exc.args
-        and isinstance(guarded.exc.args[0], ast.Call)
-    ):
-        call = guarded.exc.args[0]
-    return call is not None and _call_invokes_console_main(call)
+        return _is_allowed_console_main_exit_call(guarded.value)
+    return _is_allowed_console_main_system_exit_raise(guarded)
 
 
-def _call_invokes_console_main(call: ast.Call) -> bool:
+def _is_pip_261_argv0_normalization(statement: ast.stmt) -> bool:
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return False
+    if not _is_sys_argv_zero(statement.targets[0]):
+        return False
+    value = statement.value
+    return (
+        isinstance(value, ast.Call)
+        and not value.keywords
+        and len(value.args) == 1
+        and isinstance(value.args[0], ast.Constant)
+        and type(value.args[0].value) is str
+        and value.args[0].value == ".exe"
+        and isinstance(value.func, ast.Attribute)
+        and value.func.attr == "removesuffix"
+        and _is_sys_argv_zero(value.func.value)
+    )
+
+
+def _is_sys_argv_zero(expression: ast.expr) -> bool:
+    return (
+        isinstance(expression, ast.Subscript)
+        and isinstance(expression.value, ast.Attribute)
+        and isinstance(expression.value.value, ast.Name)
+        and expression.value.value.id == "sys"
+        and expression.value.attr == "argv"
+        and isinstance(expression.slice, ast.Constant)
+        and type(expression.slice.value) is int
+        and expression.slice.value == 0
+    )
+
+
+def _is_allowed_console_main_exit_call(call: ast.Call) -> bool:
+    return _is_direct_console_main_call(call) or _is_sys_exit_console_main_call(call)
+
+
+def _is_allowed_console_main_system_exit_raise(statement: ast.stmt) -> bool:
+    return (
+        isinstance(statement, ast.Raise)
+        and statement.cause is None
+        and isinstance(statement.exc, ast.Call)
+        and isinstance(statement.exc.func, ast.Name)
+        and statement.exc.func.id == "SystemExit"
+        and not statement.exc.keywords
+        and len(statement.exc.args) == 1
+        and isinstance(statement.exc.args[0], ast.Call)
+        and _is_direct_console_main_call(statement.exc.args[0])
+    )
+
+
+def _is_direct_console_main_call(call: ast.Call) -> bool:
     if isinstance(call.func, ast.Name) and call.func.id == "main":
         return not call.args and not call.keywords
-    if call.keywords:
-        return False
-    if len(call.args) != 1:
-        return False
-    nested = call.args[0]
-    if not isinstance(nested, ast.Call) or nested.args or nested.keywords:
-        return False
-    if isinstance(nested.func, ast.Name) and nested.func.id == "main":
-        return True
-    if (
+    return False
+
+
+def _is_sys_exit_console_main_call(call: ast.Call) -> bool:
+    return (
         isinstance(call.func, ast.Attribute)
         and call.func.attr == "exit"
         and isinstance(call.func.value, ast.Name)
         and call.func.value.id == "sys"
-        and isinstance(nested.func, ast.Name)
-        and nested.func.id == "main"
-    ):
-        return True
-    return False
+        and not call.keywords
+        and len(call.args) == 1
+        and isinstance(call.args[0], ast.Call)
+        and _is_direct_console_main_call(call.args[0])
+    )
 
 
 def _read_bound_console_script(

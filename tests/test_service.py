@@ -57,6 +57,25 @@ def _write_console_script(path: Path, module: str) -> None:
     path.chmod(0o700)
 
 
+def _write_console_script_with_main_guard(
+    path: Path,
+    module: str,
+    guard_body: str,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        (
+            f"#!{sys.executable}\n"
+            "import sys\n"
+            f"from {module} import main\n"
+            "if __name__ == '__main__':\n"
+            f"{guard_body}"
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o700)
+
+
 class _FakeCodexUsageDistribution:
     def __init__(self, base: Path, *, version: str, files: object) -> None:
         self._base = base
@@ -1992,6 +2011,123 @@ def test_resolve_codex_usage_rejects_comment_only_integration_watchdog_entrypoin
 
     with pytest.raises(ServiceError, match="unexpected entry point"):
         service_module._resolve_codex_usage()
+
+
+@pytest.mark.parametrize(
+    ("entry_point", "module"),
+    (
+        ("codex-usage", "codex_usage.cli"),
+        ("codex-usage-integration-watchdog", "codex_usage.integration_watchdog"),
+    ),
+)
+def test_bound_console_scripts_accept_pip_261_argv0_normalization(
+    tmp_path,
+    entry_point,
+    module,
+):
+    """Pip 26.2.1's generated argv[0] guard is a trusted wrapper form."""
+    wrapper = tmp_path / "bin" / entry_point
+    _write_console_script_with_main_guard(
+        wrapper,
+        module,
+        "    sys.argv[0] = sys.argv[0].removesuffix('.exe')\n"
+        "    sys.exit(main())\n",
+    )
+
+    binding = service_module._read_bound_console_script(
+        wrapper,
+        expected_module=module,
+        label=f"{entry_point} executable",
+    )
+
+    assert binding.expected_module == module
+
+
+def test_bound_console_script_rejects_foreign_outer_call_with_main_only_argument(tmp_path):
+    """A foreign outer call must not inherit trust from its main() argument."""
+    wrapper = tmp_path / "bin" / "codex-usage-integration-watchdog"
+    _write_console_script_with_main_guard(
+        wrapper,
+        "codex_usage.integration_watchdog",
+        "    untrusted_outer(main())\n",
+    )
+
+    with pytest.raises(ServiceError, match="unexpected entry point"):
+        service_module._read_bound_console_script(
+            wrapper,
+            expected_module="codex_usage.integration_watchdog",
+            label="integration watchdog executable",
+        )
+
+
+@pytest.mark.parametrize(
+    "guard_body",
+    (
+        "    main()\n",
+        "    sys.exit(main())\n",
+        "    raise SystemExit(main())\n",
+    ),
+)
+def test_bound_console_script_accepts_exact_main_exit_forms(tmp_path, guard_body):
+    wrapper = tmp_path / "bin" / "codex-usage-integration-watchdog"
+    _write_console_script_with_main_guard(
+        wrapper,
+        "codex_usage.integration_watchdog",
+        guard_body,
+    )
+
+    binding = service_module._read_bound_console_script(
+        wrapper,
+        expected_module="codex_usage.integration_watchdog",
+        label="integration watchdog executable",
+    )
+
+    assert binding.expected_module == "codex_usage.integration_watchdog"
+
+
+@pytest.mark.parametrize(
+    "guard_body",
+    (
+        "    sys.argv[1] = sys.argv[1].removesuffix('.exe')\n"
+        "    sys.exit(main())\n",
+        "    sys.argv[0] = sys.argv[0].removeprefix('.exe')\n"
+        "    sys.exit(main())\n",
+        "    sys.argv[0] = sys.argv[0].removesuffix('.bat')\n"
+        "    sys.exit(main())\n",
+        "    sys.argv[0] = sys.argv[0].removesuffix('.exe', '.bat')\n"
+        "    sys.exit(main())\n",
+        "    sys.argv[0] = sys.argv[0].removesuffix(suffix='.exe')\n"
+        "    sys.exit(main())\n",
+        "    sys.exit(main())\n"
+        "    sys.argv[0] = sys.argv[0].removesuffix('.exe')\n",
+        "    sys.argv[0] = sys.argv[0].removesuffix('.exe')\n"
+        "    pass\n"
+        "    sys.exit(main())\n",
+        "    sys.argv[0] = sys.argv[0].removesuffix('.exe')\n"
+        "    sys.exit(main())\n"
+        "    pass\n",
+        "    sys.exit(main(1))\n",
+        "    sys.exit(main(), 1)\n",
+        "    sys.exit(code=main())\n",
+        "    raise SystemExit(main(), 1)\n",
+        "    raise SystemExit(code=main())\n",
+    ),
+)
+def test_bound_console_script_rejects_noncanonical_guard_forms(tmp_path, guard_body):
+    """Only the exact pip normalization and three exact main exit forms are trusted."""
+    wrapper = tmp_path / "bin" / "codex-usage-integration-watchdog"
+    _write_console_script_with_main_guard(
+        wrapper,
+        "codex_usage.integration_watchdog",
+        guard_body,
+    )
+
+    with pytest.raises(ServiceError, match="unexpected entry point"):
+        service_module._read_bound_console_script(
+            wrapper,
+            expected_module="codex_usage.integration_watchdog",
+            label="integration watchdog executable",
+        )
 
 
 def test_bound_console_script_rejects_dead_if_false_import(tmp_path):
