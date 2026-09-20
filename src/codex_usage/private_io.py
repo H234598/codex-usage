@@ -2958,14 +2958,14 @@ def private_path_lock(
             lock_identity=lock_identity,
             label=label,
         )
+        _revalidate_held_private_lock_siblings(
+            lock_root=lock_root,
+            root_identities=root_identities,
+            held_lock_identities=held_lock_identities,
+            lock_key=lock_key,
+            label=label,
+        )
         if lock_created:
-            _revalidate_held_private_lock_siblings(
-                lock_root=lock_root,
-                root_identities=root_identities,
-                held_lock_identities=held_lock_identities,
-                lock_key=lock_key,
-                label=label,
-            )
             refreshed_held_locks: dict[Path, _HeldPrivatePathLock] = {}
             for held_key, active_lock in held_lock_identities.items():
                 if held_key.parent != lock_key.parent:

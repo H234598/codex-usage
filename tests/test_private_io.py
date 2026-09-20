@@ -1503,6 +1503,58 @@ def test_private_path_lock_rejects_replaced_held_sibling_before_second_entry(
     assert not entered_second
 
 
+def test_private_path_lock_rejects_replaced_held_sibling_for_existing_second_lock(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if FileExistsError sibling entry skipped held-lock validation."""
+    lock_root = tmp_path / "locks"
+    lock_root.mkdir(mode=0o700)
+    lock_root.chmod(0o700)
+    monkeypatch.setattr(private_io, "_private_lock_root", lambda: lock_root)
+    first = tmp_path / "first.json"
+    second = tmp_path / "second.json"
+    first_lock_name = private_io._private_lock_name(first)
+    second_lock_name = private_io._private_lock_name(second)
+
+    # Seed both files so acquiring second exercises os.open(... O_EXCL)'s
+    # FileExistsError path rather than sibling creation.
+    with private_path_lock(first, label="seed first"):
+        pass
+    with private_path_lock(second, label="seed second"):
+        pass
+    assert (lock_root / second_lock_name).is_file()
+
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(b"")
+    replacement.chmod(0o600)
+    replaced = False
+    entered_second = False
+    real_revalidate = private_io._revalidate_existing_private_lock
+
+    def replace_first_after_second_revalidation(**kwargs):
+        nonlocal replaced
+        result = real_revalidate(**kwargs)
+        if not replaced and kwargs["lock_name"] == second_lock_name:
+            os.replace(replacement, lock_root / first_lock_name)
+            replaced = True
+        return result
+
+    monkeypatch.setattr(
+        private_io,
+        "_revalidate_existing_private_lock",
+        replace_first_after_second_revalidation,
+    )
+
+    with private_path_lock(first, label="first"):
+        with pytest.raises(ValueError, match=r"changed while locking|namespace changed"):
+            with private_path_lock(second, label="second"):
+                entered_second = True
+
+    assert replaced
+    assert not entered_second
+
+
 @pytest.mark.parametrize("mode", [0o640, True, "600", -1])
 def test_write_private_text_rejects_non_private_mode(tmp_path, mode):
     path = tmp_path / "value.json"
