@@ -1769,7 +1769,7 @@ def _validate_resource_tracker_passfds(
     expected_executable = multiprocessing.spawn.get_executable()
     if not _same_executable_path(path, expected_executable):
         return None
-    if len(args) < 4 or not _same_executable_path(args[0], expected_executable):
+    if len(args) < 3 or not _same_executable_path(args[0], expected_executable):
         return None
     interpreter_flags = tuple(multiprocessing.util._args_from_interpreter_flags())
     if tuple(_token_text(value) for value in args[1:-2]) != interpreter_flags:
@@ -1838,7 +1838,7 @@ def _validate_spawn_main_passfds(
     expected_executable = multiprocessing.spawn.get_executable()
     if not _same_executable_path(path, expected_executable):
         return None
-    if len(args) < 5 or not _same_executable_path(args[0], expected_executable):
+    if len(args) < 4 or not _same_executable_path(args[0], expected_executable):
         return None
     if _token_text(args[-1]) != "--multiprocessing-fork":
         return None

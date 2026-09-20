@@ -3230,6 +3230,10 @@ def gc_evidence_generations(
                 pointer=current_pointer,
                 maximum=256,
             )
+            generations_identity = _refresh_directory_identity_after_mutation(
+                generations_fd,
+                generations_identity,
+            )
             if (
                 _fd_identity(state_fd) != state_identity
                 or _fd_identity(integration_fd) != integration_identity

@@ -1442,6 +1442,24 @@ def test_write_private_text_reuses_same_thread_private_path_lock(tmp_path):
     assert sorted(item.name for item in tmp_path.iterdir()) == ["value.json"]
 
 
+def test_private_path_lock_reenters_after_creating_an_owned_sibling_lock(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if a held lock rejected its own sibling-lock creation."""
+    lock_root = tmp_path / "locks"
+    lock_root.mkdir(mode=0o700)
+    lock_root.chmod(0o700)
+    monkeypatch.setattr(private_io, "_private_lock_root", lambda: lock_root)
+    first = tmp_path / "first.json"
+    second = tmp_path / "second.json"
+
+    with private_path_lock(first, label="first"):
+        with private_path_lock(second, label="second"):
+            with private_path_lock(first, label="first reentry"):
+                pass
+
+
 @pytest.mark.parametrize("mode", [0o640, True, "600", -1])
 def test_write_private_text_rejects_non_private_mode(tmp_path, mode):
     path = tmp_path / "value.json"
@@ -7520,6 +7538,69 @@ def test_lock_isolation_spawnv_wrapper_accepts_legitimate_resource_tracker(tmp_p
     finally:
         os.close(read_fd)
         os.close(write_fd)
+
+
+def test_lock_isolation_spawnv_wrapper_accepts_resource_tracker_without_interpreter_flags(
+    tmp_path,
+):
+    """Would fail if a stdlib tracker without interpreter flags was blocked."""
+    read_fd, write_fd = os.pipe()
+    try:
+        executable = multiprocessing.spawn.get_executable()
+        args = (
+            executable,
+            "-c",
+            f"from multiprocessing.resource_tracker import main;main({read_fd})",
+        )
+
+        _path, _args, passfds = test_conftest._wrap_codex_usage_spawnv_args(
+            executable,
+            args,
+            (sys.stderr.fileno(), read_fd),
+            production_root=tmp_path / "product-locks",
+            test_root=tmp_path / "test-locks",
+            bwrap_fd_path="/proc/self/fd/91",
+            bwrap_pass_fd=91,
+        )
+
+        assert set(passfds) == {91, sys.stderr.fileno(), read_fd}
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+
+def test_lock_isolation_spawnv_wrapper_accepts_spawn_main_without_interpreter_flags(
+    tmp_path,
+):
+    """Would fail if a stdlib child without interpreter flags was blocked."""
+    tracker_read, tracker_write = os.pipe()
+    pipe_read, pipe_write = os.pipe()
+    try:
+        executable = multiprocessing.spawn.get_executable()
+        args = (
+            executable,
+            "-c",
+            "from multiprocessing.spawn import spawn_main; "
+            f"spawn_main(tracker_fd={tracker_read}, pipe_handle={pipe_read})",
+            "--multiprocessing-fork",
+        )
+
+        _path, _args, passfds = test_conftest._wrap_codex_usage_spawnv_args(
+            executable,
+            args,
+            (tracker_read, pipe_read),
+            production_root=tmp_path / "product-locks",
+            test_root=tmp_path / "test-locks",
+            bwrap_fd_path="/proc/self/fd/91",
+            bwrap_pass_fd=91,
+        )
+
+        assert set(passfds) == {91, tracker_read, pipe_read}
+    finally:
+        os.close(tracker_read)
+        os.close(tracker_write)
+        os.close(pipe_read)
+        os.close(pipe_write)
 
 
 def test_lock_isolation_spawnv_wrapper_rejects_forged_resource_tracker_executable(

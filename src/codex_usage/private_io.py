@@ -2923,6 +2923,18 @@ def private_path_lock(
             lock_identity=lock_identity,
             label=label,
         )
+        if lock_created:
+            refreshed_held_locks: dict[Path, _HeldPrivatePathLock] = {}
+            for held_key, active_lock in held_lock_identities.items():
+                if held_key.parent != lock_key.parent:
+                    continue
+                if type(active_lock) is not _HeldPrivatePathLock:
+                    raise ValueError(f"{label} changed while locking")
+                refreshed_held_locks[held_key] = _HeldPrivatePathLock(
+                    root_identities=root_identities,
+                    lock_identity=active_lock.lock_identity,
+                )
+            held_lock_identities.update(refreshed_held_locks)
         held_lock_identities[lock_key] = _HeldPrivatePathLock(
             root_identities=root_identities,
             lock_identity=lock_identity,

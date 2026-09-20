@@ -293,6 +293,7 @@ def test_publisher_commits_before_owner_can_withdraw_the_verified_authority(
         remove_account,
         save_config,
     )
+    from codex_usage.integration_attestation import verify_active_manifest_at
     from codex_usage.models import Account
     from codex_usage.pool_authority_owner import (
         PoolAuthorityOwner,
@@ -300,7 +301,7 @@ def test_publisher_commits_before_owner_can_withdraw_the_verified_authority(
         save_pool_authority_owner,
     )
 
-    state_home, data_home, _entrypoint, _payload, verified = staged_evidence_layout
+    state_home, data_home, entrypoint, _payload, verified = staged_evidence_layout
     fixture_root = Path(__file__).parent / "fixtures" / "pool_authority_v2"
     source_record = json.loads(
         (fixture_root / "source-v2-positive.json").read_bytes()
@@ -329,6 +330,11 @@ def test_publisher_commits_before_owner_can_withdraw_the_verified_authority(
         expected_generation=0,
         config_path=config_path,
         state_home=state_home,
+    )
+    verified = verify_active_manifest_at(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=entrypoint,
     )
     payload = integration_evidence.serialize_schema2_document(
         json.loads((fixture_root / "usage-v2-positive.json").read_bytes())
