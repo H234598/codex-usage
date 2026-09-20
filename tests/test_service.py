@@ -2345,6 +2345,82 @@ def test_resolve_codex_usage_rejects_record_hash_mismatch(
         service_module._resolve_codex_usage()
 
 
+def test_resolve_codex_usage_accepts_exact_browser_record_path(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if the normal PEP 376 browser row was rejected as traversal."""
+    codex_usage, wrapper, record = _write_recorded_distribution(tmp_path, monkeypatch)
+    browser = codex_usage.with_name("codex-usage-browser")
+    browser.write_bytes(b"b" * 175)
+    browser.chmod(0o700)
+    browser_hash = "sha256=uC6nlIpOb_9g53yoGEPpU0BEF6gVKdzO0_961MVsH3A"
+    assert _record_hash(browser.read_bytes()) == browser_hash
+    record.write_text(
+        record.read_text(encoding="utf-8")
+        + f"../../../bin/codex-usage-browser,{browser_hash},175\n",
+        encoding="utf-8",
+    )
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(wrapper)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+
+    assert service_module._resolve_codex_usage() == codex_usage.absolute()
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        pytest.param("../../../bin/codex-usage-browser-extra", id="browser-extra"),
+        pytest.param("../../../bin/codex-usage-browser/child", id="browser-child"),
+        pytest.param("../../../bin/codex-usage-other", id="other-script"),
+        pytest.param("../../bin/codex-usage-browser", id="two-parent-depth"),
+        pytest.param("../../../../bin/codex-usage-browser", id="four-parent-depth"),
+    ],
+)
+def test_parse_record_rejects_unallowlisted_browser_traversal_paths(relative_path):
+    """Would fail if browser allowlisting admitted adjacent traversal paths."""
+    with pytest.raises(ServiceError, match="RECORD"):
+        service_module._parse_record(
+            f"{relative_path},sha256=uC6nlIpOb_9g53yoGEPpU0BEF6gVKdzO0_961MVsH3A,175\n".encode()
+        )
+
+
+def test_resolve_codex_usage_rejects_integration_watchdog_record_size_mismatch(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if the active integration watchdog RECORD size was not bound."""
+    codex_usage, wrapper, record = _write_recorded_distribution(tmp_path, monkeypatch)
+    watchdog_row = "../../../bin/codex-usage-integration-watchdog"
+    expected_row = f"{watchdog_row},{_record_hash(wrapper.read_bytes())},{wrapper.stat().st_size}"
+    record.write_text(
+        record.read_text(encoding="utf-8").replace(
+            expected_row,
+            f"{watchdog_row},{_record_hash(wrapper.read_bytes())},{wrapper.stat().st_size + 1}",
+        ),
+        encoding="utf-8",
+    )
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(wrapper)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+
+    with pytest.raises(ServiceError, match="RECORD"):
+        service_module._resolve_codex_usage()
+
+
 def test_resolve_codex_usage_rejects_duplicate_metadata_fields(
     tmp_path,
     monkeypatch,

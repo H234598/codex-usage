@@ -40,6 +40,7 @@ from .private_io import (
 
 SERVICE_NAME = "codex-usage.service"
 TIMER_NAME = "codex-usage.timer"
+BROWSER_EXECUTABLE_NAME = "codex-usage-browser"
 INTEGRATION_WATCHDOG_EXECUTABLE_NAME = "codex-usage-integration-watchdog"
 MANAGED_MARKER = "X-Codex-Usage-Managed=true"
 MAX_UNIT_BYTES = 100_000
@@ -1312,6 +1313,7 @@ def _validate_record_relative_path(relative_path: str) -> None:
         return
     allowed_scripts = {
         ("..", "..", "..", "bin", "codex-usage"),
+        ("..", "..", "..", "bin", BROWSER_EXECUTABLE_NAME),
         ("..", "..", "..", "bin", INTEGRATION_WATCHDOG_EXECUTABLE_NAME),
     }
     if parts not in allowed_scripts:
