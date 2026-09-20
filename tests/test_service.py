@@ -1617,9 +1617,11 @@ def test_unit_directory_binds_mode_change_to_existing_directory(tmp_path, monkey
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     unit_dir = tmp_path / "config" / "systemd" / "user"
-    unit_dir.mkdir(parents=True, mode=0o755)
+    unit_dir.mkdir(parents=True)
+    unit_dir.chmod(0o755)
     outside = tmp_path / "outside"
-    outside.mkdir(mode=0o755)
+    outside.mkdir()
+    outside.chmod(0o755)
     original_chmod = Path.chmod
 
     def replace_target_before_path_chmod(path, mode):
