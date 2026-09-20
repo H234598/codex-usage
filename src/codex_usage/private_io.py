@@ -2157,6 +2157,41 @@ def _revalidate_existing_private_lock(
             os.close(fresh_root_fd)
 
 
+def _revalidate_held_private_lock_siblings(
+    *,
+    lock_root: Path,
+    root_identities: tuple[FileIdentity, ...],
+    held_lock_identities: dict[Path, _HeldPrivatePathLock],
+    lock_key: Path,
+    label: str,
+) -> None:
+    root_fd = -1
+    sibling_fd = -1
+    try:
+        root_fd, fresh_root_identities = _open_existing_private_lock_root(lock_root)
+        if fresh_root_identities != root_identities:
+            raise ValueError(f"{label} namespace changed while locking")
+        for held_key, active_lock in held_lock_identities.items():
+            if held_key.parent != lock_key.parent:
+                continue
+            if type(active_lock) is not _HeldPrivatePathLock:
+                raise ValueError(f"{label} changed while locking")
+            sibling_fd, sibling_identity = _open_existing_private_lock_file(
+                root_fd,
+                held_key.name,
+                label=label,
+            )
+            if sibling_identity != active_lock.lock_identity:
+                raise ValueError(f"{label} changed while locking")
+            os.close(sibling_fd)
+            sibling_fd = -1
+    finally:
+        if sibling_fd >= 0:
+            os.close(sibling_fd)
+        if root_fd >= 0:
+            os.close(root_fd)
+
+
 def open_verified_state_home(state_home: Path) -> int:
     state_home = _require_path(state_home, label="state home")
     if (
@@ -2924,6 +2959,13 @@ def private_path_lock(
             label=label,
         )
         if lock_created:
+            _revalidate_held_private_lock_siblings(
+                lock_root=lock_root,
+                root_identities=root_identities,
+                held_lock_identities=held_lock_identities,
+                lock_key=lock_key,
+                label=label,
+            )
             refreshed_held_locks: dict[Path, _HeldPrivatePathLock] = {}
             for held_key, active_lock in held_lock_identities.items():
                 if held_key.parent != lock_key.parent:

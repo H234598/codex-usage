@@ -3097,11 +3097,11 @@ def _prune_complete_generations(
     generations: list[_CompleteEvidenceGeneration],
     pointer: EvidencePointer | None,
     maximum: int,
-) -> None:
+) -> tuple[str, ...]:
     if type(maximum) is not int or maximum < 0 or maximum > 256:
         raise IntegrationEvidenceInvalid()
     if len(generations) <= maximum:
-        return
+        return ()
     protected = (
         {
             pointer.current_generation_id,
@@ -3124,6 +3124,7 @@ def _prune_complete_generations(
     delete_count = len(generations) - maximum
     if len(candidates) < delete_count:
         raise IntegrationEvidenceInvalid()
+    pruned: list[str] = []
     for generation in candidates[:delete_count]:
         _stage_and_remove_complete_generation(
             integration_fd=integration_fd,
@@ -3131,6 +3132,56 @@ def _prune_complete_generations(
             generation=generation,
             expected_pointer=pointer,
         )
+        pruned.append(generation.generation_id)
+    return tuple(pruned)
+
+
+def _same_generation_namespace(
+    left: _GenerationNamespace,
+    right: _GenerationNamespace,
+) -> bool:
+    return (
+        frozenset(left.complete_names) == frozenset(right.complete_names)
+        and frozenset(left.staging_names) == frozenset(right.staging_names)
+    )
+
+
+def _require_generation_namespace(
+    generations_fd: int,
+    expected: _GenerationNamespace,
+) -> None:
+    if not _same_generation_namespace(
+        _scan_generation_namespace(generations_fd),
+        expected,
+    ):
+        raise IntegrationEvidenceInvalid()
+
+
+def _refresh_generation_identity_after_owned_mutation(
+    *,
+    generations_fd: int,
+    previous_identity: FileIdentity,
+    expected_namespace: _GenerationNamespace,
+) -> FileIdentity:
+    current_identity = _refresh_directory_identity_after_mutation(
+        generations_fd,
+        previous_identity,
+    )
+    _require_generation_namespace(generations_fd, expected_namespace)
+    if _fd_identity(generations_fd) != current_identity:
+        raise IntegrationEvidenceInvalid()
+    return current_identity
+
+
+def _require_unchanged_generation_namespace(
+    *,
+    generations_fd: int,
+    expected_identity: FileIdentity,
+    expected_namespace: _GenerationNamespace,
+) -> None:
+    _require_generation_namespace(generations_fd, expected_namespace)
+    if _fd_identity(generations_fd) != expected_identity:
+        raise IntegrationEvidenceInvalid()
 
 
 def gc_evidence_generations(
@@ -3180,6 +3231,24 @@ def gc_evidence_generations(
                 integration_fd=integration_fd,
                 generations_fd=generations_fd,
             )
+            recovered_namespace = _GenerationNamespace(
+                complete_names=namespace.complete_names,
+                staging_names=(),
+            )
+            if namespace.staging_names:
+                generations_identity = (
+                    _refresh_generation_identity_after_owned_mutation(
+                        generations_fd=generations_fd,
+                        previous_identity=generations_identity,
+                        expected_namespace=recovered_namespace,
+                    )
+                )
+            else:
+                _require_unchanged_generation_namespace(
+                    generations_fd=generations_fd,
+                    expected_identity=generations_identity,
+                    expected_namespace=recovered_namespace,
+                )
             fresh = _verify_active_manifest_for_publish(
                 state_home=state_home,
                 data_home=data_home,
@@ -3221,19 +3290,40 @@ def gc_evidence_generations(
 
             generations = _inspect_complete_generation_names(
                 generations_fd=generations_fd,
-                names=namespace.complete_names,
+                names=recovered_namespace.complete_names,
             )
-            _prune_complete_generations(
+            _require_unchanged_generation_namespace(
+                generations_fd=generations_fd,
+                expected_identity=generations_identity,
+                expected_namespace=recovered_namespace,
+            )
+            pruned_generation_ids = _prune_complete_generations(
                 integration_fd=integration_fd,
                 generations_fd=generations_fd,
                 generations=generations,
                 pointer=current_pointer,
                 maximum=256,
             )
-            generations_identity = _refresh_directory_identity_after_mutation(
-                generations_fd,
-                generations_identity,
+            pruned_namespace = _GenerationNamespace(
+                complete_names=tuple(
+                    name
+                    for name in recovered_namespace.complete_names
+                    if name not in pruned_generation_ids
+                ),
+                staging_names=(),
             )
+            if pruned_generation_ids:
+                generations_identity = _refresh_generation_identity_after_owned_mutation(
+                    generations_fd=generations_fd,
+                    previous_identity=generations_identity,
+                    expected_namespace=pruned_namespace,
+                )
+            else:
+                _require_unchanged_generation_namespace(
+                    generations_fd=generations_fd,
+                    expected_identity=generations_identity,
+                    expected_namespace=pruned_namespace,
+                )
             if (
                 _fd_identity(state_fd) != state_identity
                 or _fd_identity(integration_fd) != integration_identity

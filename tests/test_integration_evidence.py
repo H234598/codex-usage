@@ -1460,6 +1460,80 @@ def test_gc_scans_257_complete_generations_then_retains_256(
     assert (generations / pointer.previous_generation_id).is_dir()
 
 
+def test_gc_rejects_unowned_staging_after_noop_prune(
+    staged_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if no-op GC refreshed an attacker-mutated namespace identity."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, data_home, _entrypoint, _payload, verified = staged_evidence_layout
+    pointer = _create_complete_generations(state_home, data_home, verified, 256)
+    temporary_name = f".tmp-{'f' * 32}"
+    real_prune = integration_evidence._prune_complete_generations
+
+    def prune_then_add_unowned_staging(**kwargs):
+        result = real_prune(**kwargs)
+        os.mkdir(temporary_name, mode=0o700, dir_fd=kwargs["generations_fd"])
+        return result
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_prune_complete_generations",
+        prune_then_add_unowned_staging,
+    )
+
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.gc_evidence_generations(
+            state_home=state_home,
+            data_home=data_home,
+            pointer=pointer,
+            verified_active_manifest=verified,
+        )
+
+    assert (
+        state_home / "codex-usage/integration/generations" / temporary_name
+    ).is_dir()
+
+
+def test_gc_rejects_unowned_staging_after_owned_prune(
+    staged_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if GC absorbed a mutation after its verified victim removal."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, data_home, _entrypoint, _payload, verified = staged_evidence_layout
+    pointer = create_257_complete_generations(state_home, data_home, verified)
+    temporary_name = f".tmp-{'e' * 32}"
+    real_prune = integration_evidence._prune_complete_generations
+
+    def prune_then_add_unowned_staging(**kwargs):
+        result = real_prune(**kwargs)
+        os.mkdir(temporary_name, mode=0o700, dir_fd=kwargs["generations_fd"])
+        return result
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_prune_complete_generations",
+        prune_then_add_unowned_staging,
+    )
+
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.gc_evidence_generations(
+            state_home=state_home,
+            data_home=data_home,
+            pointer=pointer,
+            verified_active_manifest=verified,
+        )
+
+    generations = state_home / "codex-usage/integration/generations"
+    assert (generations / temporary_name).is_dir()
+    assert count_complete_generation_directories(state_home) == 256
+
+
 def test_publish_from_256_prunes_before_commit_and_stays_at_256(
     staged_evidence_layout,
 ):
