@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import errno
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager, nullcontext
 
 import pytest
 
-from codex_usage.account_lock import AccountLockError, account_lock
+from codex_usage.account_lock import AccountLockError, account_lock, state_maintenance_lock
 
 INVALID_LOCK_TIMEOUTS = (
     True,
@@ -94,6 +95,16 @@ def test_account_lock_wraps_lock_file_io_error(tmp_path, monkeypatch):
     lock_dir.mkdir(parents=True, mode=0o700)
     monkeypatch.setattr(account_lock_module, "_prepare_lock_directory", lambda _: None)
     monkeypatch.setattr(
+        account_lock_module,
+        "_state_maintenance_lock_file",
+        lambda *_args, **_kwargs: nullcontext(),
+    )
+    monkeypatch.setattr(
+        account_lock_module,
+        "source_lock",
+        lambda *_args, **_kwargs: nullcontext(),
+    )
+    monkeypatch.setattr(
         account_lock_module.os,
         "fchmod",
         lambda *_args: (_ for _ in ()).throw(OSError("chmod failed")),
@@ -120,6 +131,16 @@ def test_account_lock_maps_open_errors(tmp_path, monkeypatch, error_number, mess
     lock_dir = tmp_path / "codex-usage" / "locks"
     lock_dir.mkdir(parents=True, mode=0o700)
     monkeypatch.setattr(account_lock_module, "_prepare_lock_directory", lambda _: None)
+    monkeypatch.setattr(
+        account_lock_module,
+        "_state_maintenance_lock_file",
+        lambda *_args, **_kwargs: nullcontext(),
+    )
+    monkeypatch.setattr(
+        account_lock_module,
+        "source_lock",
+        lambda *_args, **_kwargs: nullcontext(),
+    )
 
     def fail_open(*_args, **_kwargs):
         raise OSError(error_number, "synthetic lock open failure")
@@ -151,9 +172,13 @@ def test_account_lock_retries_after_transient_contention(tmp_path, monkeypatch):
 
     def fake_flock(_fd, operation):
         flock_calls.append(operation)
-        if (
-            operation == account_lock_module.fcntl.LOCK_EX | account_lock_module.fcntl.LOCK_NB
-            and len(flock_calls) == 1
+        if operation == account_lock_module.fcntl.LOCK_EX | account_lock_module.fcntl.LOCK_NB and (
+            sum(
+                item
+                == account_lock_module.fcntl.LOCK_EX | account_lock_module.fcntl.LOCK_NB
+                for item in flock_calls
+            )
+            == 1
         ):
             raise BlockingIOError
 
@@ -167,6 +192,39 @@ def test_account_lock_retries_after_transient_contention(tmp_path, monkeypatch):
 
     assert sleeps == [0.05]
     assert flock_calls[-1] == account_lock_module.fcntl.LOCK_UN
+
+
+def test_state_maintenance_barrier_blocks_new_account_locks_by_lock_order(
+    tmp_path,
+    monkeypatch,
+):
+    from codex_usage import account_lock as account_lock_module
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    calls: list[tuple[str, bool]] = []
+
+    @contextmanager
+    def record_lock(account_id, _deadline, *, exclusive=True):
+        calls.append((account_id, exclusive))
+        yield
+
+    @contextmanager
+    def record_maintenance_lock(_deadline, *, exclusive=True):
+        calls.append(("__state_maintenance__", exclusive))
+        yield
+
+    monkeypatch.setattr(account_lock_module, "_account_lock_file", record_lock)
+    monkeypatch.setattr(
+        account_lock_module,
+        "_state_maintenance_lock_file",
+        record_maintenance_lock,
+    )
+
+    with state_maintenance_lock():
+        with account_lock("work"):
+            pass
+
+    assert calls == [("__state_maintenance__", True), ("work", True)]
 
 
 def test_account_lock_ignores_unlock_error(tmp_path, monkeypatch):
@@ -205,7 +263,9 @@ def test_account_lock_rejects_non_string_account_id(tmp_path, monkeypatch, accou
     assert not (tmp_path / "codex-usage").exists()
 
 
-def test_account_lock_wraps_directory_io_error(monkeypatch):
+def test_account_lock_wraps_directory_io_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+
     def fail_directory(*_args, **_kwargs):
         raise OSError("directory unavailable")
 

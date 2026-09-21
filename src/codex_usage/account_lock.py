@@ -5,6 +5,7 @@ import fcntl
 import os
 import re
 import stat
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -12,8 +13,12 @@ from pathlib import Path
 
 from .config import default_state_dir
 from .private_io import _lock_deadline, ensure_private_directory
+from .source_lock import source_lock
 
 ACCOUNT_LOCK_TIMEOUT_SECONDS = 30
+_STATE_MAINTENANCE_LOCK_ID = "__state_maintenance__"
+_STATE_MAINTENANCE_LOCK_FILENAME = ".state-maintenance.lock"
+_LOCK_STATE = threading.local()
 
 
 class AccountLockError(Exception):
@@ -34,9 +39,119 @@ def account_lock(
         deadline = _lock_deadline(timeout_seconds)
     except ValueError as exc:
         raise AccountLockError(str(exc)) from exc
+    with _source_then_state_maintenance_guard(deadline, timeout_seconds):
+        with _account_lock_file(account_id, deadline):
+            yield
+
+
+@contextmanager
+def _account_source_lock(
+    timeout_seconds: int | float,
+) -> Iterator[None]:
+    source_acquired = False
+    try:
+        with source_lock(
+            default_state_dir(),
+            timeout_seconds=timeout_seconds,
+            create_root=True,
+        ):
+            source_acquired = True
+            yield
+    except TimeoutError as exc:
+        if not source_acquired:
+            raise AccountLockError("account operation is already running") from exc
+        raise
+    except (OSError, ValueError) as exc:
+        if not source_acquired:
+            raise AccountLockError(str(exc)) from exc
+        raise
+
+
+@contextmanager
+def _source_then_state_maintenance_guard(
+    deadline: float,
+    timeout_seconds: int | float,
+) -> Iterator[None]:
+    with _account_source_lock(timeout_seconds):
+        with _state_maintenance_guard(deadline):
+            yield
+
+
+@contextmanager
+def state_maintenance_lock(
+    *,
+    timeout_seconds: int | float = ACCOUNT_LOCK_TIMEOUT_SECONDS,
+) -> Iterator[None]:
+    """Block normal per-account state mutations for a bounded maintenance transaction."""
+    try:
+        deadline = _lock_deadline(timeout_seconds)
+    except ValueError as exc:
+        raise AccountLockError(str(exc)) from exc
+    with _account_source_lock(timeout_seconds):
+        if _maintenance_depth():
+            _LOCK_STATE.maintenance_depth += 1
+            try:
+                yield
+            finally:
+                _LOCK_STATE.maintenance_depth -= 1
+            return
+        with _state_maintenance_lock_file(deadline, exclusive=True):
+            _LOCK_STATE.maintenance_depth = 1
+            try:
+                yield
+            finally:
+                _LOCK_STATE.maintenance_depth = 0
+
+
+def _maintenance_depth() -> int:
+    value = getattr(_LOCK_STATE, "maintenance_depth", 0)
+    return value if type(value) is int and value >= 0 else 0
+
+
+@contextmanager
+def _state_maintenance_guard(deadline: float) -> Iterator[None]:
+    if _maintenance_depth():
+        yield
+        return
+    with _state_maintenance_lock_file(deadline, exclusive=False):
+        yield
+
+
+@contextmanager
+def _state_maintenance_lock_file(deadline: float, *, exclusive: bool) -> Iterator[None]:
+    directory = default_state_dir()
+    try:
+        ensure_private_directory(directory, label="state maintenance lock directory")
+    except (OSError, ValueError) as exc:
+        raise AccountLockError(str(exc)) from exc
+    with _lock_file(
+        directory / _STATE_MAINTENANCE_LOCK_FILENAME,
+        deadline,
+        exclusive=exclusive,
+    ):
+        yield
+
+
+@contextmanager
+def _account_lock_file(
+    account_id: str,
+    deadline: float,
+    *,
+    exclusive: bool = True,
+) -> Iterator[None]:
+    if type(deadline) is not float or not isinstance(exclusive, bool):
+        raise AccountLockError("account lock arguments are invalid")
     directory = default_state_dir() / "locks"
     _prepare_lock_directory(directory)
     path = directory / f"{account_id}.lock"
+    with _lock_file(path, deadline, exclusive=exclusive):
+        yield
+
+
+@contextmanager
+def _lock_file(path: Path, deadline: float, *, exclusive: bool) -> Iterator[None]:
+    if type(deadline) is not float or not isinstance(exclusive, bool):
+        raise AccountLockError("account lock arguments are invalid")
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise AccountLockError("account lock must be a regular file")
     flags = os.O_RDWR | os.O_CREAT
@@ -64,7 +179,8 @@ def account_lock(
             raise AccountLockError("could not secure account lock") from exc
         while True:
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+                fcntl.flock(fd, lock_mode | fcntl.LOCK_NB)
                 break
             except BlockingIOError as exc:
                 if time.monotonic() >= deadline:

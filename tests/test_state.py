@@ -2701,12 +2701,7 @@ def test_remove_account_state_reuses_held_account_lock(tmp_path, monkeypatch):
     assert load_current_usage("privat") is not None
 
     with account_lock("privat"):
-        with pytest.raises(ValueError, match="nested inside held source lock"):
-            remove_account_state("privat", lock_held=True)
-
-    with source_lock(default_state_dir(), create_root=True):
-        with account_lock("privat"):
-            remove_account_state("privat", lock_held=True)
+        remove_account_state("privat", lock_held=True)
 
     assert load_current_usage("privat") is None
 

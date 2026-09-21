@@ -175,17 +175,26 @@ def capture_private_source_directory(path: Path) -> SourceRootIdentity:
     return _source_root_identity(path)
 
 
-def _source_lock_fd(root: Path) -> tuple[int, tuple[int, int, int, int, int]]:
+def _source_lock_fd(
+    root: Path,
+    *,
+    create: bool,
+) -> tuple[int, tuple[int, int, int, int, int]]:
     path = root / _SOURCE_LOCK_NAME
     flags = os.O_RDWR
     for flag_name in ("O_NOFOLLOW", "O_CLOEXEC", "O_NONBLOCK"):
         flags |= getattr(os, flag_name, 0)
     try:
-        try:
-            fd = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
+        if create:
+            try:
+                fd = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                fd = os.open(path, flags)
+        else:
             fd = os.open(path, flags)
     except OSError as exc:
+        if exc.errno == errno.ENOENT and not create:
+            raise ValueError("source lock is unavailable") from exc
         if exc.errno in (errno.ELOOP, errno.EISDIR, errno.ENXIO):
             raise ValueError("source lock must be a private regular file") from exc
         raise
@@ -196,6 +205,8 @@ def _source_lock_fd(root: Path) -> tuple[int, tuple[int, int, int, int, int]]:
             or item.st_uid != os.geteuid()
             or item.st_nlink != 1
         ):
+            raise ValueError("source lock must be a private regular file")
+        if not create and stat.S_IMODE(item.st_mode) != 0o600:
             raise ValueError("source lock must be a private regular file")
         if stat.S_IMODE(item.st_mode) != 0o600:
             os.fchmod(fd, 0o600)
@@ -270,10 +281,15 @@ def source_lock(
     *,
     timeout_seconds: int | float = 30,
     create_root: bool = False,
+    create_lock: bool = True,
 ) -> Iterator[SourceLockBinding]:
-    """Serialize trusted source readers and writers for one private data root."""
+    """Serialize trusted source access without creating a requested absent lock."""
     if type(create_root) is not bool:
         raise ValueError("source lock create_root is invalid")
+    if type(create_lock) is not bool:
+        raise ValueError("source lock create_lock is invalid")
+    if create_root and not create_lock:
+        raise ValueError("source lock cannot create root without creating a lock")
     if type(root) is not _PATH_TYPE or not root.is_absolute():
         raise ValueError("source root is invalid")
     if create_root:
@@ -300,7 +316,7 @@ def source_lock(
     fd = -1
     primary_error: BaseException | None = None
     try:
-        fd, lock_identity = _source_lock_fd(root)
+        fd, lock_identity = _source_lock_fd(root, create=create_lock)
         _acquire_source_lock(fd, timeout_seconds)
         _revalidate_source_lock(root, fd, lock_identity)
         binding = SourceLockBinding(root=root, identity=identity)

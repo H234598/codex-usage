@@ -1608,7 +1608,8 @@ def test_auth_sync_clear_rejects_changed_canonical_source(tmp_path):
     assert restarted.auth_sync_generation == snapshot.auth_sync_generation
 
 
-def test_concurrent_auth_sync_marks_serialize_monotone_generation(tmp_path):
+def test_concurrent_auth_sync_marks_serialize_monotone_generation(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     config_path = tmp_path / "config.toml"
     add_or_update_account("privat", path=config_path)
 

@@ -148,6 +148,7 @@ from .state import (
     load_usage_snapshot,
     remove_account_state,
 )
+from .state_maintenance import quarantine_unconfigured_usage_state
 from .terminal import TerminalError, start_account_terminal
 
 
@@ -335,6 +336,8 @@ Browser-Bridge:
 
 Sonstiges:
   codex-usage service install|enable|disable|status|uninstall [--format table|json]
+  codex-usage state-maintenance quarantine-unconfigured (--dry-run|--apply)
+                                                          [--format table|json]
   codex-usage paths
 
 ACCOUNT kann eine Account-ID oder ein eindeutiges Label sein.
@@ -386,6 +389,7 @@ KNOWN_COMMANDS = {
     "bridge-extension",
     "bridge-server",
     "service",
+    "state-maintenance",
     "paths",
 }
 
@@ -1023,6 +1027,24 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     service.add_argument("--format", choices=("table", "json"), default="table")
     service.set_defaults(func=_cmd_service)
+
+    maintenance = sub.add_parser(
+        "state-maintenance",
+        help="Nicht konfigurierte lokale Usage-State-Bundles pruefen oder quarantänisieren",
+    )
+    maintenance_sub = maintenance.add_subparsers(
+        dest="state_maintenance_command", required=True
+    )
+    quarantine = maintenance_sub.add_parser(
+        "quarantine-unconfigured",
+        help="Fremde State-Bundles nur nach Owner-Source-Paritaet quarantänisieren",
+    )
+    mode = quarantine.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", dest="apply", action="store_false")
+    mode.add_argument("--apply", dest="apply", action="store_true")
+    quarantine.set_defaults(apply=False)
+    quarantine.add_argument("--format", choices=("table", "json"), default="table")
+    quarantine.set_defaults(func=_cmd_state_maintenance)
 
     paths = sub.add_parser("paths", help="Standardpfade anzeigen")
     paths.set_defaults(func=_cmd_paths)
@@ -2922,6 +2944,31 @@ def _cmd_service(args: argparse.Namespace) -> int:
             f"aktiviert={'ja' if result.get('enabled') else 'nein'}, "
             f"aktiv={'ja' if result.get('active') else 'nein'}"
         )
+    return 0
+
+
+def _cmd_state_maintenance(args: argparse.Namespace) -> int:
+    report = quarantine_unconfigured_usage_state(config_path=args.config, apply=args.apply)
+    payload = {
+        "applied": report.applied,
+        "artifact_count": report.artifact_count,
+        "audit": json.loads(report.audit_json),
+        "audit_sha256": report.audit_sha256,
+        "configured_account_ids": list(report.configured_account_ids),
+        "quarantine_path": str(report.quarantine_path) if report.quarantine_path else None,
+        "quarantined_account_ids": list(report.quarantined_account_ids),
+    }
+    if args.format == "json":
+        print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
+    else:
+        mode = "angewendet" if report.applied else "Dry-run"
+        print(f"State-Maintenance: {mode}")
+        print(f"Konfigurierte Accounts: {', '.join(report.configured_account_ids)}")
+        print(f"Quarantänisierte Accounts: {', '.join(report.quarantined_account_ids) or '-'}")
+        print(f"Artefakte: {report.artifact_count}")
+        print(f"Audit-SHA256: {report.audit_sha256}")
+        if report.quarantine_path is not None:
+            print(f"Quarantäne: {report.quarantine_path}")
     return 0
 
 
