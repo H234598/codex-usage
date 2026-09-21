@@ -122,7 +122,7 @@ _ALLOWED_WINDOW_SECONDS = frozenset((18_000, 604_800, 2_592_000))
 ALLOWED_WINDOW_SECONDS = _ALLOWED_WINDOW_SECONDS
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 _GENERATION_ID_RE = re.compile(r"[0-9a-f]{32}")
-_RELEASE_ID_RE = re.compile(r"0\.6\.539-[0-9a-f]{16}")
+_RELEASE_ID_RE = re.compile(r"0\.6\.540-[0-9a-f]{16}")
 _STAGING_RE = re.compile(r"\.tmp-([0-9a-f]{32})")
 _STAGING_FILE_RE = re.compile(
     r"\.tmp-(?:account-usage-v2(?:\.binding)?|pool-authority-v2|source-inputs-v2)\.json-[0-9a-f]{32}"
@@ -610,7 +610,7 @@ def _canonical_usage_binding(binding: EvidenceBinding) -> dict[str, object]:
         or not 1 <= binding.payload_size_bytes <= _PAYLOAD_MAX_BYTES
     ):
         _invalid_contract()
-    if binding.producer_version != "0.6.539":
+    if binding.producer_version != "0.6.540":
         _invalid_contract()
     if type(binding.release_id) is not str or _RELEASE_ID_RE.fullmatch(binding.release_id) is None:
         _invalid_contract()
@@ -621,7 +621,7 @@ def _canonical_usage_binding(binding: EvidenceBinding) -> dict[str, object]:
         "payload_sha256": _require_digest(binding.payload_sha256),
         "payload_size_bytes": binding.payload_size_bytes,
         "published_at": _canonical_timestamp(binding.published_at),
-        "producer_version": "0.6.539",
+        "producer_version": "0.6.540",
         "release_id": binding.release_id,
         "source_manifest_sha256": _require_digest(binding.source_manifest_sha256),
         "usage_binding_schema_version": 2,
@@ -1577,7 +1577,7 @@ def _require_verified_manifest(value: object) -> VerifiedActiveManifest:
         raise IntegrationEvidenceInvalid()
     verified = cast(VerifiedActiveManifest, value)
     if (
-        verified.active_release.version != "0.6.539"
+        verified.active_release.version != "0.6.540"
         or _RELEASE_ID_RE.fullmatch(verified.release_id) is None
         or verified.active_manifest_sha256
         != hashlib.sha256(verified.active_manifest_bytes).hexdigest()
@@ -4125,7 +4125,7 @@ def _publish_evidence_generation_locked(
             payload_sha256=payload_digest,
             payload_size_bytes=len(payload),
             published_at=published_at,
-            producer_version="0.6.539",
+            producer_version="0.6.540",
             release_id=verified.release_id,
             source_manifest_sha256=verified.source_manifest_sha256,
             usage_binding_schema_version=2,

@@ -41,7 +41,7 @@ Producer, ungültige Source oder ein Timeout wird nicht durch einen freien
 Fallback ersetzt. Prüfen Sie daher Paketversion, Konfiguration und die
 geschützten lokalen Berechtigungen, bevor Sie einen Service neu installieren.
 Die im Repository fest verdrahtete Service-Distribution ist derzeit
-`codex-usage==0.6.539`.
+`codex-usage==0.6.540`.
 
 ## Was diese Anleitung nicht klären kann
 

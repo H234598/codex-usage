@@ -13,6 +13,514 @@ import sys
 from pathlib import Path
 from types import MappingProxyType, ModuleType
 
+_PREPARE_SOURCE_SUCCESS = "integration_producer_source_prepared\n"
+_PREPARE_MAX_SOURCE_FILE_BYTES = 2 * 1024 * 1024
+
+
+class _PrepareSourceArgumentError(Exception):
+    pass
+
+
+class _PrepareSourceError(Exception):
+    pass
+
+
+def _prepare_fail() -> None:
+    raise _PrepareSourceError()
+
+
+def _prepare_absolute_path(value: object) -> Path:
+    if type(value) is not str or "\x00" in value:
+        _prepare_fail()
+    path = Path(value)
+    if not path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts[1:]):
+        _prepare_fail()
+    return path
+
+
+def _prepare_no_symlink_ancestors(path: Path) -> None:
+    current = Path(path.anchor)
+    try:
+        root = current.lstat()
+    except (OSError, ValueError):
+        _prepare_fail()
+    if not stat.S_ISDIR(root.st_mode) or stat.S_ISLNK(root.st_mode):
+        _prepare_fail()
+    for part in path.parts[1:]:
+        current /= part
+        try:
+            item = current.lstat()
+        except (OSError, ValueError):
+            _prepare_fail()
+        if stat.S_ISLNK(item.st_mode):
+            _prepare_fail()
+
+
+def _prepare_directory_identity(path: Path) -> tuple[int, int, int, int, int]:
+    _prepare_no_symlink_ancestors(path)
+    try:
+        item = path.lstat()
+    except (OSError, ValueError):
+        _prepare_fail()
+    if (
+        not stat.S_ISDIR(item.st_mode)
+        or item.st_uid != os.geteuid()
+        or stat.S_IMODE(item.st_mode) not in {0o700, 0o755}
+    ):
+        _prepare_fail()
+    return (item.st_dev, item.st_ino, item.st_uid, item.st_mode, item.st_nlink)
+
+
+def _prepare_file_identity(path: Path) -> tuple[int, int, int, int, int, int, int, int]:
+    _prepare_no_symlink_ancestors(path.parent)
+    try:
+        item = path.lstat()
+    except (OSError, ValueError):
+        _prepare_fail()
+    if (
+        not stat.S_ISREG(item.st_mode)
+        or item.st_uid != os.geteuid()
+        or item.st_nlink != 1
+        or stat.S_IMODE(item.st_mode) not in {0o600, 0o644}
+        or not 0 < item.st_size <= _PREPARE_MAX_SOURCE_FILE_BYTES
+    ):
+        _prepare_fail()
+    return (
+        item.st_dev,
+        item.st_ino,
+        item.st_uid,
+        item.st_mode,
+        item.st_nlink,
+        item.st_size,
+        item.st_mtime_ns,
+        item.st_ctime_ns,
+    )
+
+
+def _prepare_open_directory(
+    name: str,
+    *,
+    parent_fd: int,
+    expected: tuple[int, int, int, int, int],
+) -> int:
+    if not hasattr(os, "O_NOFOLLOW"):
+        _prepare_fail()
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent_fd)
+    except (OSError, ValueError):
+        _prepare_fail()
+    try:
+        item = os.fstat(descriptor)
+    except OSError:
+        os.close(descriptor)
+        _prepare_fail()
+    identity = (item.st_dev, item.st_ino, item.st_uid, item.st_mode, item.st_nlink)
+    if not stat.S_ISDIR(item.st_mode) or identity != expected:
+        os.close(descriptor)
+        _prepare_fail()
+    return descriptor
+
+
+def _prepare_open_root(path: Path, expected: tuple[int, int, int, int, int]) -> int:
+    if not hasattr(os, "O_NOFOLLOW"):
+        _prepare_fail()
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(path, flags)
+        item = os.fstat(descriptor)
+    except (OSError, ValueError):
+        _prepare_fail()
+    identity = (item.st_dev, item.st_ino, item.st_uid, item.st_mode, item.st_nlink)
+    if not stat.S_ISDIR(item.st_mode) or identity != expected:
+        os.close(descriptor)
+        _prepare_fail()
+    return descriptor
+
+
+def _prepare_read_regular(
+    name: str,
+    *,
+    parent_fd: int,
+    expected: tuple[int, int, int, int, int, int, int, int],
+) -> bytes:
+    if not hasattr(os, "O_NOFOLLOW"):
+        _prepare_fail()
+    try:
+        descriptor = os.open(
+            name,
+            os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+            dir_fd=parent_fd,
+        )
+    except (OSError, ValueError):
+        _prepare_fail()
+    try:
+        before = os.fstat(descriptor)
+        before_identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_uid,
+            before.st_mode,
+            before.st_nlink,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        if not stat.S_ISREG(before.st_mode) or before_identity != expected:
+            _prepare_fail()
+        payload = bytearray()
+        while len(payload) <= _PREPARE_MAX_SOURCE_FILE_BYTES:
+            block = os.read(
+                descriptor,
+                min(64 * 1024, _PREPARE_MAX_SOURCE_FILE_BYTES + 1 - len(payload)),
+            )
+            if not block:
+                break
+            payload.extend(block)
+        after = os.fstat(descriptor)
+        after_identity = (
+            after.st_dev,
+            after.st_ino,
+            after.st_uid,
+            after.st_mode,
+            after.st_nlink,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if (
+            len(payload) != before.st_size
+            or before_identity != after_identity
+            or after_identity != expected
+        ):
+            _prepare_fail()
+        return bytes(payload)
+    except _PrepareSourceError:
+        raise
+    except OSError:
+        _prepare_fail()
+    finally:
+        os.close(descriptor)
+
+
+def _prepare_source_modules(installer_payload: bytes) -> tuple[str, ...]:
+    try:
+        tree = ast.parse(installer_payload)
+    except (SyntaxError, ValueError):
+        _prepare_fail()
+    assignments = [
+        node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "SOURCE_MODULES"
+            for target in node.targets
+        )
+    ]
+    if len(assignments) != 1:
+        _prepare_fail()
+    try:
+        names = ast.literal_eval(assignments[0])
+    except (SyntaxError, ValueError):
+        _prepare_fail()
+    if type(names) is not tuple or not 1 <= len(names) <= 64 or len(set(names)) != len(names):
+        _prepare_fail()
+    for name in names:
+        if type(name) is not str or not name.endswith(".py"):
+            _prepare_fail()
+        stem = name[:-3]
+        if not stem.isascii() or not stem.isidentifier() or stem.lower() != stem:
+            _prepare_fail()
+    if "__init__.py" not in names:
+        _prepare_fail()
+    return names
+
+
+def _prepare_reject_source_bytecode(*directory_fds: int) -> None:
+    try:
+        for descriptor in directory_fds:
+            with os.scandir(os.dup(descriptor)) as entries:
+                if any(
+                    entry.name == "__pycache__" or entry.name.endswith(".pyc")
+                    for entry in entries
+                ):
+                    _prepare_fail()
+    except _PrepareSourceError:
+        raise
+    except OSError:
+        _prepare_fail()
+
+
+def _prepare_after_closure_validation(_mutation_target: str) -> None:
+    """Internal synchronization seam between closure validation and mutation."""
+
+
+def _prepare_revalidate_source_closure(
+    *,
+    source_root: Path,
+    directories: dict[str, Path],
+    directory_identities: dict[str, tuple[int, int, int, int, int]],
+    file_identities: dict[str, tuple[int, int, int, int, int, int, int, int]],
+    source_modules: tuple[str, ...],
+    root_fd: int,
+    scripts_fd: int,
+    src_fd: int,
+    package_fd: int,
+) -> None:
+    directory_fds = {
+        "root": root_fd,
+        "scripts": scripts_fd,
+        "src": src_fd,
+        "package": package_fd,
+    }
+    for name, path in directories.items():
+        expected = directory_identities[name]
+        if _prepare_directory_identity(path) != expected:
+            _prepare_fail()
+        try:
+            item = os.fstat(directory_fds[name])
+        except OSError:
+            _prepare_fail()
+        if (
+            not stat.S_ISDIR(item.st_mode)
+            or (item.st_dev, item.st_ino, item.st_uid, item.st_mode, item.st_nlink)
+            != expected
+        ):
+            _prepare_fail()
+    _prepare_reject_source_bytecode(src_fd, package_fd)
+    for relative in sorted(file_identities):
+        if _prepare_file_identity(source_root / relative) != file_identities[relative]:
+            _prepare_fail()
+        if relative == "pyproject.toml":
+            parent_fd, name = root_fd, relative
+        elif relative == "scripts/install_integration_producer.py":
+            parent_fd, name = scripts_fd, "install_integration_producer.py"
+        else:
+            parent_fd, name = package_fd, Path(relative).name
+        _prepare_read_regular(
+            name,
+            parent_fd=parent_fd,
+            expected=file_identities[relative],
+        )
+    if {
+        relative.removeprefix("src/codex_usage/")
+        for relative in file_identities
+        if relative.startswith("src/codex_usage/")
+    } != {"integration_installer.py", *source_modules}:
+        _prepare_fail()
+
+
+def _prepare_source_root(source_root_text: object) -> None:
+    source_root = _prepare_absolute_path(source_root_text)
+    script_path = _prepare_absolute_path(str(Path(__file__).absolute()))
+    repo_root = script_path.parents[1]
+    if source_root != repo_root:
+        _prepare_fail()
+    script_path = repo_root / "scripts" / "install_integration_producer.py"
+    directories = {
+        "root": source_root,
+        "scripts": source_root / "scripts",
+        "src": source_root / "src",
+        "package": source_root / "src" / "codex_usage",
+    }
+    directory_identities = {
+        name: _prepare_directory_identity(path) for name, path in directories.items()
+    }
+    source_files = {
+        "pyproject.toml": source_root / "pyproject.toml",
+        "scripts/install_integration_producer.py": script_path,
+        "src/codex_usage/integration_installer.py": source_root
+        / "src/codex_usage/integration_installer.py",
+    }
+    file_identities = {
+        relative: _prepare_file_identity(path) for relative, path in source_files.items()
+    }
+    root_fd = scripts_fd = src_fd = package_fd = -1
+    try:
+        root_fd = _prepare_open_root(source_root, directory_identities["root"])
+        scripts_fd = _prepare_open_directory(
+            "scripts", parent_fd=root_fd, expected=directory_identities["scripts"]
+        )
+        src_fd = _prepare_open_directory(
+            "src", parent_fd=root_fd, expected=directory_identities["src"]
+        )
+        package_fd = _prepare_open_directory(
+            "codex_usage", parent_fd=src_fd, expected=directory_identities["package"]
+        )
+        installer_payload = _prepare_read_regular(
+            "integration_installer.py",
+            parent_fd=package_fd,
+            expected=file_identities["src/codex_usage/integration_installer.py"],
+        )
+        source_modules = _prepare_source_modules(installer_payload)
+        for filename in source_modules:
+            relative = f"src/codex_usage/{filename}"
+            path = source_root / relative
+            file_identities[relative] = _prepare_file_identity(path)
+        _prepare_reject_source_bytecode(src_fd, package_fd)
+
+        _prepare_revalidate_source_closure(
+            source_root=source_root,
+            directories=directories,
+            directory_identities=directory_identities,
+            file_identities=file_identities,
+            source_modules=source_modules,
+            root_fd=root_fd,
+            scripts_fd=scripts_fd,
+            src_fd=src_fd,
+            package_fd=package_fd,
+        )
+        _prepare_after_closure_validation("root")
+        _prepare_revalidate_source_closure(
+            source_root=source_root,
+            directories=directories,
+            directory_identities=directory_identities,
+            file_identities=file_identities,
+            source_modules=source_modules,
+            root_fd=root_fd,
+            scripts_fd=scripts_fd,
+            src_fd=src_fd,
+            package_fd=package_fd,
+        )
+        os.fchmod(root_fd, 0o700)
+        root_after = os.fstat(root_fd)
+        if (
+            not stat.S_ISDIR(root_after.st_mode)
+            or root_after.st_dev != directory_identities["root"][0]
+            or root_after.st_ino != directory_identities["root"][1]
+            or root_after.st_uid != os.geteuid()
+            or stat.S_IMODE(root_after.st_mode) != 0o700
+        ):
+            _prepare_fail()
+        directory_identities["root"] = (
+            root_after.st_dev,
+            root_after.st_ino,
+            root_after.st_uid,
+            root_after.st_mode,
+            root_after.st_nlink,
+        )
+        for relative in sorted(file_identities):
+            if relative == "pyproject.toml":
+                parent_fd, name = root_fd, relative
+            elif relative == "scripts/install_integration_producer.py":
+                parent_fd, name = scripts_fd, "install_integration_producer.py"
+            else:
+                parent_fd, name = package_fd, Path(relative).name
+            descriptor = os.open(
+                name,
+                os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=parent_fd,
+            )
+            try:
+                before = os.fstat(descriptor)
+                if (
+                    before.st_dev,
+                    before.st_ino,
+                    before.st_uid,
+                    before.st_mode,
+                    before.st_nlink,
+                    before.st_size,
+                    before.st_mtime_ns,
+                    before.st_ctime_ns,
+                ) != file_identities[relative]:
+                    _prepare_fail()
+                _prepare_revalidate_source_closure(
+                    source_root=source_root,
+                    directories=directories,
+                    directory_identities=directory_identities,
+                    file_identities=file_identities,
+                    source_modules=source_modules,
+                    root_fd=root_fd,
+                    scripts_fd=scripts_fd,
+                    src_fd=src_fd,
+                    package_fd=package_fd,
+                )
+                _prepare_after_closure_validation(relative)
+                _prepare_revalidate_source_closure(
+                    source_root=source_root,
+                    directories=directories,
+                    directory_identities=directory_identities,
+                    file_identities=file_identities,
+                    source_modules=source_modules,
+                    root_fd=root_fd,
+                    scripts_fd=scripts_fd,
+                    src_fd=src_fd,
+                    package_fd=package_fd,
+                )
+                current = os.fstat(descriptor)
+                if (
+                    current.st_dev,
+                    current.st_ino,
+                    current.st_uid,
+                    current.st_mode,
+                    current.st_nlink,
+                    current.st_size,
+                    current.st_mtime_ns,
+                    current.st_ctime_ns,
+                ) != file_identities[relative]:
+                    _prepare_fail()
+                os.fchmod(descriptor, 0o644)
+                after = os.fstat(descriptor)
+                if (
+                    not stat.S_ISREG(after.st_mode)
+                    or after.st_dev != before.st_dev
+                    or after.st_ino != before.st_ino
+                    or after.st_uid != os.geteuid()
+                    or after.st_nlink != 1
+                    or after.st_size != before.st_size
+                    or stat.S_IMODE(after.st_mode) != 0o644
+                ):
+                    _prepare_fail()
+                file_identities[relative] = (
+                    after.st_dev,
+                    after.st_ino,
+                    after.st_uid,
+                    after.st_mode,
+                    after.st_nlink,
+                    after.st_size,
+                    after.st_mtime_ns,
+                    after.st_ctime_ns,
+                )
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        _prepare_revalidate_source_closure(
+            source_root=source_root,
+            directories=directories,
+            directory_identities=directory_identities,
+            file_identities=file_identities,
+            source_modules=source_modules,
+            root_fd=root_fd,
+            scripts_fd=scripts_fd,
+            src_fd=src_fd,
+            package_fd=package_fd,
+        )
+        os.fsync(root_fd)
+    except _PrepareSourceError:
+        raise
+    except (OSError, ValueError):
+        _prepare_fail()
+    finally:
+        for descriptor in (package_fd, src_fd, scripts_fd, root_fd):
+            if descriptor >= 0:
+                os.close(descriptor)
+
+
+def _early_prepare_source(argv: list[str]) -> bool:
+    if "--prepare-source" not in argv:
+        return False
+    if (
+        len(argv) != 3
+        or argv.count("--prepare-source") != 1
+        or argv.count("--source-root") != 1
+    ):
+        raise _PrepareSourceArgumentError()
+    source_root_index = argv.index("--source-root")
+    if source_root_index == len(argv) - 1:
+        raise _PrepareSourceArgumentError()
+    _prepare_source_root(argv[source_root_index + 1])
+    return True
+
 
 def _require_source_directory(path: Path) -> None:
     item = path.lstat()
@@ -365,6 +873,18 @@ def _restore_guarded_meta_path(
 
 
 try:
+    if _early_prepare_source(sys.argv[1:]):
+        sys.stdout.write(_PREPARE_SOURCE_SUCCESS)
+        raise SystemExit(0)
+except _PrepareSourceArgumentError:
+    sys.stderr.write("integration_producer_unavailable\n")
+    raise SystemExit(64) from None
+except _PrepareSourceError:
+    sys.stderr.write("integration_producer_source_prepare_rejected\n")
+    raise SystemExit(69) from None
+
+
+try:
     (
         _EXPECTED_MODULES,
         _SOURCE_FINDER,
@@ -407,6 +927,20 @@ class _InstallerArgumentError(Exception):
 class _InstallerParser(argparse.ArgumentParser):
     def parse_args(self, args=None, namespace=None):
         parsed = super().parse_args(args, namespace)
+        if parsed.prepare_source:
+            if parsed.rollback or any(
+                value is not None
+                for value in (
+                    parsed.state_home,
+                    parsed.data_home,
+                    parsed.python,
+                    parsed.temporary_root,
+                )
+            ):
+                self.error("--prepare-source only accepts --source-root")
+            if parsed.source_root is None:
+                self.error("--prepare-source requires --source-root")
+            return parsed
         install_values = (
             parsed.source_root,
             parsed.python,
@@ -437,6 +971,7 @@ class _InstallerParser(argparse.ArgumentParser):
 def _parser() -> argparse.ArgumentParser:
     parser = _InstallerParser(add_help=True)
     parser.add_argument("--rollback", action="store_true")
+    parser.add_argument("--prepare-source", action="store_true")
     parser.add_argument("--source-root")
     parser.add_argument("--state-home")
     parser.add_argument("--data-home")
@@ -448,7 +983,10 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     try:
         args = _parser().parse_args(argv)
-        if args.rollback:
+        if args.prepare_source:
+            _prepare_source_root(args.source_root)
+            sys.stdout.write(_PREPARE_SOURCE_SUCCESS)
+        elif args.rollback:
             rollback_active_release(
                 state_home=Path(args.state_home),
                 data_home=Path(args.data_home),
@@ -472,6 +1010,9 @@ def main(argv: list[str] | None = None) -> int:
     except IntegrationCleanupError:
         sys.stderr.write("integration_producer_cleanup_failed\n")
         return 70
+    except _PrepareSourceError:
+        sys.stderr.write("integration_producer_source_prepare_rejected\n")
+        return 69
     except (IntegrationInstallError, OSError, ValueError):
         sys.stderr.write("integration_producer_unavailable\n")
         return 69

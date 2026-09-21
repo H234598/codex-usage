@@ -2,7 +2,7 @@
 
 `codex-usage` ist ein lokales Multi-Account-Werkzeug für aktuelle ChatGPT-Codex-Nutzungs- und Limitstände. Es bietet eine Python-CLI, persistente, voneinander getrennte Accountprofile, einen Cinnamon-Applet und einen optionalen `systemd --user`-Dienst. Die erfassten Werte stammen je Account aus dem konfigurierten Abrufweg; sie sind keine Zusage zu einem bestimmten Tarif, Limit oder Resetzeitpunkt.
 
-Die Dokumentation beschreibt den attestierten D297-Nachfolger `0.6.539`. Die vollständige Navigation steht in [docs/README.md](docs/README.md); der Implementierungsstatus steht in [ROADMAP.md](ROADMAP.md).
+Die Dokumentation beschreibt den attestierten D297-Nachfolger `0.6.540`. Die vollständige Navigation steht in [docs/README.md](docs/README.md); der Implementierungsstatus steht in [ROADMAP.md](ROADMAP.md).
 
 ## Schnellstart
 

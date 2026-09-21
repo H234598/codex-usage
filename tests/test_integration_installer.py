@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import contextlib
 import errno
 import hashlib
 import importlib.util
@@ -13,6 +14,7 @@ import os
 import py_compile
 import queue
 import re
+import runpy
 import shlex
 import shutil
 import signal
@@ -183,6 +185,61 @@ def _foreign_tree_digest(*, root: Path) -> str:
 
     visit(root, root.name)
     return hashlib.sha256(b"".join(rows)).hexdigest()
+
+
+@contextlib.contextmanager
+def _loaded_public_prepare_namespace(repo_root: Path):
+    """Load only a fixture's public preparer and restore import process state."""
+    original_path = tuple(sys.path)
+    original_meta_path = tuple(sys.meta_path)
+    original_modules = dict(sys.modules)
+    try:
+        for name in tuple(sys.modules):
+            if name == "codex_usage" or name.startswith("codex_usage."):
+                del sys.modules[name]
+        yield runpy.run_path(
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+            run_name="_codex_usage_prepare_source_test_",
+        )
+    finally:
+        sys.path[:] = original_path
+        sys.meta_path[:] = original_meta_path
+        for name in tuple(sys.modules):
+            if name not in original_modules:
+                del sys.modules[name]
+        sys.modules.update(original_modules)
+
+
+def _prepare_source_tree_snapshot(root: Path) -> tuple[tuple[object, ...], ...]:
+    """Bind a hostile-rebind fixture's namespace, identity, modes, and bytes."""
+    rows: list[tuple[object, ...]] = []
+
+    def visit(path: Path, relative: str) -> None:
+        item = path.lstat()
+        base = (
+            relative,
+            stat.S_IFMT(item.st_mode),
+            item.st_dev,
+            item.st_ino,
+            stat.S_IMODE(item.st_mode),
+            item.st_nlink,
+            item.st_size,
+            item.st_mtime_ns,
+            item.st_ctime_ns,
+        )
+        if stat.S_ISDIR(item.st_mode):
+            rows.append((*base, None, None))
+            for child in sorted(path.iterdir(), key=lambda candidate: candidate.name):
+                visit(child, f"{relative}/{child.name}")
+        elif stat.S_ISREG(item.st_mode):
+            rows.append((*base, path.read_bytes(), None))
+        elif stat.S_ISLNK(item.st_mode):
+            rows.append((*base, None, str(path.readlink())))
+        else:
+            rows.append((*base, None, None))
+
+    visit(root, ".")
+    return tuple(rows)
 
 
 def _roots(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -575,7 +632,7 @@ def install_verified_06537_source(tmp_path: Path):
             temporary_root=temporary_root,
         )
     assert previous.version == "0.6.537"
-    _set_fixture_source_release_version(source_root, "0.6.539")
+    _set_fixture_source_release_version(source_root, "0.6.540")
     return integration_installer.install_release(
         source_root=source_root,
         state_home=state_home,
@@ -999,7 +1056,7 @@ def test_foreign_tree_digest_detects_same_size_bytes_and_symlink_target(tmp_path
     assert _foreign_tree_digest(root=root) != linked_first
 
 
-def test_release_version_is_06539_across_project_surfaces():
+def test_release_version_is_06540_across_project_surfaces():
     from codex_usage import __version__, integration_installer
 
     project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
@@ -1009,11 +1066,11 @@ def test_release_version_is_06539_across_project_surfaces():
         )
     )
 
-    assert integration_installer.RELEASE_VERSION == "0.6.539"
-    assert project["project"]["version"] == "0.6.539"
-    assert __version__ == "0.6.539"
-    assert applet["version"] == "0.6.539"
-    assert applet["comments"] == "Version: 0.6.539"
+    assert integration_installer.RELEASE_VERSION == "0.6.540"
+    assert project["project"]["version"] == "0.6.540"
+    assert __version__ == "0.6.540"
+    assert applet["version"] == "0.6.540"
+    assert applet["comments"] == "Version: 0.6.540"
 
 
 def test_runtime_rejects_compromised_06535_but_installer_upgrades_verified_06537(
@@ -1021,7 +1078,7 @@ def test_runtime_rejects_compromised_06535_but_installer_upgrades_verified_06537
 ):
     from codex_usage.integration_attestation import IntegrationAttestationUnavailable
 
-    assert install_verified_06537_source(tmp_path / "verified-06537").version == "0.6.539"
+    assert install_verified_06537_source(tmp_path / "verified-06537").version == "0.6.540"
     with pytest.raises(IntegrationAttestationUnavailable):
         verify_compromised_06535_runtime(tmp_path / "compromised-06535")
 
@@ -1074,7 +1131,7 @@ def test_install_cutover_accepts_expected_runtime_bytecode_in_06536_release(
             python_executable=Path(sys.executable),
             temporary_root=temporary_root,
         )
-    _set_fixture_source_release_version(source_root, "0.6.539")
+    _set_fixture_source_release_version(source_root, "0.6.540")
     cache_path = _write_runtime_bytecode(
         previous.release_dir,
         invalidation_mode=invalidation_mode,
@@ -1088,7 +1145,7 @@ def test_install_cutover_accepts_expected_runtime_bytecode_in_06536_release(
         temporary_root=temporary_root,
     )
 
-    assert installed.version == "0.6.539"
+    assert installed.version == "0.6.540"
     assert cache_path.is_file()
     current_cache = _write_runtime_bytecode(installed.release_dir)
     with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
@@ -1128,7 +1185,7 @@ def test_install_cutover_rejects_unexpected_addition_beside_06536_runtime_byteco
             python_executable=Path(sys.executable),
             temporary_root=temporary_root,
         )
-    _set_fixture_source_release_version(source_root, "0.6.539")
+    _set_fixture_source_release_version(source_root, "0.6.540")
     cache_path = _write_runtime_bytecode(previous.release_dir)
     if addition == "unknown-cache-name":
         unexpected = cache_path.with_name("foreign.cpython-999.pyc")
@@ -1190,7 +1247,7 @@ def test_06536_bytecode_validation_rejects_source_inode_swap_after_tree_scan(
             python_executable=Path(sys.executable),
             temporary_root=temporary_root,
         )
-    _set_fixture_source_release_version(source_root, "0.6.539")
+    _set_fixture_source_release_version(source_root, "0.6.540")
     cache_path = _write_runtime_bytecode(previous.release_dir)
     source_path = cache_path.parent.parent / "integration_entrypoint.py"
     staged = tmp_path / "staged-race"
@@ -1354,14 +1411,14 @@ def _compromised_06535_with_previous_06534(tmp_path: Path):
     pycache.mkdir(mode=0o700)
     (pycache / "compromised.pyc").write_bytes(b"compromised")
     # Historical malformed-marker tests need an inert predecessor artifact.
-    # D297's real 0.6.539 install path never creates or consumes it.
+    # D297's real 0.6.540 install path never creates or consumes it.
     write_private_text(
         integration / "previous.json",
         historical_previous.decode("utf-8"),
         label="historical predecessor fixture",
         mode=0o600,
     )
-    _set_fixture_source_release_version(source_root, "0.6.539")
+    _set_fixture_source_release_version(source_root, "0.6.540")
     assert json.loads((integration / "previous.json").read_bytes())["version"] == "0.6.534"
     return (
         previous,
@@ -1757,8 +1814,8 @@ def test_install_creates_attested_private_active_release(tmp_path):
     release, data_home, state_home = _install(tmp_path)
     from codex_usage.integration_attestation import verify_active_release
 
-    assert release.version == "0.6.539"
-    assert release.release_dir.name.startswith("0.6.539-")
+    assert release.version == "0.6.540"
+    assert release.release_dir.name.startswith("0.6.540-")
     assert release.launcher_path.name == "codex-usage"
     assert stat.S_IMODE(release.launcher_path.lstat().st_mode) == 0o700
     verified = verify_active_release(
@@ -1773,10 +1830,10 @@ def test_install_creates_attested_private_active_release(tmp_path):
         )
     )
     assert active["schema_version"] == 2
-    assert active["version"] == "0.6.539"
+    assert active["version"] == "0.6.540"
     assert active["release_id"] == release.release_dir.name
     assert Path(active["record_path"]).parent.name == (
-        "codex_usage_integration_producer-0.6.539.dist-info"
+        "codex_usage_integration_producer-0.6.540.dist-info"
     )
     assert active["launcher_sha256"] == release.launcher_sha256
     assert active["release_tree_sha256"] == release.release_tree_sha256
@@ -1896,7 +1953,7 @@ def _install_attested_d297_predecessor(tmp_path: Path):
     for relative in ("pyproject.toml", "src/codex_usage/__init__.py"):
         path = source_root / relative
         path.write_text(
-            path.read_text(encoding="utf-8").replace("0.6.539", "0.6.537"),
+            path.read_text(encoding="utf-8").replace("0.6.540", "0.6.537"),
             encoding="utf-8",
         )
         path.chmod(0o600)
@@ -1924,7 +1981,7 @@ def test_d297_cutover_accepts_only_attested_06537_predecessor_and_empty_v2(
     for relative in ("pyproject.toml", "src/codex_usage/__init__.py"):
         path = source_root / relative
         path.write_text(
-            path.read_text(encoding="utf-8").replace("0.6.537", "0.6.539"),
+            path.read_text(encoding="utf-8").replace("0.6.537", "0.6.540"),
             encoding="utf-8",
         )
         path.chmod(0o600)
@@ -1937,7 +1994,7 @@ def test_d297_cutover_accepts_only_attested_06537_predecessor_and_empty_v2(
     )
 
     integration = state_home / "codex-usage" / "integration"
-    assert installed.version == "0.6.539"
+    assert installed.version == "0.6.540"
     assert not (integration / "previous.json").exists()
     assert not (integration / "current.json").exists()
 
@@ -1961,7 +2018,7 @@ def test_d297_rejects_attested_06536_predecessor_without_mutation(
             temporary_root=temporary_root,
         )
     assert predecessor.version == "0.6.536"
-    _set_fixture_source_release_version(source_root, "0.6.539")
+    _set_fixture_source_release_version(source_root, "0.6.540")
     integration = state_home / "codex-usage" / "integration"
     active = integration / "active.json"
     before = active.read_bytes()
@@ -1994,17 +2051,17 @@ def test_d297_rejects_attested_06536_predecessor_without_mutation(
     assert not (integration / "current.json").exists()
 
 
-def test_d297_rejects_attested_06538_predecessor_without_mutation(
+def test_d297_rejects_attested_06539_predecessor_without_mutation(
     tmp_path,
     monkeypatch,
 ):
-    """The new 0.6.539 release has no 0.6.538 compatibility cutover."""
+    """The new 0.6.540 release has no 0.6.539 compatibility cutover."""
     from codex_usage import integration_installer
 
     data_home, state_home, temporary_root = _roots(tmp_path)
     source_root = _temporary_source_copy(tmp_path)
     with pytest.MonkeyPatch.context() as context:
-        _patch_release_identity(context, "0.6.538", source_root=source_root)
+        _patch_release_identity(context, "0.6.539", source_root=source_root)
         predecessor = integration_installer.install_release(
             source_root=source_root,
             state_home=state_home,
@@ -2012,15 +2069,15 @@ def test_d297_rejects_attested_06538_predecessor_without_mutation(
             python_executable=Path(sys.executable),
             temporary_root=temporary_root,
         )
-    assert predecessor.version == "0.6.538"
-    _set_fixture_source_release_version(source_root, "0.6.539")
+    assert predecessor.version == "0.6.539"
+    _set_fixture_source_release_version(source_root, "0.6.540")
     integration = state_home / "codex-usage" / "integration"
     active = integration / "active.json"
     before = active.read_bytes()
     active_identity = (active.lstat().st_dev, active.lstat().st_ino)
 
     def reject_recovery(**_kwargs):
-        pytest.fail("D297 must reject a 0.6.538 active before any recovery")
+        pytest.fail("D297 must reject a 0.6.539 active before any recovery")
 
     monkeypatch.setattr(
         integration_installer,
@@ -2077,7 +2134,7 @@ def test_d297_predecessor_requires_empty_v2_namespace_before_any_recovery(
     _predecessor, source_root, data_home, state_home, temporary_root = (
         _install_attested_d297_predecessor(tmp_path)
     )
-    _set_fixture_source_release_version(source_root, "0.6.539")
+    _set_fixture_source_release_version(source_root, "0.6.540")
     integration = state_home / "codex-usage" / "integration"
     active = integration / "active.json"
     current = integration / "current.json"
@@ -3356,7 +3413,7 @@ def test_commit_cleanup_failure_returns_success_with_bounded_evidence(
     )
     result = prepared.run()
 
-    assert result.version == "0.6.539"
+    assert result.version == "0.6.540"
     assert cleanup_failed
     assert prepared.active_path.is_file()
     # D297 never creates a public active-release rollback path.  A pre-existing
@@ -3652,7 +3709,7 @@ def test_failed_publish_to_initially_absent_active_keeps_active_present(
         state_home=state_home,
         data_home=data_home,
         expected_entrypoint_path=None,
-    ).version == "0.6.539"
+    ).version == "0.6.540"
     if operation == "install":
         assert not previous_path.exists()
 
@@ -7250,6 +7307,7 @@ def test_installer_script_has_narrow_parser_and_no_general_cli_import(tmp_path):
     assert completed.stderr == ""
     for option in (
         "--rollback",
+        "--prepare-source",
         "--source-root",
         "--state-home",
         "--data-home",
@@ -7284,6 +7342,260 @@ def test_installer_script_has_narrow_parser_and_no_general_cli_import(tmp_path):
     assert rejected.stderr == "integration_producer_unavailable\n"
     source = SCRIPT_PATH.read_text(encoding="utf-8")
     assert "codex_usage.cli" not in source
+
+
+@pytest.mark.parametrize(
+    ("checkout_mode", "source_file_mode"),
+    ((0o700, 0o600), (0o755, 0o644)),
+    ids=("secure-0077", "normal-0022"),
+)
+def test_public_prepare_source_normalizes_checkout_before_real_install(
+    tmp_path, pytestconfig, checkout_mode, source_file_mode
+):
+    """Would fail if a real 0077 or 0022 checkout cannot be prepared once."""
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    for path in (
+        repo_root,
+        repo_root / "scripts",
+        repo_root / "src",
+        repo_root / "src/codex_usage",
+    ):
+        path.chmod(checkout_mode)
+    for path in repo_root.rglob("*"):
+        if path.is_file():
+            path.chmod(source_file_mode)
+    untouched = repo_root / "unrelated-private-note"
+    untouched.write_text("do-not-normalize", encoding="utf-8")
+    untouched.chmod(source_file_mode)
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    command = [
+        sys.executable,
+        "-B",
+        str(repo_root / "scripts" / SCRIPT_PATH.name),
+        "--prepare-source",
+        "--source-root",
+        str(repo_root),
+    ]
+
+    prepared = subprocess.run(
+        command,
+        cwd=repo_root,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=BOOTSTRAP_PROCESS_TIMEOUT_SECONDS,
+    )
+
+    assert prepared.returncode == 0, prepared.stderr
+    assert prepared.stdout == "integration_producer_source_prepared\n"
+    assert prepared.stderr == ""
+    assert stat.S_IMODE(repo_root.lstat().st_mode) == 0o700
+    for relative in (*TEST_SOURCE_MANIFEST_FILES, f"scripts/{SCRIPT_PATH.name}"):
+        source = repo_root / relative
+        assert source.is_file() and not source.is_symlink()
+        assert source.stat().st_nlink == 1
+        assert stat.S_IMODE(source.stat().st_mode) == 0o644
+    assert stat.S_IMODE(untouched.stat().st_mode) == source_file_mode
+    assert not (state_home / "codex-usage" / "integration" / "active.json").exists()
+
+    from codex_usage import private_io
+
+    lock_root = private_io._private_lock_root()
+    production_lock_root = pytestconfig._private_lock_production_root
+    bwrap_item = Path("/usr/bin/bwrap").stat()
+    trusted_bwrap_fds = []
+    for candidate in Path("/proc/self/fd").iterdir():
+        try:
+            item = candidate.stat()
+        except OSError:
+            continue
+        if (item.st_dev, item.st_ino) == (bwrap_item.st_dev, bwrap_item.st_ino):
+            trusted_bwrap_fds.append(candidate)
+    assert len(trusted_bwrap_fds) == 1
+    installed = subprocess.run(
+        [
+            str(trusted_bwrap_fds[0]),
+            "--bind",
+            "/",
+            "/",
+            "--dev",
+            "/dev",
+            "--dev-bind",
+            "/dev/null",
+            "/dev/null",
+            "--bind",
+            str(lock_root),
+            str(production_lock_root),
+            "--",
+            sys.executable,
+            "-B",
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+            "--source-root",
+            str(repo_root),
+            "--state-home",
+            str(state_home),
+            "--data-home",
+            str(data_home),
+            "--python",
+            sys.executable,
+            "--temporary-root",
+            str(temporary_root),
+        ],
+        cwd=repo_root,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=BOOTSTRAP_PROCESS_TIMEOUT_SECONDS,
+        close_fds=False,
+    )
+
+    assert installed.returncode == 0, installed.stderr
+    assert installed.stdout == "integration_producer_install_ok\n"
+    assert installed.stderr == ""
+    manifest = json.loads(
+        (state_home / "codex-usage" / "integration" / "active.json").read_bytes()
+    )
+    assert manifest["version"] == "0.6.540"
+    assert re.fullmatch(r"0\.6\.540-[0-9a-f]{16}", manifest["release_id"])
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("symlink", "hardlink", "unknown-root", "root-mode-0750", "root-mode-0777"),
+)
+def test_public_prepare_source_rejects_hostile_or_unknown_input_without_mutation(
+    tmp_path, mutation
+):
+    """Would fail if preparation normalized a link, foreign root, or partial closure."""
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    for path in (
+        repo_root,
+        repo_root / "scripts",
+        repo_root / "src",
+        repo_root / "src/codex_usage",
+    ):
+        path.chmod(0o700)
+    for path in repo_root.rglob("*"):
+        if path.is_file():
+            path.chmod(0o600)
+    target = repo_root / "src/codex_usage/history.py"
+    initial_target_mode = stat.S_IMODE(target.stat().st_mode)
+    source_root = repo_root
+    if mutation == "symlink":
+        outside = tmp_path / "outside.py"
+        outside.write_text("outside", encoding="utf-8")
+        outside.chmod(0o600)
+        target.unlink()
+        target.symlink_to(outside)
+    elif mutation == "hardlink":
+        linked = repo_root / "source-linked.py"
+        os.link(target, linked)
+    elif mutation == "root-mode-0750":
+        repo_root.chmod(0o750)
+    elif mutation == "root-mode-0777":
+        repo_root.chmod(0o777)
+    else:
+        source_root = tmp_path / "unknown-root"
+        source_root.mkdir(mode=0o700)
+    initial_root_mode = stat.S_IMODE(repo_root.stat().st_mode)
+
+    rejected = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+            "--prepare-source",
+            "--source-root",
+            str(source_root),
+        ],
+        cwd=repo_root,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=BOOTSTRAP_PROCESS_TIMEOUT_SECONDS,
+    )
+
+    assert rejected.returncode == 69
+    assert rejected.stdout == ""
+    assert rejected.stderr == "integration_producer_source_prepare_rejected\n"
+    assert stat.S_IMODE(repo_root.stat().st_mode) == initial_root_mode
+    if mutation == "symlink":
+        assert target.is_symlink()
+    else:
+        assert stat.S_IMODE(target.stat().st_mode) == initial_target_mode
+
+
+@pytest.mark.parametrize(
+    ("rebind_after_stage", "expected_stages"),
+    (("root", ("root",)), ("pyproject.toml", ("root", "pyproject.toml"))),
+    ids=("before-root-mode", "before-first-closure-file-mode"),
+)
+def test_public_prepare_source_rejects_rebind_before_any_following_mode_mutation(
+    tmp_path, monkeypatch, capsys, rebind_after_stage, expected_stages
+):
+    """Would fail if a rebind after validation could chmod either source tree."""
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    script = repo_root / "scripts" / SCRIPT_PATH.name
+    monkeypatch.setattr(sys, "argv", [str(script)])
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", "1")
+    with _loaded_public_prepare_namespace(repo_root) as public_prepare:
+        for path in (
+            repo_root,
+            repo_root / "scripts",
+            repo_root / "src",
+            repo_root / "src/codex_usage",
+        ):
+            path.chmod(0o700)
+        for path in repo_root.rglob("*"):
+            if path.is_file():
+                path.chmod(0o600)
+        bound_root = tmp_path / f"bound-{rebind_after_stage}"
+        snapshots: dict[str, tuple[tuple[object, ...], ...]] = {}
+        observed_stages: list[str] = []
+
+        def rebind_after_validation(stage: str) -> None:
+            observed_stages.append(stage)
+            if stage != rebind_after_stage:
+                return
+            assert not snapshots
+            repo_root.rename(bound_root)
+            repo_root.mkdir(mode=0o700)
+            hostile_note = repo_root / "hostile-note"
+            hostile_note.write_bytes(b"hostile-root-must-not-change")
+            hostile_note.chmod(0o600)
+            snapshots["bound"] = _prepare_source_tree_snapshot(bound_root)
+            snapshots["hostile"] = _prepare_source_tree_snapshot(repo_root)
+
+        monkeypatch.setitem(
+            public_prepare["_prepare_source_root"].__globals__,
+            "_prepare_after_closure_validation",
+            rebind_after_validation,
+        )
+
+        result = public_prepare["main"](
+            ["--prepare-source", "--source-root", str(repo_root)]
+        )
+
+    captured = capsys.readouterr()
+    assert result == 69
+    assert captured.out == ""
+    assert captured.err == "integration_producer_source_prepare_rejected\n"
+    assert observed_stages == list(expected_stages)
+    assert _prepare_source_tree_snapshot(bound_root) == snapshots["bound"]
+    assert _prepare_source_tree_snapshot(repo_root) == snapshots["hostile"]
 
 
 def test_installer_script_bootstraps_repo_source_ahead_of_ambient_package(
@@ -7384,7 +7696,7 @@ def rollback_active_release(**kwargs):
     active = json.loads(
         (state_home / "codex-usage" / "integration" / "active.json").read_bytes()
     )
-    assert active["version"] == "0.6.539"
+    assert active["version"] == "0.6.540"
 
 
 def test_installer_script_rejects_symlinked_entrypoint_before_ambient_import(tmp_path):
@@ -12531,7 +12843,7 @@ def test_installer_release_entry_guards_and_public_wrapper(tmp_path, monkeypatch
     pyproject = bad_source_root / "pyproject.toml"
     pyproject.write_text(
         pyproject.read_text(encoding="utf-8").replace(
-            'version = "0.6.539"',
+            'version = "0.6.540"',
             'version = "0.0.0"',
         ),
         encoding="utf-8",

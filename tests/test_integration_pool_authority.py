@@ -9,7 +9,7 @@ import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures" / "pool_authority_v2"
 GENERATION_ID = "b" * 32
-RELEASE_ID = "0.6.539-" + "a" * 16
+RELEASE_ID = "0.6.540-" + "a" * 16
 PAYLOAD_DIGEST = "1" * 64
 BINDING_DIGEST = "2" * 64
 
@@ -118,7 +118,7 @@ def test_positive_source_projection_and_decision_are_canonical_and_closed():
         FIXTURES / "projection-v2-positive.json"
     ).read_bytes().rstrip(b"\n")
     assert projection["pool_authority_schema_version"] == 2
-    assert projection["producer_version"] == "0.6.539"
+    assert projection["producer_version"] == "0.6.540"
     assert projection["issued_at"] == "2026-08-31T12:00:00Z"
     assert projection["expires_at"] == "2026-08-31T12:15:00Z"
     assert _evaluate(_projection_bytes()) is True
@@ -126,7 +126,7 @@ def test_positive_source_projection_and_decision_are_canonical_and_closed():
         POOL_AUTHORITY_SCHEMA_VERSION,
         POOL_AUTHORITY_SOURCE_SCHEMA_VERSION,
         PRODUCER_VERSION,
-    ) == (2, 2, "0.6.539")
+    ) == (2, 2, "0.6.540")
 
 
 @pytest.mark.parametrize(

@@ -12,7 +12,7 @@
     {"id": "lifecycle", "kind": "request", "field": "lifecycle", "value": "ephemeral"},
     {"id": "persistent_leadership", "kind": "authority", "field": "persistent_leadership_eligible", "value": false},
     {"id": "long_running_leadership", "kind": "authority", "field": "long_running_leadership_eligible", "value": false},
-    {"id": "release_mismatch", "kind": "expected_release", "value": "0.6.539-dddddddddddddddd"},
+    {"id": "release_mismatch", "kind": "expected_release", "value": "0.6.540-dddddddddddddddd"},
     {"id": "generation_mismatch", "kind": "projection", "field": "generation_id", "value": "dddddddddddddddddddddddddddddddd"},
     {"id": "tampering", "kind": "projection", "field": "usage_payload_sha256", "value": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
     {"id": "usage_binding_tampering", "kind": "projection", "field": "usage_binding_sha256", "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"},

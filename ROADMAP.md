@@ -1,6 +1,6 @@
 # Roadmap
 
-Dieser Status bezieht sich ausschließlich auf den attestierten D297-Nachfolger `0.6.539`. „Integriert“ bedeutet: Implementierung und fokussierte Tests sind in diesem Stand vorhanden. Es bedeutet nicht, dass eine Funktion auf einem beliebigen Rechner installiert, konfiguriert oder vom Anbieter freigeschaltet ist.
+Dieser Status bezieht sich ausschließlich auf den attestierten D297-Nachfolger `0.6.540`. „Integriert“ bedeutet: Implementierung und fokussierte Tests sind in diesem Stand vorhanden. Es bedeutet nicht, dass eine Funktion auf einem beliebigen Rechner installiert, konfiguriert oder vom Anbieter freigeschaltet ist.
 
 ## Integriert
 

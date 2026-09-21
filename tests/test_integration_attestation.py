@@ -100,7 +100,7 @@ def _trusted_entrypoint_copy(
     tmp_path: Path,
     release_entrypoint: Path,
     *,
-    version: str = "0.6.539",
+    version: str = "0.6.540",
     distribution: str = "codex-usage",
 ) -> Path:
     site_packages = tmp_path / f"trusted-core-{version}/site-packages"
@@ -814,7 +814,7 @@ def test_external_entrypoint_binding_rejects_trusted_ancestor_rebind(
     anchor.mkdir(mode=0o700)
     anchor.chmod(0o700)
     trusted = _trusted_entrypoint_copy(anchor, release_entrypoint)
-    core_tree = anchor / "trusted-core-0.6.539"
+    core_tree = anchor / "trusted-core-0.6.540"
     saved_tree = tmp_path / "saved-trusted-core"
 
     def rebind_anchor_without_replacing_descendants(_trusted_entrypoint: Path) -> None:
@@ -904,7 +904,7 @@ def test_external_entrypoint_binding_rejects_trusted_ancestor_metadata_transitio
     anchor.mkdir(mode=0o700)
     anchor.chmod(0o700)
     trusted = _trusted_entrypoint_copy(anchor, release_entrypoint)
-    core_tree = anchor / "trusted-core-0.6.539"
+    core_tree = anchor / "trusted-core-0.6.540"
     drift_enabled = False
     real_fstat = integration_attestation.os.fstat
 

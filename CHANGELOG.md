@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.540 - 2026-09-21
+
+### Changed
+
+- Die öffentliche, enge Producer-Quellvorbereitung
+  `install_integration_producer.py --prepare-source --source-root ABS_CHECKOUT`
+  akzeptiert ausschließlich ihren eigenen absoluten, owner-eigenen realen
+  Checkout. Sie bindet Root, Verzeichnisse und deklarierte Source-Closure
+  no-follow an Identität und Linkcount, verweigert Symlink-, Hardlink- und
+  Bytecode-Residuen fail-closed, setzt zuerst nur den Root auf `0700` und dann
+  nur die Closure auf `0644`. Sie berührt weder State, Evidenz noch Pointer.
+- Der neue attestierte Producer `0.6.540` ersetzt `0.6.539` strikt und ohne
+  Dualpfad. Der einmalige leere V2-Cutover akzeptiert weiter ausschließlich
+  den attestierten `0.6.537`-Predecessor; `0.6.539` ist weder aktive Quelle
+  noch Kompatibilitätsfallback.
+
 ## 0.6.539 - 2026-09-21
 
 ### Changed

@@ -1,6 +1,6 @@
 # Codex-Usage-Dokumentation
 
-Diese Dokumentationsstruktur ist für den Quellstand `codex-usage 0.6.539` versioniert. Sie beschreibt die im Repository integrierte Software; providerabhängige Werte, installierte Dienste und externe Freigaben werden nicht als allgemein verfügbar vorausgesetzt.
+Diese Dokumentationsstruktur ist für den Quellstand `codex-usage 0.6.540` versioniert. Sie beschreibt die im Repository integrierte Software; providerabhängige Werte, installierte Dienste und externe Freigaben werden nicht als allgemein verfügbar vorausgesetzt.
 
 ## Einstieg und Status
 

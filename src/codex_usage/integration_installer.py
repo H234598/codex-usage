@@ -49,7 +49,7 @@ from .private_io import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RELEASE_VERSION = "0.6.539"
+RELEASE_VERSION = "0.6.540"
 PRODUCER_DISTRIBUTION = "codex_usage_integration_producer"
 SOURCE_MODULES = (
     "__init__.py",
@@ -77,9 +77,9 @@ SOURCE_MANIFEST_FILES = (
 )
 ACTIVE_NAME = "active.json"
 PREVIOUS_NAME = "previous.json"
-DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.539.dist-info"
+DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.540.dist-info"
 DIST_INFO_FILES = frozenset({"METADATA", "WHEEL", "RECORD", "top_level.txt"})
-EXPECTED_WHEEL_NAME = "codex_usage_integration_producer-0.6.539-py3-none-any.whl"
+EXPECTED_WHEEL_NAME = "codex_usage_integration_producer-0.6.540-py3-none-any.whl"
 BUILDER_PREFLIGHT_TIMEOUT_SECONDS = 30
 BUILDER_PREFLIGHT_MAX_OUTPUT_BYTES = 64 * 1024
 BUILDER_VENV_TIMEOUT_SECONDS = 60
@@ -148,7 +148,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codex-usage-integration-producer"
-version = "0.6.539"
+version = "0.6.540"
 requires-python = ">=3.11"
 dependencies = []
 
@@ -1032,7 +1032,7 @@ def _prepare_install_provenance(
                 manifest_payload=active_payload,
             )
             requires_empty_v2_evidence_namespace = (
-                RELEASE_VERSION == "0.6.539"
+                RELEASE_VERSION == "0.6.540"
                 and previous_release.version == "0.6.537"
             )
         except IntegrationAttestationUnavailable:
@@ -3916,7 +3916,7 @@ def rollback_active_release(*, state_home: Path, data_home: Path) -> ActiveRelea
     try:
         # D297 is a one-way consumer/producer cutover. Transaction-local
         # restoration remains in install_release; public active rollback does not.
-        if RELEASE_VERSION == "0.6.539":
+        if RELEASE_VERSION == "0.6.540":
             _fail()
         state_home = _absolute(state_home)
         data_home = _absolute(data_home)
