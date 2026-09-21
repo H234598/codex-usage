@@ -8,6 +8,7 @@ import hashlib
 import importlib.metadata as importlib_metadata
 import json
 import os
+import secrets
 import selectors
 import shlex
 import shutil
@@ -16,21 +17,27 @@ import stat
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePath, PurePosixPath
 from typing import IO, Any, cast
 
-from . import private_io
+from . import integration_installer, private_io
 from .config import (
     AppConfig,
     _validate_config,
     _xdg_root,
     default_config_path,
-    default_state_dir,
+)
+from .integration_attestation import (
+    PRODUCER_RELEASE_MODULES,
+    TRUSTED_CORE_MODULES,
+    _active_entrypoint_candidate_from_active_manifest,
+    verify_active_manifest_at,
 )
 from .integration_timeout_contract import INTEGRATION_WATCHDOG_SYSTEMD_TIMEOUT_SECONDS
+from .json_utils import loads_strict
 from .private_io import (
     ensure_private_directory,
     private_path_lock,
@@ -42,17 +49,25 @@ SERVICE_NAME = "codex-usage.service"
 TIMER_NAME = "codex-usage.timer"
 BROWSER_EXECUTABLE_NAME = "codex-usage-browser"
 INTEGRATION_WATCHDOG_EXECUTABLE_NAME = "codex-usage-integration-watchdog"
+SERVICE_RUNTIME_V2_DIRECTORY_NAME = "codex-usage-service-runtime-v2"
+SERVICE_RUNTIME_V2_CURRENT_NAME = "current"
+SERVICE_RUNTIME_V2_STAGING_PREFIX = ".service-runtime-v2-staging-"
+SERVICE_RUNTIME_V2_WATCHDOG_NAME = "codex-usage-integration-watchdog-v2"
 MANAGED_MARKER = "X-Codex-Usage-Managed=true"
 MAX_UNIT_BYTES = 100_000
 SYSTEMCTL_OUTPUT_MAX_BYTES = 64 * 1024
 SYSTEMCTL_TIMEOUT_SECONDS = 30
 SERVICE_OPERATION_LOCK_NAME = ".codex-usage-operation"
 SERVICE_OPERATION_LOCK_TIMEOUT_SECONDS = 30
+SERVICE_PENDING_V1_NAME = ".codex-usage-service-pending-v1.json"
+SERVICE_PENDING_V1_MAX_BYTES = 512 * 1024
+SERVICE_PENDING_UNIT_STAGING_PREFIX = ".codex-usage-service-pending-v1-"
 EXECUTABLE_SCRIPT_MAX_BYTES = 128 * 1024
 INTERPRETER_MAX_BYTES = 128 * 1024 * 1024
 PACKAGE_FILE_MAX_BYTES = 1024 * 1024
 PACKAGE_RECORD_MAX_BYTES = 2 * 1024 * 1024
 MAX_DISTRIBUTION_FILES = 4096
+MAX_SERVICE_RUNTIME_FILES = 4096
 EXPECTED_DISTRIBUTION_NAME = "codex-usage"
 EXPECTED_DISTRIBUTION_VERSION = "0.6.538"
 REPEATABLE_CORE_METADATA_FIELDS = frozenset(
@@ -176,6 +191,37 @@ class _ExecutableBinding:
     distribution: _DistributionBinding | None = None
 
 
+@dataclass(frozen=True)
+class _ServiceRuntimeBinding:
+    root: _DirectoryBinding
+    generation: _DirectoryBinding
+    interpreter: _RegularFileBinding
+    watchdog: _RegularFileBinding
+    pyvenv: _RegularFileBinding
+    distribution: _DistributionBinding
+
+
+@dataclass(frozen=True)
+class _ServiceRuntimePublication:
+    binding: _ServiceRuntimeBinding
+    rollback_path: Path | None
+    rollback_identity: object | None
+    source_payloads: tuple[tuple[str, bytes], ...] = ()
+
+
+@dataclass
+class _PendingServiceTransaction:
+    unit_dir: Path
+    document: dict[str, object]
+
+
+@dataclass(frozen=True)
+class _ServiceInstallReceipt:
+    result: dict[str, Any]
+    runtime: _ServiceRuntimePublication
+    pending: _PendingServiceTransaction | None
+
+
 _RESOLVED_INTEGRATION_WATCHDOG_BINDINGS: dict[
     Path, tuple[_ExecutableBinding, _ExecutableBinding]
 ] = {}
@@ -213,10 +259,1014 @@ def _service_operation_lock() -> Iterator[None]:
         yield
 
 
+def _pending_service_path(unit_dir: Path | None = None) -> Path:
+    return (unit_dir if unit_dir is not None else _unit_directory()) / SERVICE_PENDING_V1_NAME
+
+
+def _load_pending_service_operation(unit_dir: Path) -> dict[str, object] | None:
+    try:
+        parent_fd = os.open(unit_dir, private_io._directory_open_flags())
+    except OSError as exc:
+        raise ServiceError("could not open service transaction directory") from exc
+    try:
+        try:
+            payload, _identity = private_io.read_private_bytes_at(
+                parent_fd,
+                SERVICE_PENDING_V1_NAME,
+                maximum=SERVICE_PENDING_V1_MAX_BYTES,
+                mode=0o600,
+            )
+        except FileNotFoundError:
+            return None
+    except (OSError, ValueError) as exc:
+        raise ServiceError("service pending transaction is unsafe") from exc
+    finally:
+        os.close(parent_fd)
+    try:
+        decoded = loads_strict(payload)
+    except ValueError as exc:
+        raise ServiceError("service pending transaction is invalid") from exc
+    if not isinstance(decoded, dict):
+        raise ServiceError("service pending transaction is invalid")
+    return cast(dict[str, object], decoded)
+
+
+def _runtime_binding_fingerprint(binding: _ServiceRuntimeBinding) -> str:
+    """Return a path-independent identity for a private runtime generation."""
+    def directory(item: _DirectoryBinding, *, include_nlink: bool = True) -> list[int]:
+        values = [
+            item.device,
+            item.inode,
+            item.mode,
+            item.uid,
+            item.gid,
+        ]
+        if include_nlink:
+            values.append(item.nlink)
+        return values
+
+    def regular(item: _RegularFileBinding) -> list[int | str]:
+        return [
+            item.device,
+            item.inode,
+            item.mode,
+            item.uid,
+            item.gid,
+            item.nlink,
+            item.size,
+            item.mtime_ns,
+            item.ctime_ns,
+            item.sha256,
+        ]
+
+    document = {
+        "generation": directory(binding.generation),
+        "interpreter": regular(binding.interpreter),
+        "metadata": regular(binding.distribution.metadata),
+        "modules": [regular(item) for item in binding.distribution.modules],
+        "pyvenv": regular(binding.pyvenv),
+        "record": regular(binding.distribution.record),
+        # A private runtime transaction deliberately creates/removes a sibling
+        # staging generation.  That changes only the root directory's link
+        # count, not its identity; binding it would make a durably recorded
+        # successful rollback impossible to recognize on a retry.
+        "root": directory(binding.root, include_nlink=False),
+        "version": binding.distribution.version,
+        "watchdog": regular(binding.watchdog),
+    }
+    try:
+        encoded = json.dumps(
+            document,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:  # pragma: no cover - dataclasses are fixed
+        raise ServiceError("service runtime identity is invalid") from exc
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _timer_enable_link_snapshot(unit_dir: Path) -> str | None:
+    wants = unit_dir / "timers.target.wants"
+    _assert_no_symlink_ancestors(wants.parent)
+    if not wants.exists():
+        if wants.is_symlink():
+            raise ServiceError("systemd timer wants directory must not be a symlink")
+        return None
+    if wants.is_symlink() or not wants.is_dir():
+        raise ServiceError("systemd timer wants path must be a real directory")
+    link = wants / TIMER_NAME
+    if not (link.exists() or link.is_symlink()):
+        return None
+    if not link.is_symlink():
+        raise ServiceError("systemd timer enable path must be a symlink")
+    try:
+        target = os.readlink(link)
+        if not target or "\x00" in target or link.resolve(strict=False) != (
+            unit_dir / TIMER_NAME
+        ).resolve(strict=False):
+            raise ServiceError("systemd timer enable link is invalid")
+    except (OSError, RuntimeError) as exc:
+        raise ServiceError("could not read systemd timer enable link") from exc
+    return target
+
+
+def _pending_runtime_document(
+    *,
+    root: Path,
+    staging: Path,
+    old: _ServiceRuntimeBinding | None,
+    new: _ServiceRuntimeBinding,
+) -> dict[str, object]:
+    if staging.parent != root or staging.name == SERVICE_RUNTIME_V2_CURRENT_NAME:
+        raise ServiceError("service runtime transaction path is invalid")
+    return {
+        "current_name": SERVICE_RUNTIME_V2_CURRENT_NAME,
+        "new_fingerprint": _runtime_binding_fingerprint(new),
+        "old_fingerprint": None if old is None else _runtime_binding_fingerprint(old),
+        "root": str(root),
+        "staging_name": staging.name,
+    }
+
+
+def _write_pending_service_transaction(transaction: _PendingServiceTransaction) -> None:
+    try:
+        payload = json.dumps(
+            transaction.document,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ) + "\n"
+    except (TypeError, ValueError) as exc:
+        raise ServiceError("service pending transaction is invalid") from exc
+    if len(payload.encode("utf-8")) > SERVICE_PENDING_V1_MAX_BYTES:
+        raise ServiceError("service pending transaction is too large")
+    try:
+        write_private_text(
+            _pending_service_path(transaction.unit_dir),
+            payload,
+            label="service pending transaction",
+            mode=0o600,
+        )
+    except (OSError, ValueError) as exc:
+        raise ServiceError("could not write service pending transaction") from exc
+
+
+def _advance_pending_service_transaction(
+    transaction: _PendingServiceTransaction,
+    phase: str,
+) -> None:
+    if phase not in {"prepared", "quiesced", "runtime", "units", "reloaded", "activated"}:
+        raise ServiceError("service pending transaction phase is invalid")
+    transaction.document["phase"] = phase
+    _write_pending_service_transaction(transaction)
+
+
+def _prepare_pending_service_transaction(
+    *,
+    unit_dir: Path,
+    operation: str,
+    previous_units: dict[Path, str | None],
+    new_units: dict[Path, str],
+    activation: tuple[str, str],
+    enable_link: str | None,
+    root: Path,
+    staging: Path,
+    old: _ServiceRuntimeBinding | None,
+    new: _ServiceRuntimeBinding,
+) -> _PendingServiceTransaction:
+    if operation not in {"install", "enable"}:
+        raise ServiceError("service pending transaction operation is invalid")
+    service_path = unit_dir / SERVICE_NAME
+    timer_path = unit_dir / TIMER_NAME
+    paths = {service_path, timer_path}
+    if set(previous_units) != paths or set(new_units) != paths:
+        raise ServiceError("service pending transaction units are invalid")
+    previous: dict[Path, dict[str, object] | None] = {}
+    replacements: dict[Path, dict[str, object]] = {}
+    for path in (service_path, timer_path):
+        snapshot = _pending_unit_snapshot(path)
+        if (None if snapshot is None else snapshot["text"]) != previous_units[path]:
+            raise ServiceError("systemd unit changed before pending transaction")
+        previous[path] = snapshot
+        replacements[path] = {
+            "new": _pending_new_unit_snapshot(new_units[path]),
+            "old": snapshot,
+            "restored_old_identity": None,
+            "staging_name": _pending_unit_staging_name(path),
+        }
+    transaction = _PendingServiceTransaction(
+        unit_dir=unit_dir,
+        document={
+            "activation": [activation[0], activation[1]],
+            "enable_link": enable_link,
+            "operation": operation,
+            "phase": "prepared",
+            "runtime": _pending_runtime_document(
+                root=root,
+                staging=staging,
+                old=old,
+                new=new,
+            ),
+            "schema_version": 1,
+            "unit_directory": _pending_unit_directory_identity(unit_dir),
+            "units": {
+                SERVICE_NAME: replacements[service_path],
+                TIMER_NAME: replacements[timer_path],
+            },
+        },
+    )
+    _write_pending_service_transaction(transaction)
+    for path in (service_path, timer_path):
+        _stage_pending_service_unit_generation(transaction, path)
+    return transaction
+
+
+def _validate_pending_service_transaction(
+    document: dict[str, object],
+    unit_dir: Path,
+) -> tuple[
+    dict[Path, dict[str, object]],
+    tuple[str, str],
+    str | None,
+    dict[str, object],
+    dict[str, int],
+]:
+    expected = {
+        "activation",
+        "enable_link",
+        "operation",
+        "phase",
+        "runtime",
+        "schema_version",
+        "unit_directory",
+        "units",
+    }
+    if set(document) != expected or document.get("schema_version") != 1:
+        raise ServiceError("service pending transaction is invalid")
+    if document.get("operation") not in {"install", "enable"} or document.get(
+        "phase"
+    ) not in {"prepared", "quiesced", "runtime", "units", "reloaded", "activated"}:
+        raise ServiceError("service pending transaction is invalid")
+    activation = document.get("activation")
+    if (
+        not isinstance(activation, list)
+        or len(activation) != 2
+        or any(type(value) is not str for value in activation)
+        or activation[0] not in {"enabled", "disabled", "not-found"}
+        or activation[1] not in {"active", "inactive"}
+    ):
+        raise ServiceError("service pending transaction is invalid")
+    enable_link = document.get("enable_link")
+    if enable_link is not None and (
+        type(enable_link) is not str or not enable_link or "\x00" in enable_link
+    ):
+        raise ServiceError("service pending transaction is invalid")
+    units = document.get("units")
+    if not isinstance(units, dict) or set(units) != {SERVICE_NAME, TIMER_NAME}:
+        raise ServiceError("service pending transaction is invalid")
+    replacements: dict[Path, dict[str, object]] = {}
+    for name in (SERVICE_NAME, TIMER_NAME):
+        value = units.get(name)
+        replacements[unit_dir / name] = _validate_pending_unit_replacement(
+            value, unit_name=name
+        )
+    unit_directory = _validate_pending_unit_directory_identity(
+        document.get("unit_directory")
+    )
+    runtime = document.get("runtime")
+    if not isinstance(runtime, dict) or set(runtime) != {
+        "current_name",
+        "new_fingerprint",
+        "old_fingerprint",
+        "root",
+        "staging_name",
+    }:
+        raise ServiceError("service pending transaction is invalid")
+    if (
+        runtime.get("root") != str(_service_runtime_root())
+        or runtime.get("current_name") != SERVICE_RUNTIME_V2_CURRENT_NAME
+        or type(runtime.get("staging_name")) is not str
+        or not str(runtime["staging_name"]).startswith(SERVICE_RUNTIME_V2_STAGING_PREFIX)
+        or len(str(runtime["staging_name"]))
+        != len(SERVICE_RUNTIME_V2_STAGING_PREFIX) + 32
+        or any(
+            character not in "0123456789abcdef"
+            for character in str(runtime["staging_name"])[
+                len(SERVICE_RUNTIME_V2_STAGING_PREFIX) :
+            ]
+        )
+    ):
+        raise ServiceError("service pending transaction is invalid")
+    for field in ("new_fingerprint", "old_fingerprint"):
+        value = runtime.get(field)
+        if value is None and field == "old_fingerprint":
+            continue
+        if (
+            type(value) is not str
+            or len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+        ):
+            raise ServiceError("service pending transaction is invalid")
+    return (
+        replacements,
+        (activation[0], activation[1]),
+        enable_link,
+        cast(dict[str, object], runtime),
+        unit_directory,
+    )
+
+
+def _pending_unit_directory_identity(unit_dir: Path) -> dict[str, int]:
+    binding = _read_bound_directory(unit_dir, label="systemd user unit directory")
+    if binding.uid != os.geteuid() or stat.S_IMODE(binding.mode) != 0o700:
+        raise ServiceError("systemd user unit directory is not private")
+    return {
+        "device": binding.device,
+        "gid": binding.gid,
+        "inode": binding.inode,
+        "mode": binding.mode,
+        "uid": binding.uid,
+    }
+
+
+def _validate_pending_unit_directory_identity(value: object) -> dict[str, int]:
+    fields = {"device", "gid", "inode", "mode", "uid"}
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ServiceError("service pending transaction is invalid")
+    identity: dict[str, int] = {}
+    for field in fields:
+        number = value.get(field)
+        if type(number) is not int or number < 0:
+            raise ServiceError("service pending transaction is invalid")
+        identity[field] = number
+    if identity["uid"] != os.geteuid() or stat.S_IMODE(identity["mode"]) != 0o700:
+        raise ServiceError("service pending transaction is invalid")
+    return identity
+
+
+def _pending_unit_file_identity(binding: _RegularFileBinding) -> dict[str, int]:
+    return {
+        "device": binding.device,
+        "gid": binding.gid,
+        "inode": binding.inode,
+        "mode": binding.mode,
+        "mtime_ns": binding.mtime_ns,
+        "nlink": binding.nlink,
+        "size": binding.size,
+        "uid": binding.uid,
+    }
+
+
+def _validate_pending_unit_file_identity(value: object) -> dict[str, int]:
+    fields = {
+        "device",
+        "gid",
+        "inode",
+        "mode",
+        "mtime_ns",
+        "nlink",
+        "size",
+        "uid",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ServiceError("service pending transaction is invalid")
+    identity: dict[str, int] = {}
+    for field in fields:
+        number = value.get(field)
+        if type(number) is not int or number < 0:
+            raise ServiceError("service pending transaction is invalid")
+        identity[field] = number
+    if (
+        identity["uid"] != os.geteuid()
+        or identity["nlink"] != 1
+        or identity["size"] > MAX_UNIT_BYTES
+        or identity["mode"] & 0o022
+    ):
+        raise ServiceError("service pending transaction is invalid")
+    return identity
+
+
+def _pending_unit_snapshot(path: Path) -> dict[str, object] | None:
+    if not (path.exists() or path.is_symlink()):
+        return None
+    binding = _read_bound_regular_file(
+        path,
+        label="systemd unit",
+        max_bytes=MAX_UNIT_BYTES,
+        single_link=True,
+    )
+    if binding.uid != os.geteuid() or binding.mode & 0o022:
+        raise ServiceError("systemd unit is unsafe")
+    try:
+        text = binding.payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ServiceError("systemd unit is not valid UTF-8") from exc
+    return {
+        "identity": _pending_unit_file_identity(binding),
+        "sha256": binding.sha256,
+        "text": text,
+    }
+
+
+def _pending_new_unit_snapshot(text: str) -> dict[str, object]:
+    if type(text) is not str or len(text.encode("utf-8")) > MAX_UNIT_BYTES:
+        raise ServiceError("service pending transaction unit is invalid")
+    payload = text.encode("utf-8")
+    return {
+        "identity": None,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "text": text,
+    }
+
+
+def _validate_pending_unit_snapshot(
+    value: object,
+    *,
+    allow_unbound_identity: bool,
+) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) != {"identity", "sha256", "text"}:
+        raise ServiceError("service pending transaction is invalid")
+    text = value.get("text")
+    digest = value.get("sha256")
+    if (
+        type(text) is not str
+        or len(text.encode("utf-8")) > MAX_UNIT_BYTES
+        or type(digest) is not str
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+        or digest != hashlib.sha256(text.encode("utf-8")).hexdigest()
+    ):
+        raise ServiceError("service pending transaction is invalid")
+    identity_value = value.get("identity")
+    if identity_value is None:
+        if not allow_unbound_identity:
+            raise ServiceError("service pending transaction is invalid")
+        identity: dict[str, int] | None = None
+    else:
+        identity = _validate_pending_unit_file_identity(identity_value)
+    return {"identity": identity, "sha256": digest, "text": text}
+
+
+def _validate_pending_unit_replacement(
+    value: object,
+    *,
+    unit_name: str,
+) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) != {
+        "new",
+        "old",
+        "restored_old_identity",
+        "staging_name",
+    }:
+        raise ServiceError("service pending transaction is invalid")
+    old_value = value.get("old")
+    old = (
+        None
+        if old_value is None
+        else _validate_pending_unit_snapshot(old_value, allow_unbound_identity=False)
+    )
+    new = _validate_pending_unit_snapshot(
+        value.get("new"), allow_unbound_identity=True
+    )
+    restored_old_identity_value = value.get("restored_old_identity")
+    if old is None:
+        if restored_old_identity_value is not None:
+            raise ServiceError("service pending transaction is invalid")
+        restored_old_identity: dict[str, int] | None = None
+    elif restored_old_identity_value is None:
+        restored_old_identity = None
+    else:
+        restored_old_identity = _validate_pending_unit_file_identity(
+            restored_old_identity_value
+        )
+    staging_name = value.get("staging_name")
+    expected_staging_prefix = f"{SERVICE_PENDING_UNIT_STAGING_PREFIX}{unit_name}-"
+    if (
+        type(staging_name) is not str
+        or not staging_name.startswith(expected_staging_prefix)
+        or len(staging_name) != len(expected_staging_prefix) + 32
+    ):
+        raise ServiceError("service pending transaction is invalid")
+    _safe_unit_component(staging_name)
+    name_tail = staging_name.rsplit("-", 1)[-1]
+    if len(name_tail) != 32 or any(character not in "0123456789abcdef" for character in name_tail):
+        raise ServiceError("service pending transaction is invalid")
+    return {
+        "new": new,
+        "old": old,
+        "restored_old_identity": restored_old_identity,
+        "staging_name": staging_name,
+    }
+
+
+def _pending_unit_staging_name(path: Path) -> str:
+    name = _safe_unit_component(path.name)
+    return f"{SERVICE_PENDING_UNIT_STAGING_PREFIX}{name}-{secrets.token_hex(16)}"
+
+
+def _pending_unit_staging_path(
+    unit_dir: Path,
+    replacement: dict[str, object],
+) -> Path:
+    name = cast(str, replacement["staging_name"])
+    _safe_unit_component(name)
+    return unit_dir / name
+
+
+def _pending_unit_matches(
+    actual: dict[str, object] | None,
+    expected: dict[str, object],
+    *,
+    require_identity: bool,
+) -> bool:
+    if actual is None:
+        return False
+    if actual["text"] != expected["text"] or actual["sha256"] != expected["sha256"]:
+        return False
+    return not require_identity or actual["identity"] == expected["identity"]
+
+
+def _pending_unit_matches_old_generation(
+    actual: dict[str, object] | None,
+    replacement: dict[str, object],
+) -> bool:
+    """Accept the original Unit identity or this journal's own restored identity."""
+    old = cast(dict[str, object] | None, replacement["old"])
+    if old is None:
+        return False
+    if _pending_unit_matches(actual, old, require_identity=True):
+        return True
+    restored_identity = cast(
+        dict[str, int] | None, replacement["restored_old_identity"]
+    )
+    if restored_identity is None or actual is None:
+        return False
+    return (
+        actual["text"] == old["text"]
+        and actual["sha256"] == old["sha256"]
+        and actual["identity"] == restored_identity
+    )
+
+
+def _stage_pending_service_unit_generation(
+    transaction: _PendingServiceTransaction,
+    path: Path,
+) -> None:
+    replacements, _activation, _enable_link, _runtime, _unit_directory = (
+        _validate_pending_service_transaction(transaction.document, transaction.unit_dir)
+    )
+    if path not in replacements:
+        raise ServiceError("service pending transaction unit is invalid")
+    expected_new = cast(dict[str, object], replacements[path]["new"])
+    if expected_new["identity"] is not None:
+        raise ServiceError("service pending transaction unit is already bound")
+    staging = _pending_unit_staging_path(transaction.unit_dir, replacements[path])
+    parent_fd = -1
+    try:
+        parent_fd = os.open(transaction.unit_dir, private_io._directory_open_flags())
+        private_io.write_private_bytes_at(
+            parent_fd,
+            staging.name,
+            cast(str, expected_new["text"]).encode("utf-8"),
+            mode=0o600,
+        )
+        os.fsync(parent_fd)
+    except (OSError, ValueError) as exc:
+        raise ServiceError("could not stage pending systemd unit") from exc
+    finally:
+        if parent_fd >= 0:
+            os.close(parent_fd)
+    actual = _pending_unit_snapshot(staging)
+    if not _pending_unit_matches(actual, expected_new, require_identity=False):
+        raise ServiceError("systemd unit changed before pending transaction binding")
+    assert actual is not None
+    expected_new["identity"] = actual["identity"]
+    transaction.document["units"] = {
+        SERVICE_NAME: replacements[transaction.unit_dir / SERVICE_NAME],
+        TIMER_NAME: replacements[transaction.unit_dir / TIMER_NAME],
+    }
+    _write_pending_service_transaction(transaction)
+
+
+def _pending_unit_ready_for_cutover(
+    *,
+    unit_dir: Path,
+    expected_directory: dict[str, int],
+    path: Path,
+    replacement: dict[str, object],
+) -> None:
+    if _pending_unit_directory_identity(unit_dir) != expected_directory:
+        raise ServiceError("service pending transaction unit directory changed")
+    old = cast(dict[str, object] | None, replacement["old"])
+    actual = _pending_unit_snapshot(path)
+    if old is None:
+        if actual is not None:
+            raise ServiceError("service pending unit changed before cutover")
+    elif not _pending_unit_matches(actual, old, require_identity=True):
+        raise ServiceError("service pending unit changed before cutover")
+    new = cast(dict[str, object], replacement["new"])
+    staging = _pending_unit_snapshot(_pending_unit_staging_path(unit_dir, replacement))
+    if new["identity"] is None or not _pending_unit_matches(
+        staging, new, require_identity=True
+    ):
+        raise ServiceError("service pending unit staging changed before cutover")
+
+
+def _publish_pending_service_unit_generation(
+    transaction: _PendingServiceTransaction,
+    path: Path,
+) -> None:
+    replacements, _activation, _enable_link, _runtime, expected_directory = (
+        _validate_pending_service_transaction(transaction.document, transaction.unit_dir)
+    )
+    if path not in replacements:
+        raise ServiceError("service pending transaction unit is invalid")
+    replacement = replacements[path]
+    _pending_unit_ready_for_cutover(
+        unit_dir=transaction.unit_dir,
+        expected_directory=expected_directory,
+        path=path,
+        replacement=replacement,
+    )
+    staging = _pending_unit_staging_path(transaction.unit_dir, replacement)
+    parent_fd = -1
+    try:
+        parent_fd = os.open(transaction.unit_dir, private_io._directory_open_flags())
+        os.replace(
+            staging.name,
+            path.name,
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+        os.fsync(parent_fd)
+    except OSError as exc:
+        raise ServiceError("could not publish pending systemd unit") from exc
+    finally:
+        if parent_fd >= 0:
+            os.close(parent_fd)
+    _after_pending_service_unit_cutover(path)
+
+
+def _after_pending_service_unit_cutover(_path: Path) -> None:
+    """Test seam after the journal-bound atomic Unit rename."""
+    return None
+
+
+def _pending_unit_recovery_actions(
+    *,
+    unit_dir: Path,
+    expected_directory: dict[str, int],
+    replacements: dict[Path, dict[str, object]],
+) -> dict[Path, tuple[str, bool]]:
+    if _pending_unit_directory_identity(unit_dir) != expected_directory:
+        raise ServiceError("service pending transaction unit directory changed")
+    actions: dict[Path, tuple[str, bool]] = {}
+    for path, replacement in replacements.items():
+        old = cast(dict[str, object] | None, replacement["old"])
+        new = cast(dict[str, object], replacement["new"])
+        actual = _pending_unit_snapshot(path)
+        staging = _pending_unit_snapshot(
+            _pending_unit_staging_path(unit_dir, replacement)
+        )
+        if new["identity"] is None:
+            # A crash can occur after the initial journal fsync but before the
+            # private staging file has a durable identity.  That state has not
+            # published a Unit: only the verified old target (or absence on a
+            # first install) is recoverable, and any visible staging entry is
+            # deliberately left fail-closed as unknown.
+            if staging is not None:
+                raise ServiceError(f"service pending unit is unbound: {path}")
+            if old is None and actual is None:
+                actions[path] = ("unchanged", False)
+                continue
+            if _pending_unit_matches_old_generation(actual, replacement):
+                actions[path] = ("unchanged", False)
+                continue
+            raise ServiceError(f"service pending unit changed: {path}")
+        if staging is not None and not _pending_unit_matches(
+            staging, new, require_identity=True
+        ):
+            raise ServiceError(f"service pending unit staging changed: {path}")
+        if old is None and actual is None:
+            actions[path] = ("unchanged", staging is not None)
+            continue
+        if _pending_unit_matches_old_generation(actual, replacement):
+            actions[path] = ("unchanged", staging is not None)
+            continue
+        if new["identity"] is not None and _pending_unit_matches(
+            actual, new, require_identity=True
+        ):
+            if staging is not None:
+                raise ServiceError(f"service pending unit staging is ambiguous: {path}")
+            actions[path] = ("delete" if old is None else "restore", False)
+            continue
+        raise ServiceError(f"service pending unit changed: {path}")
+    return actions
+
+
+def _restore_pending_unit_snapshots(
+    *,
+    transaction: _PendingServiceTransaction,
+    unit_dir: Path,
+    expected_directory: dict[str, int],
+    replacements: dict[Path, dict[str, object]],
+    actions: dict[Path, tuple[str, bool]],
+) -> None:
+    # Repeat the non-mutating check immediately before touching either managed
+    # unit.  A changed unit is deliberately left untouched for a later trusted
+    # operator decision instead of being overwritten from a stale journal.
+    if _pending_unit_recovery_actions(
+        unit_dir=unit_dir,
+        expected_directory=expected_directory,
+        replacements=replacements,
+    ) != actions:
+        raise ServiceError("service pending transaction unit state changed")
+    errors: list[BaseException] = []
+    for path, (action, discard_staging) in actions.items():
+        try:
+            replacement = replacements[path]
+            old = cast(dict[str, object] | None, replacement["old"])
+            if action == "delete":
+                if old is not None:  # pragma: no cover - action construction guards this
+                    raise ServiceError("service pending transaction unit is invalid")
+                try:
+                    path.unlink()
+                    private_io._fsync_directory(path.parent)
+                except OSError as exc:
+                    raise ServiceError("could not remove pending systemd unit") from exc
+                if _pending_unit_snapshot(path) is not None:
+                    raise ServiceError("pending systemd unit changed during removal")
+            elif action == "restore":
+                if old is None:  # pragma: no cover - action construction guards this
+                    raise ServiceError("service pending transaction unit is invalid")
+                label = "systemd service" if path.name == SERVICE_NAME else "systemd timer"
+                write_private_text(path, cast(str, old["text"]), label=label, mode=0o600)
+                restored = _pending_unit_snapshot(path)
+                if not _pending_unit_matches(restored, old, require_identity=False):
+                    raise ServiceError("pending systemd unit changed during restore")
+                assert restored is not None
+                _bind_pending_restored_old_unit_identity(transaction, path, restored)
+            elif action != "unchanged":
+                raise ServiceError("service pending transaction unit is invalid")
+            if discard_staging:
+                staging = _pending_unit_staging_path(unit_dir, replacement)
+                new = cast(dict[str, object], replacement["new"])
+                staged = _pending_unit_snapshot(staging)
+                if not _pending_unit_matches(staged, new, require_identity=True):
+                    raise ServiceError("pending systemd unit staging changed during cleanup")
+                staging.unlink()
+                private_io._fsync_directory(staging.parent)
+        except BaseException as exc:
+            errors.append(exc)
+    if len(errors) == 1:
+        raise errors[0]
+    if errors:
+        group_type = (
+            ExceptionGroup
+            if all(isinstance(error, Exception) for error in errors)
+            else BaseExceptionGroup
+        )
+        raise group_type("pending systemd unit recovery failed", errors)
+
+
+def _bind_pending_restored_old_unit_identity(
+    transaction: _PendingServiceTransaction,
+    path: Path,
+    restored: dict[str, object],
+) -> None:
+    """Durably bind one recovery-owned old Unit replacement before retrying."""
+    replacements, _activation, _enable_link, _runtime, _unit_directory = (
+        _validate_pending_service_transaction(transaction.document, transaction.unit_dir)
+    )
+    replacement = replacements.get(path)
+    if replacement is None:
+        raise ServiceError("service pending transaction unit is invalid")
+    old = cast(dict[str, object] | None, replacement["old"])
+    if old is None or not _pending_unit_matches(restored, old, require_identity=False):
+        raise ServiceError("pending systemd unit changed during restore")
+    replacement["restored_old_identity"] = restored["identity"]
+    transaction.document["units"] = {
+        SERVICE_NAME: replacements[transaction.unit_dir / SERVICE_NAME],
+        TIMER_NAME: replacements[transaction.unit_dir / TIMER_NAME],
+    }
+    _write_pending_service_transaction(transaction)
+
+
+def _remove_private_runtime_generation(root: Path, generation: Path) -> None:
+    identity = integration_installer._provisional_path_identity(generation, directory=True)
+    if not integration_installer._remove_owned_entry(
+        generation,
+        identity,
+        integration_installer._directory_identity(root),
+        directory=True,
+        recursive=True,
+    ):
+        raise ServiceError("could not remove failed service runtime generation")
+
+
+def _recover_pending_runtime(runtime: dict[str, object]) -> None:
+    root = _service_runtime_root()
+    _private_runtime_directory(root, label="service runtime root")
+    current = root / SERVICE_RUNTIME_V2_CURRENT_NAME
+    staging = root / cast(str, runtime["staging_name"])
+    expected_new = cast(str, runtime["new_fingerprint"])
+    expected_old = cast(str | None, runtime["old_fingerprint"])
+
+    def binding_at(path: Path) -> _ServiceRuntimeBinding | None:
+        if not (path.exists() or path.is_symlink()):
+            return None
+        return _service_runtime_binding(root, path)
+
+    current_binding = binding_at(current)
+    staging_binding = binding_at(staging)
+    current_fingerprint = (
+        None if current_binding is None else _runtime_binding_fingerprint(current_binding)
+    )
+    staging_fingerprint = (
+        None if staging_binding is None else _runtime_binding_fingerprint(staging_binding)
+    )
+    if expected_old is None:
+        if current_fingerprint == expected_new and staging_binding is None:
+            assert current_binding is not None
+            _rollback_service_runtime(
+                _ServiceRuntimePublication(current_binding, None, None)
+            )
+            return
+        if current_binding is None and staging_fingerprint == expected_new:
+            _remove_private_runtime_generation(root, staging)
+            return
+        if current_binding is None and staging_binding is None:
+            return
+        raise ServiceError("service pending transaction runtime is ambiguous")
+    if current_fingerprint == expected_new and staging_fingerprint == expected_old:
+        assert current_binding is not None
+        rollback_identity = integration_installer._provisional_path_identity(
+            staging,
+            directory=True,
+        )
+        _rollback_service_runtime(
+            _ServiceRuntimePublication(current_binding, staging, rollback_identity)
+        )
+        return
+    if current_fingerprint == expected_old and staging_fingerprint == expected_new:
+        _remove_private_runtime_generation(root, staging)
+        return
+    if current_fingerprint == expected_old and staging_binding is None:
+        return
+    raise ServiceError("service pending transaction runtime is ambiguous")
+
+
+def _restore_timer_enable_link(unit_dir: Path, expected: str | None) -> None:
+    wants = unit_dir / "timers.target.wants"
+    link = wants / TIMER_NAME
+    if expected is None:
+        _cleanup_managed_timer_enable_link()
+        return
+    ensure_private_directory(wants, label="systemd timer wants directory")
+    _assert_no_symlink_ancestors(wants)
+    if link.exists() or link.is_symlink():
+        _cleanup_managed_timer_enable_link()
+    try:
+        link.symlink_to(expected)
+        private_io._fsync_directory(wants)
+    except OSError as exc:
+        raise ServiceError("could not restore systemd timer enable link") from exc
+    if _timer_enable_link_snapshot(unit_dir) != expected:
+        raise ServiceError("systemd timer enable link changed during restore")
+
+
+def _remove_pending_service_transaction(
+    transaction: _PendingServiceTransaction,
+) -> None:
+    parent_fd = -1
+    try:
+        parent_fd = os.open(transaction.unit_dir, private_io._directory_open_flags())
+        payload, identity = private_io.read_private_bytes_at(
+            parent_fd,
+            SERVICE_PENDING_V1_NAME,
+            maximum=SERVICE_PENDING_V1_MAX_BYTES,
+            mode=0o600,
+        )
+        if loads_strict(payload) != transaction.document:
+            raise ServiceError("service pending transaction changed before cleanup")
+        item = os.stat(SERVICE_PENDING_V1_NAME, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            item.st_dev != identity.device
+            or item.st_ino != identity.inode
+            or stat.S_IMODE(item.st_mode) != identity.mode
+            or item.st_uid != identity.uid
+            or item.st_gid != identity.gid
+            or item.st_ctime_ns != identity.ctime_ns
+        ):
+            raise ServiceError("service pending transaction changed before cleanup")
+        os.unlink(SERVICE_PENDING_V1_NAME, dir_fd=parent_fd)
+        os.fsync(parent_fd)
+    except ServiceError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise ServiceError("could not remove service pending transaction") from exc
+    finally:
+        if parent_fd >= 0:
+            os.close(parent_fd)
+
+
+def _recover_pending_service_operation() -> None:
+    """Refuse a potentially mixed service state until its journal can be verified.
+
+    The durable recovery protocol is deliberately completed only by a trusted
+    service operation under the existing operation lock; it never deletes an
+    unknown journal merely to make status appear healthy.
+    """
+    unit_dir = _unit_directory()
+    pending = _load_pending_service_operation(unit_dir)
+    if pending is None:
+        return
+    (
+        replacements,
+        activation,
+        enable_link,
+        runtime,
+        expected_directory,
+    ) = _validate_pending_service_transaction(pending, unit_dir)
+    transaction = _PendingServiceTransaction(unit_dir=unit_dir, document=pending)
+    errors: list[BaseException] = []
+
+    # Validate every Unit first, without changing it.  This makes a foreign
+    # Unit edit a hard stop rather than a reason to overwrite it.  Once the
+    # journal's Unit generation is still ours, quiesce a timer that may have
+    # been enabled/restarted after the last durable phase, then roll back the
+    # runtime before any systemd command which could re-enable or start it.
+    actions: dict[Path, tuple[str, bool]] | None = None
+    try:
+        actions = _pending_unit_recovery_actions(
+            unit_dir=unit_dir,
+            expected_directory=expected_directory,
+            replacements=replacements,
+        )
+    except BaseException as exc:
+        errors.append(exc)
+
+    if not errors:
+        try:
+            _quiesce_systemd_activation(_systemd_activation_snapshot())
+        except BaseException as exc:
+            errors.append(exc)
+    if not errors:
+        try:
+            _recover_pending_runtime(runtime)
+        except BaseException as exc:
+            errors.append(exc)
+    if not errors:
+        assert actions is not None
+        try:
+            _restore_pending_unit_snapshots(
+                transaction=transaction,
+                unit_dir=unit_dir,
+                expected_directory=expected_directory,
+                replacements=replacements,
+                actions=actions,
+            )
+        except BaseException as exc:
+            errors.append(exc)
+    if not errors:
+        try:
+            _systemctl("daemon-reload")
+        except BaseException as exc:
+            errors.append(exc)
+    if not errors:
+        try:
+            _restore_timer_enable_link(unit_dir, enable_link)
+        except BaseException as exc:
+            errors.append(exc)
+    if not errors:
+        try:
+            _restore_systemd_activation(activation)
+        except BaseException as exc:
+            errors.append(exc)
+    if errors:
+        # Do not call _restore_systemd_activation after any failed rollback
+        # step: enable/start would otherwise execute a still-pending runtime.
+        errors.append(ServiceError("service pending transaction activation is blocked"))
+    if errors:
+        if all(isinstance(error, Exception) for error in errors):
+            cause: BaseException = ExceptionGroup(
+                "service pending transaction recovery failed",
+                cast("list[Exception]", errors),
+            )
+        else:
+            cause = BaseExceptionGroup(
+                "service pending transaction recovery failed", errors
+            )
+        raise ServiceError("could not recover service pending transaction") from cause
+    _remove_pending_service_transaction(transaction)
+
+
 def service_enable(config: AppConfig, config_path: Path | None = None) -> dict[str, Any]:
     _validate_config(config)
     selected_config_path = _select_service_config_path(config_path)
     with _service_operation_lock():
+        _recover_pending_service_operation()
         return _service_enable_unlocked(config, selected_config_path)
 
 
@@ -225,91 +1275,137 @@ def _service_enable_unlocked(
 ) -> dict[str, Any]:
     unit_dir = _unit_directory()
     _validate_existing_managed_units(unit_dir)
-    paths = (unit_dir / SERVICE_NAME, unit_dir / TIMER_NAME)
-    previous = {
-        path: _read_unit_snapshot(path)
-        for path in paths
-    }
-    activation = _systemd_activation_snapshot()
-    result = _service_install_unlocked(config, config_path)
-    enable_started = False
-    enable_completed = False
+    installation = _service_install_unlocked(
+        config,
+        config_path,
+        retain_runtime_for_activation=True,
+    )
+    if not isinstance(installation, _ServiceInstallReceipt):
+        raise ServiceError("service installation did not retain a runtime transaction")
+    result, runtime, pending = (
+        installation.result,
+        installation.runtime,
+        installation.pending,
+    )
     try:
-        enable_started = True
         _systemctl("enable", TIMER_NAME)
-        enable_completed = True
         _systemctl("restart", TIMER_NAME)
-    except Exception as primary_error:
-        rollback_errors: list[Exception] = []
-        if activation[0] == "not-found" and enable_started:
-            if enable_completed:
-                try:
-                    _restore_systemd_activation(activation)
-                except Exception as rollback_error:
-                    rollback_errors.append(rollback_error)
-            try:
-                _cleanup_managed_timer_enable_link()
-            except Exception as rollback_error:
-                rollback_errors.append(rollback_error)
+        _advance_pending_service_transaction(pending, "activated")
+    except BaseException as primary_error:
+        rollback_errors: list[BaseException] = []
         try:
-            _restore_unit_snapshot(previous)
-        except Exception as rollback_error:
+            _recover_pending_service_operation()
+        except BaseException as rollback_error:
             rollback_errors.append(rollback_error)
-        try:
-            _systemctl("daemon-reload")
-        except Exception as rollback_error:
-            rollback_errors.append(rollback_error)
-        if activation[0] != "not-found":
-            try:
-                _restore_systemd_activation(activation)
-            except Exception as rollback_error:
-                rollback_errors.append(rollback_error)
         if rollback_errors:
             _raise_service_rollback_error(
                 "service activation", primary_error, rollback_errors
             )
         raise primary_error
-    return {**result, **service_status()}
+    _commit_service_runtime(runtime)
+    _remove_pending_service_transaction(pending)
+    return {**result, **_service_status_unlocked()}
 
 
 def service_install(config: AppConfig, config_path: Path | None = None) -> dict[str, Any]:
     _validate_config(config)
     selected_config_path = _select_service_config_path(config_path)
     with _service_operation_lock():
+        _recover_pending_service_operation()
         return _service_install_unlocked(config, selected_config_path)
 
 
 def _service_install_unlocked(
-    config: AppConfig, config_path: Path | None = None
-) -> dict[str, Any]:
+    config: AppConfig,
+    config_path: Path | None = None,
+    *,
+    retain_runtime_for_activation: bool = False,
+) -> dict[str, Any] | _ServiceInstallReceipt:
     unit_dir = _unit_directory()
     _validate_existing_managed_units(unit_dir)
     executable = _resolve_codex_usage()
     config_file = _select_service_config_path(config_path).expanduser().absolute()
-    service_text = _render_service(config, executable, config_file)
+    watchdog = (
+        _service_runtime_root()
+        / SERVICE_RUNTIME_V2_CURRENT_NAME
+        / "bin"
+        / SERVICE_RUNTIME_V2_WATCHDOG_NAME
+    )
+    service_text = _render_service(config, watchdog, config_file)
     timer_text = _render_timer(config.interval_seconds)
     paths = (unit_dir / SERVICE_NAME, unit_dir / TIMER_NAME)
-    previous = {
-        path: _read_unit_snapshot(path)
-        for path in paths
-    }
-    reload_attempted = False
+    previous = {path: _read_unit_snapshot(path) for path in paths}
+    replacements = {paths[0]: service_text, paths[1]: timer_text}
+    activation = _systemd_activation_snapshot()
+    if activation[0] not in {"enabled", "disabled", "not-found"} or activation[1] not in {
+        "active",
+        "inactive",
+    }:
+        raise ServiceError("cannot install over unknown systemd activation state")
+    enable_link = _timer_enable_link_snapshot(unit_dir)
+    runtime: _ServiceRuntimePublication | None = None
+    pending: _PendingServiceTransaction | None = None
+
+    def before_cutover(
+        new: _ServiceRuntimeBinding,
+        old: _ServiceRuntimeBinding | None,
+        staging: Path,
+    ) -> None:
+        nonlocal pending
+        pending = _prepare_pending_service_transaction(
+            unit_dir=unit_dir,
+            operation="enable" if retain_runtime_for_activation else "install",
+            previous_units=previous,
+            new_units=replacements,
+            activation=activation,
+            enable_link=enable_link,
+            root=_service_runtime_root(),
+            staging=staging,
+            old=old,
+            new=new,
+        )
+        _quiesce_systemd_activation(activation)
+        _advance_pending_service_transaction(pending, "quiesced")
+
     try:
+        runtime = _materialize_service_runtime(executable, before_cutover=before_cutover)
+        assert pending is not None
+        _advance_pending_service_transaction(pending, "runtime")
         _before_service_unit_write()
         _revalidate_integration_watchdog_for_unit_write(executable)
-        write_private_text(paths[0], service_text, label="systemd service", mode=0o600)
+        _revalidate_active_producer_for_unit_write(runtime, executable)
+        _revalidate_service_runtime_for_unit_write(runtime)
+        _publish_pending_service_unit_generation(pending, paths[0])
         _revalidate_integration_watchdog_for_unit_write(executable)
-        write_private_text(paths[1], timer_text, label="systemd timer", mode=0o600)
+        _revalidate_active_producer_for_unit_write(runtime, executable)
+        _revalidate_service_runtime_for_unit_write(runtime)
+        _publish_pending_service_unit_generation(pending, paths[1])
+        _advance_pending_service_transaction(pending, "units")
         _revalidate_integration_watchdog_for_unit_write(executable)
-        reload_attempted = True
+        _revalidate_active_producer_for_unit_write(runtime, executable)
+        _revalidate_service_runtime_for_unit_write(runtime)
         _systemctl("daemon-reload")
+        _advance_pending_service_transaction(pending, "reloaded")
         _revalidate_integration_watchdog_for_unit_write(executable)
+        _revalidate_active_producer_for_unit_write(runtime, executable)
+        _revalidate_service_runtime_for_unit_write(runtime)
     except BaseException as primary_error:
         rollback_errors: list[BaseException] = []
-        try:
-            _restore_unit_snapshot(previous)
-        except BaseException as rollback_error:
-            rollback_errors.append(rollback_error)
+        if pending is not None:
+            try:
+                _recover_pending_service_operation()
+            except BaseException as rollback_error:
+                rollback_errors.append(rollback_error)
+        elif runtime is not None:
+            try:
+                _rollback_service_runtime(runtime)
+            except BaseException as rollback_error:
+                rollback_errors.append(rollback_error)
+        if pending is None:
+            try:
+                _restore_unit_snapshot(previous)
+            except BaseException as rollback_error:
+                rollback_errors.append(rollback_error)
         partial_units: list[Path] = []
         for path, expected in previous.items():
             try:
@@ -320,11 +1416,6 @@ def _service_install_unlocked(
                 continue
             if current != expected:
                 partial_units.append(path)
-        if reload_attempted:
-            try:
-                _systemctl("daemon-reload")
-            except BaseException as rollback_error:
-                rollback_errors.append(rollback_error)
         if rollback_errors or partial_units:
             _raise_service_rollback_error(
                 "service installation",
@@ -333,7 +1424,28 @@ def _service_install_unlocked(
                 partial_units=tuple(partial_units),
             )
         raise primary_error
-    return {"installed": True, "service": SERVICE_NAME, "timer": TIMER_NAME}
+    assert runtime is not None
+    result = {"installed": True, "service": SERVICE_NAME, "timer": TIMER_NAME}
+    if retain_runtime_for_activation:
+        assert pending is not None
+        return _ServiceInstallReceipt(result, runtime, pending)
+    try:
+        _restore_systemd_activation(activation)
+        _restore_timer_enable_link(unit_dir, enable_link)
+        _advance_pending_service_transaction(pending, "activated")
+        _commit_service_runtime(runtime)
+        _remove_pending_service_transaction(pending)
+    except BaseException as primary_error:
+        try:
+            _recover_pending_service_operation()
+        except BaseException as rollback_error:
+            _raise_service_rollback_error(
+                "service installation completion",
+                primary_error,
+                [rollback_error],
+            )
+        raise primary_error
+    return result
 
 
 def _select_service_config_path(path: object | None) -> Path:
@@ -348,6 +1460,7 @@ def _select_service_config_path(path: object | None) -> Path:
 
 def service_disable() -> dict[str, Any]:
     with _service_operation_lock():
+        _recover_pending_service_operation()
         return _service_disable_unlocked()
 
 
@@ -355,11 +1468,12 @@ def _service_disable_unlocked() -> dict[str, Any]:
     unit_dir = _unit_directory(create=False)
     if _require_complete_managed_units(unit_dir) is not None:
         _systemctl("disable", "--now", TIMER_NAME)
-    return service_status()
+    return _service_status_unlocked()
 
 
 def service_uninstall() -> dict[str, Any]:
     with _service_operation_lock():
+        _recover_pending_service_operation()
         return _service_uninstall_unlocked()
 
 
@@ -402,6 +1516,12 @@ def _service_uninstall_unlocked() -> dict[str, Any]:
 
 
 def service_status() -> dict[str, Any]:
+    with _service_operation_lock():
+        _recover_pending_service_operation()
+        return _service_status_unlocked()
+
+
+def _service_status_unlocked() -> dict[str, Any]:
     unit_dir = _unit_directory(create=False)
     service_path = unit_dir / SERVICE_NAME
     timer_path = unit_dir / TIMER_NAME
@@ -495,36 +1615,20 @@ def managed_service_config_path() -> Path | None:
     return None
 
 
-def _render_service(config: AppConfig, executable: Path, config_path: Path) -> str:
+def _render_service(config: AppConfig, watchdog: Path, config_path: Path) -> str:
     data_root = _xdg_root("XDG_DATA_HOME", Path.home() / ".local" / "share")
     state_root = _xdg_root("XDG_STATE_HOME", Path.home() / ".local" / "state")
-    state = default_state_dir().expanduser().absolute()
     integration_state = state_root / "codex-usage" / "integration"
     lock_root = private_io._private_lock_root()
-    # watchdog reads config; only state, browser cache, profiles and auth
-    # refresh targets need write access.
-    writable = [state, integration_state, lock_root]
-    cache = Path.home() / ".cache" / "ms-playwright"
-    writable.append(cache)
-    for account in config.accounts:
-        profile = Path(account.profile_dir).expanduser().absolute()
-        _validate_home_path(profile)
-        _reject_home_write_path(profile, label="profile directory")
-        writable.append(profile)
-        if account.auth_json_path:
-            parent = Path(account.auth_json_path).expanduser().absolute().parent
-            _validate_home_path(parent)
-            _reject_home_write_path(parent, label="auth.json parent")
-            writable.append(parent)
+    # The service is a publisher only. It has no collector, browser, profile,
+    # auth, scheduler, or direct-refresh write authority.
+    writable = [integration_state, lock_root]
     unique = sorted({str(path) for path in writable})
     read_write = "\n".join(f"ReadWritePaths={_unit_quote(path)}" for path in unique)
-    integration_watchdog = executable.with_name(INTEGRATION_WATCHDOG_EXECUTABLE_NAME)
     exec_start = " ".join(
         _unit_quote(value)
         for value in (
-            str(integration_watchdog),
-            "--config",
-            str(config_path),
+            str(watchdog),
         )
     )
     return f"""[Unit]
@@ -586,6 +1690,615 @@ Unit={SERVICE_NAME}
 [Install]
 WantedBy=timers.target
 """
+
+
+def _service_runtime_root() -> Path:
+    data_root = _xdg_root("XDG_DATA_HOME", Path.home() / ".local" / "share")
+    return data_root / SERVICE_RUNTIME_V2_DIRECTORY_NAME
+
+
+def _require_system_python_for_service_runtime() -> None:
+    try:
+        interpreter = Path(sys.executable).resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ServiceError("service runtime builder system Python is unavailable") from exc
+    try:
+        if not interpreter.is_relative_to(Path("/usr/bin")):
+            raise ServiceError("service runtime builder must use a system Python")
+    except ValueError as exc:
+        raise ServiceError("service runtime builder must use a system Python") from exc
+    _read_bound_regular_file(
+        interpreter,
+        label="service runtime builder system Python",
+        max_bytes=INTERPRETER_MAX_BYTES,
+        executable=True,
+        single_link=True,
+    )
+
+
+def _private_runtime_directory(path: Path, *, label: str) -> _DirectoryBinding:
+    binding = _read_bound_directory(path, label=label)
+    if binding.uid != os.geteuid() or stat.S_IMODE(binding.mode) != 0o700:
+        raise ServiceError(f"{label} must be a private directory")
+    return binding
+
+
+def _same_runtime_directory(
+    actual: _DirectoryBinding,
+    expected: _DirectoryBinding,
+) -> bool:
+    return (
+        actual.device,
+        actual.inode,
+        actual.mode,
+        actual.uid,
+        actual.gid,
+        actual.nlink,
+    ) == (
+        expected.device,
+        expected.inode,
+        expected.mode,
+        expected.uid,
+        expected.gid,
+        expected.nlink,
+    )
+
+
+def _runtime_path_for_record(
+    *,
+    site_packages: Path,
+    bin_directory: Path,
+    relative_path: str,
+) -> Path:
+    _validate_record_relative_path(relative_path)
+    parts = PurePosixPath(relative_path).parts
+    if ".." not in parts:
+        return site_packages / Path(relative_path)
+    if parts[:4] != ("..", "..", "..", "bin") or len(parts) != 5:
+        raise ServiceError("codex-usage distribution RECORD is invalid")
+    executable = parts[-1]
+    if executable not in {
+        "codex-usage",
+        BROWSER_EXECUTABLE_NAME,
+        INTEGRATION_WATCHDOG_EXECUTABLE_NAME,
+    }:
+        raise ServiceError("codex-usage distribution RECORD is invalid")
+    return bin_directory / executable
+
+
+def _runtime_file_payloads(
+    codex_usage_executable: Path,
+) -> tuple[tuple[str, bytes], ...]:
+    expected = _RESOLVED_INTEGRATION_WATCHDOG_BINDINGS.get(codex_usage_executable)
+    if expected is None:
+        raise ServiceError("integration watchdog executable was not resolved before runtime build")
+    try:
+        codex_usage = _read_bound_console_script(
+            expected[0].path,
+            expected_module="codex_usage.cli",
+            label="codex-usage executable",
+        )
+        watchdog = _read_bound_console_script(
+            expected[1].path,
+            expected_module="codex_usage.integration_watchdog",
+            label="integration watchdog executable",
+        )
+        current = _bind_console_scripts_to_distribution(codex_usage, watchdog)
+    except ServiceError as exc:
+        raise ServiceError("codex-usage distribution changed before runtime build") from exc
+    if current != expected or current[0].distribution is None:
+        raise ServiceError("codex-usage distribution changed before runtime build")
+    distribution = current[0].distribution
+    record_entries = _parse_record(distribution.record.payload)
+    if len(record_entries) > MAX_SERVICE_RUNTIME_FILES:
+        raise ServiceError("codex-usage distribution RECORD is too large")
+    try:
+        metadata_root = distribution.metadata.path.parent.name
+        source_site_packages = distribution.metadata.path.parents[1]
+    except IndexError as exc:
+        raise ServiceError("codex-usage distribution path is invalid") from exc
+    if not metadata_root.endswith(".dist-info"):
+        raise ServiceError("codex-usage distribution path is invalid")
+    record_relative = f"{metadata_root}/RECORD"
+    _verify_record_selfrow(record_entries, record_relative)
+    try:
+        source_distribution = importlib_metadata.distribution(EXPECTED_DISTRIBUTION_NAME)
+    except Exception as exc:
+        raise ServiceError("codex-usage distribution is unavailable") from exc
+
+    core_only_modules = set(TRUSTED_CORE_MODULES) - set(PRODUCER_RELEASE_MODULES)
+    selected = {
+        *(f"codex_usage/{name}" for name in core_only_modules),
+        f"{metadata_root}/METADATA",
+    }
+    if not selected <= set(record_entries):
+        raise ServiceError("codex-usage distribution is missing publisher Core modules")
+    state_home = _xdg_root("XDG_STATE_HOME", Path.home() / ".local" / "state")
+    data_home = _xdg_root("XDG_DATA_HOME", Path.home() / ".local" / "share")
+    try:
+        candidate = _active_entrypoint_candidate_from_active_manifest(
+            state_home=state_home,
+            data_home=data_home,
+        )
+        active = verify_active_manifest_at(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=candidate,
+        )
+    except Exception as exc:
+        raise ServiceError("active integration producer is unavailable") from exc
+    active_package = active.active_release.entrypoint_path.parent
+    payloads: list[tuple[str, bytes]] = []
+    source_bin = current[0].path.parent
+    producer_bindings: dict[str, _RegularFileBinding] = {}
+    for module_name in PRODUCER_RELEASE_MODULES:
+        binding = _read_bound_regular_file(
+            active_package / module_name,
+            label="active integration producer module",
+            max_bytes=PACKAGE_RECORD_MAX_BYTES,
+            single_link=True,
+        )
+        producer_bindings[module_name] = binding
+        payloads.append((f"codex_usage/{module_name}", binding.payload))
+    for relative_path in sorted(selected):
+        source_path = _distribution_file_path(source_distribution, relative_path)
+        expected_source_path = _runtime_path_for_record(
+            site_packages=source_site_packages,
+            bin_directory=source_bin,
+            relative_path=relative_path,
+        )
+        if source_path != expected_source_path:
+            raise ServiceError("codex-usage distribution path is invalid")
+        binding = _read_bound_regular_file(
+            source_path,
+            label="codex-usage distribution file",
+            max_bytes=PACKAGE_RECORD_MAX_BYTES,
+            single_link=True,
+        )
+        _verify_recorded_file(
+            record_entries,
+            relative_path,
+            binding,
+            label="runtime file",
+        )
+        payloads.append((relative_path, binding.payload))
+    try:
+        repeated = verify_active_manifest_at(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=candidate,
+        )
+    except Exception as exc:
+        raise ServiceError("active integration producer changed during runtime build") from exc
+    if repeated != active:
+        raise ServiceError("active integration producer changed during runtime build")
+    for module_name, expected_binding in producer_bindings.items():
+        current_binding = _read_bound_regular_file(
+            active_package / module_name,
+            label="active integration producer module",
+            max_bytes=PACKAGE_RECORD_MAX_BYTES,
+            single_link=True,
+        )
+        if current_binding != expected_binding:
+            raise ServiceError("active integration producer changed during runtime build")
+    private_record_relative = f"{metadata_root}/RECORD"
+    private_record = "".join(
+        f"{relative},{_pep376_sha256(payload)},{len(payload)}\n"
+        for relative, payload in payloads
+    ) + f"{private_record_relative},,\n"
+    payloads.append((private_record_relative, private_record.encode("utf-8")))
+    return tuple(payloads)
+
+
+def _runtime_write_file(path: Path, payload: bytes, *, mode: int) -> None:
+    ensure_private_directory(path.parent, label="service runtime directory")
+    parent_fd = -1
+    try:
+        parent_fd = os.open(path.parent, private_io._directory_open_flags())
+        parent = _private_runtime_directory(path.parent, label="service runtime directory")
+        opened = _directory_binding_from_fd(
+            path.parent,
+            parent_fd,
+            label="service runtime directory",
+        )
+        if opened != parent:
+            raise ServiceError("service runtime directory changed during write")
+        private_io.write_private_bytes_at(parent_fd, path.name, payload, mode=mode)
+        os.fsync(parent_fd)
+    except ServiceError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise ServiceError("could not write service runtime") from exc
+    finally:
+        if parent_fd >= 0:
+            os.close(parent_fd)
+
+
+def _runtime_watchdog_payload(root: Path) -> bytes:
+    interpreter = root / SERVICE_RUNTIME_V2_CURRENT_NAME / "venv" / "bin" / "python"
+    rendered = str(interpreter)
+    if not rendered or any(character in rendered for character in "\x00\n\r"):
+        raise ServiceError("service runtime interpreter path is invalid")
+    return (
+        "#!/bin/sh\n"
+        f"exec {shlex.quote(rendered)} -I -B -m codex_usage.integration_watchdog \"$@\"\n"
+    ).encode()
+
+
+def _create_runtime_staging(root: Path) -> Path:
+    root_binding = _private_runtime_directory(root, label="service runtime root")
+    flags = private_io._directory_open_flags()
+    parent_fd = -1
+    try:
+        parent_fd = os.open(root, flags)
+        if (
+            _directory_binding_from_fd(root, parent_fd, label="service runtime root")
+            != root_binding
+        ):
+            raise ServiceError("service runtime root changed during staging")
+        for _ in range(8):
+            name = SERVICE_RUNTIME_V2_STAGING_PREFIX + secrets.token_hex(16)
+            try:
+                os.mkdir(name, 0o700, dir_fd=parent_fd)
+            except FileExistsError:
+                continue
+            staging_fd = -1
+            try:
+                staging_fd = os.open(name, flags, dir_fd=parent_fd)
+                os.fchmod(staging_fd, 0o700)
+                _private_runtime_directory(
+                    root / name,
+                    label="service runtime staging generation",
+                )
+                os.fsync(parent_fd)
+                return root / name
+            finally:
+                if staging_fd >= 0:
+                    os.close(staging_fd)
+    except ServiceError:
+        raise
+    except OSError as exc:
+        raise ServiceError("could not create service runtime staging generation") from exc
+    finally:
+        if parent_fd >= 0:
+            os.close(parent_fd)
+    raise ServiceError("could not allocate service runtime staging generation")
+
+
+def _private_runtime_file(
+    path: Path,
+    *,
+    label: str,
+    mode: int,
+    executable: bool = False,
+) -> _RegularFileBinding:
+    binding = _read_bound_regular_file(
+        path,
+        label=label,
+        max_bytes=PACKAGE_RECORD_MAX_BYTES,
+        executable=executable,
+        single_link=True,
+    )
+    if binding.uid != os.geteuid() or stat.S_IMODE(binding.mode) != mode:
+        raise ServiceError(f"{label} must be private")
+    return binding
+
+
+def _service_runtime_binding(root: Path, generation: Path) -> _ServiceRuntimeBinding:
+    root_binding = _private_runtime_directory(root, label="service runtime root")
+    generation_binding = _private_runtime_directory(
+        generation,
+        label="service runtime generation",
+    )
+    if generation.parent != root:
+        raise ServiceError("service runtime generation path is invalid")
+    venv = generation / "venv"
+    _private_runtime_directory(venv, label="service runtime venv")
+    bin_directory = venv / "bin"
+    _private_runtime_directory(bin_directory, label="service runtime bin directory")
+    interpreter = _private_runtime_file(
+        bin_directory / "python",
+        label="service runtime interpreter",
+        mode=0o700,
+        executable=True,
+    )
+    pyvenv = _private_runtime_file(
+        venv / "pyvenv.cfg",
+        label="service runtime pyvenv configuration",
+        mode=0o600,
+    )
+    try:
+        pyvenv_text = pyvenv.payload.decode("utf-8", "strict")
+    except UnicodeDecodeError as exc:
+        raise ServiceError("service runtime pyvenv configuration is invalid") from exc
+    pyvenv_rows = [line.strip() for line in pyvenv_text.splitlines() if line.strip()]
+    if pyvenv_rows.count("include-system-site-packages = false") != 1:
+        raise ServiceError("service runtime pyvenv configuration is invalid")
+    version_directory = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    site_packages = venv / "lib" / version_directory / "site-packages"
+    _private_runtime_directory(site_packages, label="service runtime site-packages")
+    metadata_root = f"codex_usage-{EXPECTED_DISTRIBUTION_VERSION}.dist-info"
+    metadata = _private_runtime_file(
+        site_packages / metadata_root / "METADATA",
+        label="service runtime METADATA",
+        mode=0o600,
+    )
+    headers = _metadata_headers(metadata.payload)
+    if (
+        _normalize_distribution_name(headers.get("name", ""))
+        != EXPECTED_DISTRIBUTION_NAME
+        or headers.get("version") != EXPECTED_DISTRIBUTION_VERSION
+    ):
+        raise ServiceError("service runtime METADATA is invalid")
+    record = _private_runtime_file(
+        site_packages / metadata_root / "RECORD",
+        label="service runtime RECORD",
+        mode=0o600,
+    )
+    record_entries = _parse_record(record.payload)
+    if len(record_entries) > MAX_SERVICE_RUNTIME_FILES:
+        raise ServiceError("service runtime RECORD is too large")
+    record_relative = f"{metadata_root}/RECORD"
+    _verify_record_selfrow(record_entries, record_relative)
+    modules: list[_RegularFileBinding] = []
+    for relative_path in sorted(record_entries):
+        path = _runtime_path_for_record(
+            site_packages=site_packages,
+            bin_directory=bin_directory,
+            relative_path=relative_path,
+        )
+        file_binding = _private_runtime_file(
+            path,
+            label="service runtime distribution file",
+            mode=0o600,
+        )
+        if relative_path != record_relative:
+            _verify_recorded_file(
+                record_entries,
+                relative_path,
+                file_binding,
+                label="service runtime distribution file",
+            )
+        if relative_path.startswith("codex_usage/") and relative_path.endswith(".py"):
+            modules.append(file_binding)
+    required_modules = {f"codex_usage/{name}" for name in TRUSTED_CORE_MODULES}
+    if not required_modules <= set(record_entries) or not modules:
+        raise ServiceError("service runtime RECORD is missing Core modules")
+    watchdog = _private_runtime_file(
+        generation / "bin" / SERVICE_RUNTIME_V2_WATCHDOG_NAME,
+        label="service runtime watchdog",
+        mode=0o700,
+        executable=True,
+    )
+    if watchdog.payload != _runtime_watchdog_payload(root):
+        raise ServiceError("service runtime watchdog is invalid")
+    return _ServiceRuntimeBinding(
+        root=root_binding,
+        generation=generation_binding,
+        interpreter=interpreter,
+        watchdog=watchdog,
+        pyvenv=pyvenv,
+        distribution=_DistributionBinding(
+            version=EXPECTED_DISTRIBUTION_VERSION,
+            metadata=metadata,
+            record=record,
+            modules=tuple(modules),
+        ),
+    )
+
+
+def _materialize_service_runtime(
+    codex_usage_executable: Path,
+    *,
+    before_cutover: Callable[
+        [_ServiceRuntimeBinding, _ServiceRuntimeBinding | None, Path], None
+    ]
+    | None = None,
+) -> _ServiceRuntimePublication:
+    _require_system_python_for_service_runtime()
+    root = _service_runtime_root()
+    ensure_private_directory(root, label="service runtime root")
+    _private_runtime_directory(root, label="service runtime root")
+    payloads = _runtime_file_payloads(codex_usage_executable)
+    staging = _create_runtime_staging(root)
+    try:
+        venv = staging / "venv"
+        integration_installer._create_private_virtualenv(venv)
+        integration_installer._remove_activation_files(venv)
+        ensure_private_directory(venv, label="service runtime venv")
+        bin_directory = venv / "bin"
+        ensure_private_directory(bin_directory, label="service runtime bin directory")
+        interpreter = bin_directory / "python"
+        os.chmod(interpreter, 0o700)
+        os.chmod(venv / "pyvenv.cfg", 0o600)
+        site_packages, _site_identity = integration_installer._find_site_packages(
+            venv,
+            integration_installer._directory_identity(venv),
+        )
+        ensure_private_directory(site_packages, label="service runtime site-packages")
+        for relative_path, payload in payloads:
+            target = _runtime_path_for_record(
+                site_packages=site_packages,
+                bin_directory=bin_directory,
+                relative_path=relative_path,
+            )
+            _runtime_write_file(target, payload, mode=0o600)
+        runtime_bin = staging / "bin"
+        ensure_private_directory(runtime_bin, label="service runtime watchdog directory")
+        _runtime_write_file(
+            runtime_bin / SERVICE_RUNTIME_V2_WATCHDOG_NAME,
+            _runtime_watchdog_payload(root),
+            mode=0o700,
+        )
+        _service_runtime_binding(root, staging)
+        if payloads != _runtime_file_payloads(codex_usage_executable):
+            raise ServiceError("codex-usage distribution changed during runtime build")
+        current = root / SERVICE_RUNTIME_V2_CURRENT_NAME
+        prior: Path | None = None
+        prior_identity: object | None = None
+        old_binding: _ServiceRuntimeBinding | None = None
+        staging_binding = _service_runtime_binding(root, staging)
+        if current.exists() or current.is_symlink():
+            old_binding = _service_runtime_binding(root, current)
+        if before_cutover is not None:
+            before_cutover(staging_binding, old_binding, staging)
+        if old_binding is not None:
+            parent_fd = os.open(root, private_io._directory_open_flags())
+            try:
+                integration_installer._rename_exchange(staging.name, current.name, parent_fd)
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
+            prior = staging
+            prior_identity = integration_installer._provisional_path_identity(
+                prior,
+                directory=True,
+            )
+        else:
+            parent_fd = os.open(root, private_io._directory_open_flags())
+            try:
+                integration_installer._rename_noreplace(staging.name, current.name, parent_fd)
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
+        publication = _ServiceRuntimePublication(
+            binding=_service_runtime_binding(root, current),
+            rollback_path=prior,
+            rollback_identity=prior_identity,
+            source_payloads=payloads,
+        )
+        try:
+            _after_service_runtime_cutover(publication)
+        except BaseException as primary_error:
+            try:
+                _rollback_service_runtime(publication)
+            except BaseException as rollback_error:
+                _raise_service_rollback_error(
+                    "service runtime cutover",
+                    primary_error,
+                    [rollback_error],
+                )
+            raise
+        return publication
+    except BaseException:
+        try:
+            if staging.exists() and not staging.is_symlink():
+                identity = integration_installer._provisional_path_identity(
+                    staging,
+                    directory=True,
+                )
+                root_identity = integration_installer._directory_identity(root)
+                integration_installer._remove_owned_entry(
+                    staging,
+                    identity,
+                    root_identity,
+                    directory=True,
+                    recursive=True,
+                )
+        except BaseException:
+            pass
+        raise
+
+
+def _after_service_runtime_cutover(_runtime: _ServiceRuntimePublication) -> None:
+    """Test seam for the post-rename attestation boundary."""
+    return None
+
+
+def _revalidate_service_runtime_for_unit_write(
+    runtime: _ServiceRuntimePublication,
+) -> None:
+    current = _service_runtime_binding(
+        _service_runtime_root(),
+        _service_runtime_root() / SERVICE_RUNTIME_V2_CURRENT_NAME,
+    )
+    if current != runtime.binding:
+        raise ServiceError("service runtime changed before unit write")
+
+
+def _revalidate_active_producer_for_unit_write(
+    runtime: _ServiceRuntimePublication,
+    codex_usage_executable: Path,
+) -> None:
+    if runtime.source_payloads != _runtime_file_payloads(codex_usage_executable):
+        raise ServiceError("active integration producer changed before unit write")
+
+
+def _rollback_service_runtime(runtime: _ServiceRuntimePublication) -> None:
+    root = _service_runtime_root()
+    current = root / SERVICE_RUNTIME_V2_CURRENT_NAME
+    if runtime.rollback_path is not None and runtime.rollback_identity is not None:
+        if _private_runtime_directory(root, label="service runtime root") != runtime.binding.root:
+            raise ServiceError("service runtime changed before rollback")
+        if _service_runtime_binding(root, current) != runtime.binding:
+            raise ServiceError("service runtime changed before rollback")
+        if (
+            integration_installer._provisional_path_identity(
+                runtime.rollback_path,
+                directory=True,
+            )
+            != runtime.rollback_identity
+        ):
+            raise ServiceError("service runtime changed before rollback")
+        parent_fd = os.open(root, private_io._directory_open_flags())
+        try:
+            integration_installer._rename_exchange(
+                current.name,
+                runtime.rollback_path.name,
+                parent_fd,
+            )
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+        discarded = _private_runtime_directory(
+            runtime.rollback_path,
+            label="failed service runtime generation",
+        )
+        if not _same_runtime_directory(discarded, runtime.binding.generation):
+            raise ServiceError("service runtime changed during rollback")
+        discarded_identity = integration_installer._provisional_path_identity(
+            runtime.rollback_path,
+            directory=True,
+        )
+        if not integration_installer._remove_owned_entry(
+            runtime.rollback_path,
+            discarded_identity,
+            integration_installer._directory_identity(root),
+            directory=True,
+            recursive=True,
+        ):
+            raise ServiceError("could not discard failed service runtime generation")
+        return
+    if not _same_runtime_directory(
+        _private_runtime_directory(current, label="service runtime generation"),
+        runtime.binding.generation,
+    ):
+        raise ServiceError("service runtime changed before rollback")
+    identity = integration_installer._provisional_path_identity(current, directory=True)
+    if not integration_installer._remove_owned_entry(
+        current,
+        identity,
+        integration_installer._directory_identity(root),
+        directory=True,
+        recursive=True,
+    ):
+        raise ServiceError("could not discard failed service runtime generation")
+
+
+def _commit_service_runtime(runtime: _ServiceRuntimePublication) -> None:
+    if runtime.rollback_path is None or runtime.rollback_identity is None:
+        return
+    root = _service_runtime_root()
+    try:
+        integration_installer._remove_owned_entry(
+            runtime.rollback_path,
+            runtime.rollback_identity,
+            integration_installer._directory_identity(root),
+            directory=True,
+            recursive=True,
+        )
+    except BaseException:
+        return
 
 
 def _unit_directory(*, create: bool = True) -> Path:
@@ -1631,10 +3344,28 @@ def _systemctl_show(unit: str, properties: tuple[str, ...]) -> dict[str, str]:
 
 
 def _systemd_activation_snapshot() -> tuple[str, str]:
-    return (
-        _systemctl_state("is-enabled", TIMER_NAME),
-        _systemctl_state("is-active", TIMER_NAME),
-    )
+    enabled = _systemctl_state("is-enabled", TIMER_NAME)
+    active = _systemctl_state("is-active", TIMER_NAME)
+    if enabled in {"", "unknown"} or active in {"", "unknown"}:
+        unit_dir = _unit_directory(create=False)
+        paths = (unit_dir / SERVICE_NAME, unit_dir / TIMER_NAME)
+        if not any(path.exists() or path.is_symlink() for path in paths):
+            return ("not-found", "inactive")
+    return (enabled, active)
+
+
+def _quiesce_systemd_activation(snapshot: tuple[str, str]) -> None:
+    """Stop the old timer before an attested runtime or unit becomes visible."""
+    enabled, active = snapshot
+    if enabled not in {"enabled", "disabled", "not-found"} or active not in {
+        "active",
+        "inactive",
+    }:
+        raise ServiceError("cannot quiesce unknown systemd activation state")
+    if active == "active":
+        _systemctl("stop", TIMER_NAME)
+    if enabled == "enabled":
+        _systemctl("disable", TIMER_NAME)
 
 
 def _restore_systemd_activation(snapshot: tuple[str, str]) -> None:

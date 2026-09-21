@@ -5,7 +5,7 @@ X-Codex-Usage-Managed=true
 
 [Service]
 Type=oneshot
-ExecStart="%h/.local/bin/codex-usage-integration-watchdog" "--config" "%h/.config/codex-usage/config.toml"
+ExecStart="%h/.local/share/codex-usage-service-runtime-v2/current/bin/codex-usage-integration-watchdog-v2"
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONSAFEPATH=1
 Environment=PYTHONNOUSERSITE=1
@@ -28,8 +28,6 @@ ProtectClock=true
 ProtectHostname=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths="%h/.cache/ms-playwright"
-ReadWritePaths="%h/.local/share/codex-usage"
 ReadWritePaths="%h/.local/state/codex-usage/integration"
 ReadWritePaths="%h/.local/state/codex-usage/locks"
 RestrictSUIDSGID=true

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import shlex
 import shutil
 import subprocess
@@ -39,6 +40,14 @@ def _write_executable(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     path.chmod(0o700)
+
+
+def _inactive_systemctl(*args: str, check: bool = True):
+    if args[:1] == ("is-enabled",):
+        return subprocess.CompletedProcess(args, 1, "disabled\n", "")
+    if args[:1] == ("is-active",):
+        return subprocess.CompletedProcess(args, 1, "inactive\n", "")
+    return subprocess.CompletedProcess(args, 0, "", "")
 
 
 def _write_console_script(path: Path, module: str) -> None:
@@ -117,7 +126,7 @@ def _write_recorded_distribution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    version: str = "0.6.537",
+    version: str = "0.6.538",
     corrupt_record_for: str | None = None,
     metadata_suffix: str = "",
     files_override: object | None = None,
@@ -133,14 +142,23 @@ def _write_recorded_distribution(
     watchdog_module = package / "integration_watchdog.py"
     metadata = dist_info / "METADATA"
     record = dist_info / "RECORD"
+    package_init = package / "__init__.py"
 
     _write_console_script(codex_usage, "codex_usage.cli")
     _write_console_script(watchdog, "codex_usage.integration_watchdog")
     package.mkdir(parents=True, exist_ok=True)
     dist_info.mkdir(parents=True, exist_ok=True)
-    (package / "__init__.py").write_text("", encoding="utf-8")
+    package_init.write_text('__version__ = "0.6.538"\n', encoding="utf-8")
     cli_module.write_text("def main():\n    return 0\n", encoding="utf-8")
     watchdog_module.write_text("def main():\n    return 0\n", encoding="utf-8")
+    from codex_usage.integration_attestation import TRUSTED_CORE_MODULES
+
+    source_package = Path(__file__).parents[1] / "src" / "codex_usage"
+    for module_name in TRUSTED_CORE_MODULES:
+        target = package / module_name
+        if target.exists():
+            continue
+        shutil.copyfile(source_package / module_name, target)
     metadata.write_text(
         (
             f"Metadata-Version: 2.4\nName: codex-usage\nVersion: {version}\n"
@@ -151,10 +169,13 @@ def _write_recorded_distribution(
     relative_paths = {
         "../../../bin/codex-usage": codex_usage,
         "../../../bin/codex-usage-integration-watchdog": watchdog,
+        "codex_usage/__init__.py": package_init,
         "codex_usage/cli.py": cli_module,
         "codex_usage/integration_watchdog.py": watchdog_module,
         f"codex_usage-{version}.dist-info/METADATA": metadata,
     }
+    for module_name in TRUSTED_CORE_MODULES:
+        relative_paths.setdefault(f"codex_usage/{module_name}", package / module_name)
     rows: list[str] = []
     for relative, path in relative_paths.items():
         payload = path.read_bytes()
@@ -173,6 +194,132 @@ def _write_recorded_distribution(
             files=files if files_override is None else files_override,
         ),
     )
+    from codex_usage.integration_attestation import ActiveRelease, VerifiedActiveManifest
+    from codex_usage.private_io import FileIdentity
+
+    active = VerifiedActiveManifest(
+        active_release=ActiveRelease(
+            version="0.6.538",
+            release_dir=release,
+            launcher_path=codex_usage,
+            entrypoint_path=package / "integration_entrypoint.py",
+            entrypoint_sha256="0" * 64,
+            wheel_sha256="0" * 64,
+            record_sha256="0" * 64,
+            launcher_sha256="0" * 64,
+            release_tree_sha256="0" * 64,
+        ),
+        release_id="0.6.538-0000000000000000",
+        source_manifest_sha256="0" * 64,
+        active_manifest_bytes=b"{}",
+        active_manifest_sha256="0" * 64,
+        state_home_identity=FileIdentity(1, 2, 0o700),
+        integration_parent_identity=FileIdentity(1, 3, 0o700),
+        active_file_identity=FileIdentity(1, 4, 0o600),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "_active_entrypoint_candidate_from_active_manifest",
+        lambda **_kwargs: active.active_release.entrypoint_path,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "verify_active_manifest_at",
+        lambda **_kwargs: active,
+    )
+    return codex_usage, watchdog, record
+
+
+def _write_recorded_worktree_distribution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, Path, Path]:
+    """Build a RECORD-bound test distribution from this exact worktree source."""
+    version = "0.6.538"
+    release = tmp_path / "worktree-release"
+    bin_dir = release / "bin"
+    site_packages = release / "lib" / "python" / "site-packages"
+    package = site_packages / "codex_usage"
+    dist_info = site_packages / f"codex_usage-{version}.dist-info"
+    codex_usage = bin_dir / "codex-usage"
+    watchdog = bin_dir / "codex-usage-integration-watchdog"
+    source_package = Path(__file__).parents[1] / "src" / "codex_usage"
+
+    _write_console_script(codex_usage, "codex_usage.cli")
+    _write_console_script(watchdog, "codex_usage.integration_watchdog")
+    for source_file in sorted(source_package.rglob("*.py")):
+        destination = package / source_file.relative_to(source_package)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_file, destination)
+        destination.chmod(0o600)
+    dist_info.mkdir(parents=True)
+    metadata = dist_info / "METADATA"
+    metadata.write_text(
+        "Metadata-Version: 2.4\nName: codex-usage\nVersion: 0.6.538\n",
+        encoding="utf-8",
+    )
+    metadata.chmod(0o600)
+
+    relative_paths: dict[str, Path] = {
+        "../../../bin/codex-usage": codex_usage,
+        "../../../bin/codex-usage-integration-watchdog": watchdog,
+        f"codex_usage-{version}.dist-info/METADATA": metadata,
+    }
+    for source_file in sorted(package.rglob("*")):
+        if source_file.is_file():
+            relative_path = str(
+                PurePosixPath("codex_usage") / source_file.relative_to(package)
+            )
+            relative_paths[relative_path] = source_file
+    record = dist_info / "RECORD"
+    rows = [
+        f"{relative},{_record_hash(path.read_bytes())},{path.stat().st_size}\n"
+        for relative, path in sorted(relative_paths.items())
+    ]
+    rows.append(f"codex_usage-{version}.dist-info/RECORD,,\n")
+    record.write_text("".join(rows), encoding="utf-8")
+    record.chmod(0o600)
+    _install_fake_codex_usage_distribution(
+        monkeypatch,
+        _FakeCodexUsageDistribution(
+            site_packages,
+            version=version,
+            files=tuple([*relative_paths, f"codex_usage-{version}.dist-info/RECORD"]),
+        ),
+    )
+    from codex_usage.integration_attestation import ActiveRelease, VerifiedActiveManifest
+    from codex_usage.private_io import FileIdentity
+
+    active = VerifiedActiveManifest(
+        active_release=ActiveRelease(
+            version="0.6.538",
+            release_dir=release,
+            launcher_path=codex_usage,
+            entrypoint_path=package / "integration_entrypoint.py",
+            entrypoint_sha256="0" * 64,
+            wheel_sha256="0" * 64,
+            record_sha256="0" * 64,
+            launcher_sha256="0" * 64,
+            release_tree_sha256="0" * 64,
+        ),
+        release_id="0.6.538-0000000000000000",
+        source_manifest_sha256="0" * 64,
+        active_manifest_bytes=b"{}",
+        active_manifest_sha256="0" * 64,
+        state_home_identity=FileIdentity(1, 2, 0o700),
+        integration_parent_identity=FileIdentity(1, 3, 0o700),
+        active_file_identity=FileIdentity(1, 4, 0o600),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "_active_entrypoint_candidate_from_active_manifest",
+        lambda **_kwargs: active.active_release.entrypoint_path,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "verify_active_manifest_at",
+        lambda **_kwargs: active,
+    )
     return codex_usage, watchdog, record
 
 
@@ -185,6 +332,1531 @@ def _mock_resolved_executable_without_attestation(
         "codex_usage.service._revalidate_integration_watchdog_for_unit_write",
         lambda _executable: None,
     )
+    runtime = SimpleNamespace(
+        binding=SimpleNamespace(
+            watchdog=SimpleNamespace(
+                path=executable.with_name("codex-usage-integration-watchdog")
+            )
+        )
+    )
+    def fake_materialize(_executable, *, before_cutover=None):
+        if before_cutover is not None:
+            before_cutover(SimpleNamespace(), None, Path("/tmp/service-runtime-staging"))
+        return runtime
+
+    monkeypatch.setattr(
+        "codex_usage.service._materialize_service_runtime",
+        fake_materialize,
+    )
+    def fake_prepare_pending_service_transaction(**kwargs):
+        return SimpleNamespace(
+            document={},
+            unit_dir=kwargs["unit_dir"],
+            new_units=kwargs["new_units"],
+        )
+
+    def fake_publish_pending_service_unit_generation(pending, path):
+        label = "systemd service" if path.name == SERVICE_NAME else "systemd timer"
+        service_module.write_private_text(
+            path,
+            pending.new_units[path],
+            label=label,
+            mode=0o600,
+        )
+
+    monkeypatch.setattr(
+        "codex_usage.service._prepare_pending_service_transaction",
+        fake_prepare_pending_service_transaction,
+    )
+    monkeypatch.setattr(
+        "codex_usage.service._publish_pending_service_unit_generation",
+        fake_publish_pending_service_unit_generation,
+    )
+    monkeypatch.setattr(
+        "codex_usage.service._advance_pending_service_transaction",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "codex_usage.service._quiesce_systemd_activation",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "codex_usage.service._remove_pending_service_transaction",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "codex_usage.service._revalidate_service_runtime_for_unit_write",
+        lambda _runtime: None,
+    )
+    monkeypatch.setattr(
+        "codex_usage.service._revalidate_active_producer_for_unit_write",
+        lambda _runtime, _executable: None,
+    )
+    monkeypatch.setattr("codex_usage.service._rollback_service_runtime", lambda _runtime: None)
+    monkeypatch.setattr("codex_usage.service._commit_service_runtime", lambda _runtime: None)
+
+
+def _prepare_record_bound_service_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Use the actual runtime transaction; only systemctl stays test-local."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+
+
+def test_user_site_watchdog_is_not_importable_under_hardened_environment(
+    tmp_path,
+    monkeypatch,
+):
+    """Records the pre-cutover defect: a user-site wrapper cannot import Core."""
+    _codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    completed = subprocess.run(
+        [str(watchdog), "--config", str(tmp_path / "config.toml")],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONSAFEPATH": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "XDG_DATA_HOME": str(tmp_path / "data"),
+            "XDG_STATE_HOME": str(tmp_path / "state"),
+        },
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert "ModuleNotFoundError" in completed.stderr
+
+
+def test_service_install_materializes_record_bound_runtime_importable_when_hardened(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if the unit still executed the user-site watchdog directly."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    monkeypatch.setattr(
+        service_module,
+        "_systemctl",
+        lambda *args, check=True: subprocess.CompletedProcess(
+            args,
+            1 if args[:1] in {("is-enabled",), ("is-active",)} else 0,
+            "disabled\n" if args[:1] == ("is-enabled",) else (
+                "inactive\n" if args[:1] == ("is-active",) else ""
+            ),
+            "",
+        ),
+    )
+
+    service_install(AppConfig(accounts=()), tmp_path / "config.toml")
+
+    runtime_root = tmp_path / "data" / "codex-usage-service-runtime-v2"
+    runtime_watchdog = (
+        runtime_root / "current" / "bin" / "codex-usage-integration-watchdog-v2"
+    )
+    service_text = (
+        tmp_path / "config" / "systemd" / "user" / SERVICE_NAME
+    ).read_text(encoding="utf-8")
+
+    exec_start = next(
+        line.removeprefix("ExecStart=")
+        for line in service_text.splitlines()
+        if line.startswith("ExecStart=")
+    )
+    assert shlex.split(exec_start) == [
+        str(runtime_watchdog),
+    ]
+    assert str(watchdog) not in service_text
+    record = (
+        runtime_root
+        / "current"
+        / "venv"
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+        / "codex_usage-0.6.538.dist-info"
+        / "RECORD"
+    ).read_text(encoding="utf-8")
+    assert "codex_usage/cli.py" not in record
+    assert "codex_usage/scheduler.py" not in record
+    assert "codex_usage/reactivate.py" not in record
+    completed = subprocess.run(
+        [str(runtime_watchdog)],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONSAFEPATH": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "XDG_DATA_HOME": str(tmp_path / "data"),
+            "XDG_STATE_HOME": str(tmp_path / "state"),
+        },
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "ModuleNotFoundError" not in completed.stderr
+
+
+def test_private_runtime_real_watchdog_wrapper_is_publisher_only_and_rejects_args(
+    tmp_path,
+    monkeypatch,
+):
+    """The V2 publisher must not require a browser or generic CLI closure."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    codex_usage, watchdog, _record = _write_recorded_worktree_distribution(
+        tmp_path,
+        monkeypatch,
+    )
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    runtime = service_module._materialize_service_runtime(
+        service_module._resolve_codex_usage()
+    )
+    hardened_environment = {
+        "PATH": "/usr/bin:/bin",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONSAFEPATH": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "XDG_DATA_HOME": str(tmp_path / "data"),
+        "XDG_STATE_HOME": str(tmp_path / "state"),
+    }
+
+    candidate_watchdog = (
+        runtime.binding.generation.path
+        / "venv"
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+        / "codex_usage"
+        / "integration_watchdog.py"
+    )
+    assert candidate_watchdog.read_bytes() == (
+        Path(__file__).parents[1]
+        / "src"
+        / "codex_usage"
+        / "integration_watchdog.py"
+    ).read_bytes()
+
+    watchdog_import = subprocess.run(
+        [str(runtime.binding.watchdog.path)],
+        env=hardened_environment,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert watchdog_import.returncode == 69, watchdog_import.stderr
+    assert "playwright" not in watchdog_import.stderr.lower()
+
+    forbidden_argument = subprocess.run(
+        [str(runtime.binding.watchdog.path), "--config", str(tmp_path / "config.toml")],
+        env=hardened_environment,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert forbidden_argument.returncode == 64, forbidden_argument.stderr
+
+
+def test_runtime_uses_active_producer_bytes_for_all_known_divergent_modules(
+    tmp_path,
+    monkeypatch,
+):
+    """Producer modules are copied from the attested active release, not Core."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+    active_package = codex_usage.parents[1] / "lib/python/site-packages/codex_usage"
+    divergent = (
+        "config.py",
+        "integration_attestation.py",
+        "integration_evidence.py",
+        "integration_pool_authority.py",
+        "models.py",
+        "private_io.py",
+    )
+    expected: dict[str, bytes] = {}
+    for name in divergent:
+        path = active_package / name
+        path.write_bytes(path.read_bytes() + b"\n# active producer divergence\n")
+        expected[name] = path.read_bytes()
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    runtime = service_module._materialize_service_runtime(
+        service_module._resolve_codex_usage()
+    )
+    package = (
+        runtime.binding.generation.path
+        / "venv"
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+        / "codex_usage"
+    )
+    assert {name: (package / name).read_bytes() for name in divergent} == expected
+
+
+def test_service_install_rejects_active_producer_drift_before_unit_write(
+    tmp_path,
+    monkeypatch,
+):
+    """An active-producer rebind cannot leave a unit pointing at stale bytes."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    monkeypatch.setattr(service_module, "_systemctl", _inactive_systemctl)
+    config_path = tmp_path / "config.toml"
+    service_install(AppConfig(accounts=()), config_path)
+    active_module = (
+        codex_usage.parents[1]
+        / "lib/python/site-packages/codex_usage/integration_pool_authority.py"
+    )
+
+    def drift_active_producer() -> None:
+        active_module.write_bytes(active_module.read_bytes() + b"\n# drift\n")
+
+    monkeypatch.setattr(service_module, "_before_service_unit_write", drift_active_producer)
+    with pytest.raises(ServiceError, match="active integration producer changed before unit write"):
+        service_install(AppConfig(accounts=()), config_path)
+
+
+def test_runtime_rollback_rejects_replaced_previous_generation(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if a replaced rollback generation could become current."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    executable = service_module._resolve_codex_usage()
+    first = service_module._materialize_service_runtime(executable)
+    service_module._commit_service_runtime(first)
+    second = service_module._materialize_service_runtime(executable)
+    assert second.rollback_path is not None
+    replacement_source = second.rollback_path.with_name("replaced-previous")
+    second.rollback_path.rename(replacement_source)
+    second.rollback_path.mkdir(mode=0o700)
+
+    with pytest.raises(ServiceError, match="service runtime changed before rollback"):
+        service_module._rollback_service_runtime(second)
+
+    current = service_module._service_runtime_binding(
+        tmp_path / "data" / "codex-usage-service-runtime-v2",
+        tmp_path / "data" / "codex-usage-service-runtime-v2" / "current",
+    )
+    assert current.generation == second.binding.generation
+    assert current.interpreter == second.binding.interpreter
+    assert current.watchdog == second.binding.watchdog
+
+
+def test_runtime_and_units_rollback_without_retaining_new_generation(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if a failed unit install left a new runtime generation behind."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    monkeypatch.setattr(
+        service_module,
+        "_systemctl",
+        _inactive_systemctl,
+    )
+    config_path = tmp_path / "config.toml"
+    service_install(AppConfig(accounts=()), config_path)
+    unit_directory = tmp_path / "config" / "systemd" / "user"
+    previous_service = (unit_directory / SERVICE_NAME).read_bytes()
+    previous_timer = (unit_directory / TIMER_NAME).read_bytes()
+
+    def drift_source_wrapper() -> None:
+        watchdog.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        watchdog.chmod(0o700)
+
+    monkeypatch.setattr(
+        service_module,
+        "_before_service_unit_write",
+        drift_source_wrapper,
+    )
+
+    with pytest.raises(ServiceError, match="changed before unit write"):
+        service_install(AppConfig(accounts=()), config_path)
+
+    assert (unit_directory / SERVICE_NAME).read_bytes() == previous_service
+    assert (unit_directory / TIMER_NAME).read_bytes() == previous_timer
+    runtime_root = tmp_path / "data" / "codex-usage-service-runtime-v2"
+    assert sorted(path.name for path in runtime_root.iterdir()) == ["current"]
+
+
+@pytest.mark.parametrize("failure", ("render", "snapshot"))
+def test_service_install_rolls_back_runtime_before_unit_preparation_failure(
+    tmp_path,
+    monkeypatch,
+    failure,
+):
+    """A render or snapshot failure must leave the prior runtime and units intact."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    monkeypatch.setattr(
+        service_module,
+        "_systemctl",
+        lambda *args, check=True: subprocess.CompletedProcess(args, 0, "", ""),
+    )
+    config_path = tmp_path / "config.toml"
+    service_install(AppConfig(accounts=()), config_path)
+    unit_directory = tmp_path / "config" / "systemd" / "user"
+    previous_units = {
+        name: (unit_directory / name).read_bytes()
+        for name in (SERVICE_NAME, TIMER_NAME)
+    }
+    root = tmp_path / "data" / "codex-usage-service-runtime-v2"
+    previous_current = (root / "current").lstat()
+
+    if failure == "render":
+        monkeypatch.setattr(
+            service_module,
+            "_render_service",
+            lambda *_args: (_ for _ in ()).throw(ServiceError("render failed")),
+        )
+    else:
+        original_snapshot = service_module._read_unit_snapshot
+        calls = 0
+
+        def fail_first_snapshot(path):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise ServiceError("snapshot failed")
+            return original_snapshot(path)
+
+        monkeypatch.setattr(service_module, "_read_unit_snapshot", fail_first_snapshot)
+
+    with pytest.raises(ServiceError, match=f"{failure} failed"):
+        service_install(AppConfig(accounts=()), config_path)
+
+    current = (root / "current").lstat()
+    assert (current.st_dev, current.st_ino) == (
+        previous_current.st_dev,
+        previous_current.st_ino,
+    )
+    assert {name: (unit_directory / name).read_bytes() for name in previous_units} == previous_units
+
+
+def test_first_service_install_removes_runtime_when_rendering_fails(tmp_path, monkeypatch):
+    """A first-install render failure must not publish a new current generation."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    monkeypatch.setattr(
+        service_module.shutil,
+        "which",
+        lambda name: str(codex_usage if name == "codex-usage" else watchdog),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "_render_service",
+        lambda *_args: (_ for _ in ()).throw(ServiceError("render failed")),
+    )
+
+    with pytest.raises(ServiceError, match="render failed"):
+        service_install(AppConfig(accounts=()), tmp_path / "config.toml")
+
+    root = tmp_path / "data" / "codex-usage-service-runtime-v2"
+    assert not (root / "current").exists()
+
+
+@pytest.mark.parametrize("existing", (False, True))
+def test_runtime_cutover_rolls_back_when_post_rename_attestation_fails(
+    tmp_path,
+    monkeypatch,
+    existing,
+):
+    """A fault after either rename primitive must not publish a partial runtime."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    executable = service_module._resolve_codex_usage()
+    root = tmp_path / "data" / "codex-usage-service-runtime-v2"
+    previous: tuple[int, int] | None = None
+    if existing:
+        initial = service_module._materialize_service_runtime(executable)
+        service_module._commit_service_runtime(initial)
+        item = (root / "current").lstat()
+        previous = (item.st_dev, item.st_ino)
+
+    monkeypatch.setattr(
+        service_module,
+        "_after_service_runtime_cutover",
+        lambda *_args: (_ for _ in ()).throw(ServiceError("post-rename attestation failed")),
+        raising=False,
+    )
+
+    with pytest.raises(ServiceError, match="post-rename attestation failed"):
+        service_module._materialize_service_runtime(executable)
+
+    current = root / "current"
+    if previous is None:
+        assert not current.exists()
+        assert list(root.iterdir()) == []
+    else:
+        item = current.lstat()
+        assert (item.st_dev, item.st_ino) == previous
+        assert sorted(path.name for path in root.iterdir()) == ["current"]
+
+
+def test_service_status_rejects_corrupt_pending_transaction_before_systemctl(
+    tmp_path,
+    monkeypatch,
+):
+    """A corrupt pending operation is evidence of an unknown state, never auto-deleted."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    unit_directory = _unit_directory()
+    pending = unit_directory / ".codex-usage-service-pending-v1.json"
+    pending.write_text("{not-json}\n", encoding="utf-8")
+    pending.chmod(0o600)
+    monkeypatch.setattr(
+        service_module,
+        "_systemctl",
+        lambda *_args, **_kwargs: pytest.fail("systemctl after corrupt pending transaction"),
+    )
+
+    with pytest.raises(ServiceError, match="pending"):
+        service_status()
+
+    assert pending.read_text(encoding="utf-8") == "{not-json}\n"
+
+
+def test_service_enable_rolls_back_runtime_units_and_activation_on_keyboardinterrupt(
+    tmp_path,
+    monkeypatch,
+):
+    """Enable/restart is one transaction even when BaseException interrupts it."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    activation: list[tuple[str, ...]] = []
+
+    def systemctl(*args: str, check: bool = True):
+        activation.append(args)
+        if args[:1] == ("is-enabled",):
+            return subprocess.CompletedProcess(args, 1, "disabled\n", "")
+        if args[:1] == ("is-active",):
+            return subprocess.CompletedProcess(args, 1, "inactive\n", "")
+        if args[:1] == ("restart",):
+            raise KeyboardInterrupt("synthetic restart interruption")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(service_module, "_systemctl", systemctl)
+    config_path = tmp_path / "config.toml"
+    service_install(AppConfig(accounts=()), config_path)
+    unit_directory = tmp_path / "config" / "systemd" / "user"
+    old_units = {
+        name: (unit_directory / name).read_bytes()
+        for name in (SERVICE_NAME, TIMER_NAME)
+    }
+    runtime_root = tmp_path / "data" / "codex-usage-service-runtime-v2"
+    old_current = (runtime_root / "current").lstat()
+
+    with pytest.raises(KeyboardInterrupt, match="synthetic restart interruption"):
+        service_enable(AppConfig(accounts=()), config_path)
+
+    current = (runtime_root / "current").lstat()
+    assert (current.st_dev, current.st_ino) == (old_current.st_dev, old_current.st_ino)
+    assert {
+        name: (unit_directory / name).read_bytes() for name in old_units
+    } == old_units
+
+
+def test_status_recovers_verified_pending_runtime_and_unit_transaction(
+    tmp_path,
+    monkeypatch,
+):
+    """A trusted next operation converges an interrupted cutover to its old state."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    def systemctl(*args: str, check: bool = True):
+        if args[:1] == ("is-enabled",):
+            return subprocess.CompletedProcess(args, 1, "disabled\n", "")
+        if args[:1] == ("is-active",):
+            return subprocess.CompletedProcess(args, 1, "inactive\n", "")
+        if args[:1] == ("show",):
+            return subprocess.CompletedProcess(args, 0, "SubState=dead\n", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    monkeypatch.setattr(service_module, "_systemctl", systemctl)
+    config_path = tmp_path / "config.toml"
+    service_install(AppConfig(accounts=()), config_path)
+    unit_dir = tmp_path / "config" / "systemd" / "user"
+    paths = (unit_dir / SERVICE_NAME, unit_dir / TIMER_NAME)
+    previous = {path: service_module._read_unit_snapshot(path) for path in paths}
+    root = tmp_path / "data" / "codex-usage-service-runtime-v2"
+    old_current = (root / "current").lstat()
+    pending = None
+
+    def before_cutover(new, old, staging):
+        nonlocal pending
+        pending = service_module._prepare_pending_service_transaction(
+            unit_dir=unit_dir,
+            operation="install",
+            previous_units=previous,
+            new_units={
+                unit_dir / SERVICE_NAME: "new unit\n",
+                unit_dir / TIMER_NAME: previous[unit_dir / TIMER_NAME] or "",
+            },
+            activation=("disabled", "inactive"),
+            enable_link=None,
+            root=root,
+            staging=staging,
+            old=old,
+            new=new,
+        )
+
+    executable = service_module._resolve_codex_usage()
+    runtime = service_module._materialize_service_runtime(
+        executable,
+        before_cutover=before_cutover,
+    )
+    assert pending is not None
+    service_module._advance_pending_service_transaction(pending, "runtime")
+    service_module._publish_pending_service_unit_generation(
+        pending, unit_dir / SERVICE_NAME
+    )
+
+    service_status()
+
+    current = (root / "current").lstat()
+    assert (current.st_dev, current.st_ino) == (old_current.st_dev, old_current.st_ino)
+    assert {path: service_module._read_unit_snapshot(path) for path in paths} == previous
+    assert not (unit_dir / service_module.SERVICE_PENDING_V1_NAME).exists()
+    assert runtime.rollback_path is not None
+
+
+def test_pending_recovery_reverts_runtime_before_timer_reactivation(
+    tmp_path,
+    monkeypatch,
+):
+    """A restored timer must never start the pending runtime generation."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    root = tmp_path / "data" / "codex-usage-service-runtime-v2"
+    reactivated_runtime_ids: list[tuple[int, int]] = []
+
+    def systemctl(*args: str, check: bool = True):
+        if args[:1] == ("is-enabled",):
+            return subprocess.CompletedProcess(args, 1, "disabled\n", "")
+        if args[:1] == ("is-active",):
+            return subprocess.CompletedProcess(args, 1, "inactive\n", "")
+        if args[:1] in {("enable",), ("start",)}:
+            current = (root / "current").lstat()
+            reactivated_runtime_ids.append((current.st_dev, current.st_ino))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    monkeypatch.setattr(service_module, "_systemctl", systemctl)
+    config_path = tmp_path / "config.toml"
+    service_install(AppConfig(accounts=()), config_path)
+    unit_dir = tmp_path / "config" / "systemd" / "user"
+    paths = (unit_dir / SERVICE_NAME, unit_dir / TIMER_NAME)
+    previous = {path: service_module._read_unit_snapshot(path) for path in paths}
+    old_current = (root / "current").lstat()
+    pending = None
+
+    def before_cutover(new, old, staging):
+        nonlocal pending
+        pending = service_module._prepare_pending_service_transaction(
+            unit_dir=unit_dir,
+            operation="install",
+            previous_units=previous,
+            new_units={
+                unit_dir / SERVICE_NAME: previous[unit_dir / SERVICE_NAME] or "",
+                unit_dir / TIMER_NAME: previous[unit_dir / TIMER_NAME] or "",
+            },
+            activation=("enabled", "active"),
+            enable_link=None,
+            root=root,
+            staging=staging,
+            old=old,
+            new=new,
+        )
+
+    runtime = service_module._materialize_service_runtime(
+        service_module._resolve_codex_usage(),
+        before_cutover=before_cutover,
+    )
+    assert pending is not None
+    service_module._advance_pending_service_transaction(pending, "runtime")
+    reactivated_runtime_ids.clear()
+
+    service_module._recover_pending_service_operation()
+
+    assert reactivated_runtime_ids == [
+        (old_current.st_dev, old_current.st_ino),
+        (old_current.st_dev, old_current.st_ino),
+    ]
+    assert runtime.rollback_path is not None
+
+
+def test_reloaded_pending_recovery_quiesces_active_timer_before_runtime_rollback(
+    tmp_path,
+    monkeypatch,
+):
+    """A crash after restart must stop the new publisher before its runtime rolls back."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    state = {"enabled": "disabled", "active": "inactive"}
+    events: list[str] = []
+
+    def systemctl(*args: str, check: bool = True):
+        if args[:1] == ("is-enabled",):
+            return subprocess.CompletedProcess(
+                args,
+                0 if state["enabled"] == "enabled" else 1,
+                state["enabled"] + "\n",
+                "",
+            )
+        if args[:1] == ("is-active",):
+            return subprocess.CompletedProcess(
+                args,
+                0 if state["active"] == "active" else 3,
+                state["active"] + "\n",
+                "",
+            )
+        if args[:1] == ("stop",):
+            events.append("stop")
+            state["active"] = "inactive"
+        elif args[:1] == ("disable",):
+            events.append("disable")
+            state["enabled"] = "disabled"
+        elif args[:1] == ("enable",):
+            events.append("enable")
+            state["enabled"] = "enabled"
+        elif args[:1] in {("start",), ("restart",)}:
+            events.append(args[0])
+            state["active"] = "active"
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    monkeypatch.setattr(service_module, "_systemctl", systemctl)
+    config_path = tmp_path / "config.toml"
+    service_install(AppConfig(accounts=()), config_path)
+    unit_dir = tmp_path / "config" / "systemd" / "user"
+    paths = (unit_dir / SERVICE_NAME, unit_dir / TIMER_NAME)
+    previous = {path: service_module._read_unit_snapshot(path) for path in paths}
+    root = tmp_path / "data" / "codex-usage-service-runtime-v2"
+    old_current = (root / "current").lstat()
+    pending = None
+
+    def before_cutover(new, old, staging):
+        nonlocal pending
+        pending = service_module._prepare_pending_service_transaction(
+            unit_dir=unit_dir,
+            operation="enable",
+            previous_units=previous,
+            new_units={path: previous[path] or "" for path in paths},
+            activation=("disabled", "inactive"),
+            enable_link=None,
+            root=root,
+            staging=staging,
+            old=old,
+            new=new,
+        )
+
+    service_module._materialize_service_runtime(
+        service_module._resolve_codex_usage(),
+        before_cutover=before_cutover,
+    )
+    assert pending is not None
+    service_module._advance_pending_service_transaction(pending, "runtime")
+    for path in paths:
+        service_module._publish_pending_service_unit_generation(pending, path)
+    service_module._advance_pending_service_transaction(pending, "units")
+    service_module._systemctl("daemon-reload")
+    service_module._advance_pending_service_transaction(pending, "reloaded")
+    new_current = (root / "current").lstat()
+    state.update(enabled="enabled", active="active")
+    events.clear()
+    original_recover_runtime = service_module._recover_pending_runtime
+
+    def observe_runtime_rollback(runtime):
+        current = (root / "current").lstat()
+        assert (current.st_dev, current.st_ino) == (
+            new_current.st_dev,
+            new_current.st_ino,
+        )
+        events.append("runtime")
+        return original_recover_runtime(runtime)
+
+    monkeypatch.setattr(service_module, "_recover_pending_runtime", observe_runtime_rollback)
+
+    service_module._recover_pending_service_operation()
+
+    assert [event for event in events if event in {"stop", "disable", "runtime"}][
+        :3
+    ] == ["stop", "disable", "runtime"]
+    assert "enable" not in events
+    assert "start" not in events
+    current = (root / "current").lstat()
+    assert (current.st_dev, current.st_ino) == (
+        old_current.st_dev,
+        old_current.st_ino,
+    )
+
+
+def test_reloaded_pending_recovery_does_not_rollback_after_quiesce_failure(
+    tmp_path,
+    monkeypatch,
+):
+    """A failed stop leaves runtime, Units, journal, and later activation untouched."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    state = {"enabled": "disabled", "active": "inactive"}
+    calls: list[tuple[str, ...]] = []
+    fail_stop = False
+
+    def systemctl(*args: str, check: bool = True):
+        calls.append(args)
+        if args[:1] == ("is-enabled",):
+            return subprocess.CompletedProcess(
+                args,
+                0 if state["enabled"] == "enabled" else 1,
+                state["enabled"] + "\n",
+                "",
+            )
+        if args[:1] == ("is-active",):
+            return subprocess.CompletedProcess(
+                args,
+                0 if state["active"] == "active" else 3,
+                state["active"] + "\n",
+                "",
+            )
+        if args[:1] == ("stop",) and fail_stop:
+            raise ServiceError("timer stop failed")
+        if args[:1] == ("stop",):
+            state["active"] = "inactive"
+        if args[:1] == ("disable",):
+            state["enabled"] = "disabled"
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    monkeypatch.setattr(service_module, "_systemctl", systemctl)
+    config_path = tmp_path / "config.toml"
+    service_install(AppConfig(accounts=()), config_path)
+    unit_dir = tmp_path / "config" / "systemd" / "user"
+    paths = (unit_dir / SERVICE_NAME, unit_dir / TIMER_NAME)
+    previous = {path: service_module._read_unit_snapshot(path) for path in paths}
+    root = tmp_path / "data" / "codex-usage-service-runtime-v2"
+    pending = None
+
+    def before_cutover(new, old, staging):
+        nonlocal pending
+        pending = service_module._prepare_pending_service_transaction(
+            unit_dir=unit_dir,
+            operation="enable",
+            previous_units=previous,
+            new_units={path: previous[path] or "" for path in paths},
+            activation=("disabled", "inactive"),
+            enable_link=None,
+            root=root,
+            staging=staging,
+            old=old,
+            new=new,
+        )
+
+    service_module._materialize_service_runtime(
+        service_module._resolve_codex_usage(),
+        before_cutover=before_cutover,
+    )
+    assert pending is not None
+    service_module._advance_pending_service_transaction(pending, "runtime")
+    for path in paths:
+        service_module._publish_pending_service_unit_generation(pending, path)
+    service_module._advance_pending_service_transaction(pending, "units")
+    service_module._advance_pending_service_transaction(pending, "reloaded")
+    pending_current = (root / "current").lstat()
+    journal_path = unit_dir / service_module.SERVICE_PENDING_V1_NAME
+    journal_bytes = journal_path.read_bytes()
+    units_before = {path: service_module._pending_unit_snapshot(path) for path in paths}
+    state.update(enabled="enabled", active="active")
+    fail_stop = True
+    calls.clear()
+
+    with pytest.raises(ServiceError) as exc_info:
+        service_module._recover_pending_service_operation()
+
+    assert isinstance(exc_info.value.__cause__, ExceptionGroup)
+    assert any(
+        str(error) == "timer stop failed"
+        for error in exc_info.value.__cause__.exceptions
+    )
+    assert any(
+        str(error) == "service pending transaction activation is blocked"
+        for error in exc_info.value.__cause__.exceptions
+    )
+    current = (root / "current").lstat()
+    assert (current.st_dev, current.st_ino) == (
+        pending_current.st_dev,
+        pending_current.st_ino,
+    )
+    assert {path: service_module._pending_unit_snapshot(path) for path in paths} == units_before
+    assert journal_path.read_bytes() == journal_bytes
+    assert [args[0] for args in calls] == ["is-enabled", "is-active", "stop"]
+
+
+def test_pending_recovery_refuses_to_overwrite_foreign_unit_drift(
+    tmp_path,
+    monkeypatch,
+):
+    """Recovery must retain a unit changed outside its own pending generation."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    systemctl_calls: list[tuple[str, ...]] = []
+
+    def systemctl(*args: str, check: bool = True):
+        systemctl_calls.append(args)
+        if args[:1] == ("is-enabled",):
+            return subprocess.CompletedProcess(args, 1, "disabled\n", "")
+        if args[:1] == ("is-active",):
+            return subprocess.CompletedProcess(args, 1, "inactive\n", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    monkeypatch.setattr(service_module, "_systemctl", systemctl)
+    config_path = tmp_path / "config.toml"
+    service_install(AppConfig(accounts=()), config_path)
+    unit_dir = tmp_path / "config" / "systemd" / "user"
+    service_path = unit_dir / SERVICE_NAME
+    paths = (service_path, unit_dir / TIMER_NAME)
+    previous = {path: service_module._read_unit_snapshot(path) for path in paths}
+    root = tmp_path / "data" / "codex-usage-service-runtime-v2"
+    pending = None
+
+    def before_cutover(new, old, staging):
+        nonlocal pending
+        pending = service_module._prepare_pending_service_transaction(
+            unit_dir=unit_dir,
+            operation="install",
+            previous_units=previous,
+            new_units={
+                service_path: "pending service unit\n",
+                unit_dir / TIMER_NAME: previous[unit_dir / TIMER_NAME] or "",
+            },
+            activation=("enabled", "active"),
+            enable_link=None,
+            root=root,
+            staging=staging,
+            old=old,
+            new=new,
+        )
+
+    service_module._materialize_service_runtime(
+        service_module._resolve_codex_usage(),
+        before_cutover=before_cutover,
+    )
+    assert pending is not None
+    service_module._advance_pending_service_transaction(pending, "runtime")
+    pending_current = (root / "current").lstat()
+    service_module._publish_pending_service_unit_generation(pending, service_path)
+    service_module.write_private_text(
+        service_path,
+        "foreign unit drift\n",
+        label="systemd service",
+        mode=0o600,
+    )
+    systemctl_calls.clear()
+
+    with pytest.raises(ServiceError) as exc_info:
+        service_module._recover_pending_service_operation()
+
+    assert isinstance(exc_info.value.__cause__, ExceptionGroup)
+    assert any(
+        "service pending unit changed" in str(error)
+        for error in exc_info.value.__cause__.exceptions
+    )
+    assert service_path.read_text(encoding="utf-8") == "foreign unit drift\n"
+    current = (root / "current").lstat()
+    assert (current.st_dev, current.st_ino) == (
+        pending_current.st_dev,
+        pending_current.st_ino,
+    )
+    assert not any(args[:1] in {("enable",), ("start",)} for args in systemctl_calls)
+    assert (unit_dir / service_module.SERVICE_PENDING_V1_NAME).exists()
+
+
+def test_pending_recovery_refuses_byte_identical_foreign_old_unit_replacement(
+    tmp_path,
+    monkeypatch,
+):
+    """A foreign atomic replacement must not masquerade as the journal's old Unit."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    systemctl_calls: list[tuple[str, ...]] = []
+
+    def systemctl(*args: str, check: bool = True):
+        systemctl_calls.append(args)
+        if args[:1] == ("is-enabled",):
+            return subprocess.CompletedProcess(args, 1, "disabled\n", "")
+        if args[:1] == ("is-active",):
+            return subprocess.CompletedProcess(args, 1, "inactive\n", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    monkeypatch.setattr(service_module, "_systemctl", systemctl)
+    config_path = tmp_path / "config.toml"
+    service_install(AppConfig(accounts=()), config_path)
+    unit_dir = tmp_path / "config" / "systemd" / "user"
+    service_path = unit_dir / SERVICE_NAME
+    timer_path = unit_dir / TIMER_NAME
+    paths = (service_path, timer_path)
+    previous = {path: service_module._read_unit_snapshot(path) for path in paths}
+    root = tmp_path / "data" / "codex-usage-service-runtime-v2"
+    pending = None
+
+    def before_cutover(new, old, staging):
+        nonlocal pending
+        pending = service_module._prepare_pending_service_transaction(
+            unit_dir=unit_dir,
+            operation="install",
+            previous_units=previous,
+            new_units={
+                service_path: "pending service unit\n",
+                timer_path: previous[timer_path] or "",
+            },
+            activation=("enabled", "active"),
+            enable_link=None,
+            root=root,
+            staging=staging,
+            old=old,
+            new=new,
+        )
+
+    service_module._materialize_service_runtime(
+        service_module._resolve_codex_usage(),
+        before_cutover=before_cutover,
+    )
+    assert pending is not None
+    service_module._advance_pending_service_transaction(pending, "runtime")
+    pending_current = (root / "current").lstat()
+    journal_path = unit_dir / service_module.SERVICE_PENDING_V1_NAME
+    journal_bytes = journal_path.read_bytes()
+    staged = {
+        path: unit_dir / pending.document["units"][path.name]["staging_name"]
+        for path in paths
+    }
+    staged_bytes = {path: staged[path].read_bytes() for path in paths}
+    staged_ids = {
+        path: (
+            staged[path].stat().st_dev,
+            staged[path].stat().st_ino,
+            staged[path].stat().st_mtime_ns,
+        )
+        for path in paths
+    }
+    old_service_identity = pending.document["units"][SERVICE_NAME]["old"]["identity"]
+    service_module.write_private_text(
+        service_path,
+        previous[service_path] or "",
+        label="systemd service",
+        mode=0o600,
+    )
+    externally_replaced = service_module._pending_unit_snapshot(service_path)
+    assert externally_replaced is not None
+    assert externally_replaced["identity"] != old_service_identity
+    systemctl_calls.clear()
+
+    with pytest.raises(ServiceError) as exc_info:
+        service_module._recover_pending_service_operation()
+
+    assert isinstance(exc_info.value.__cause__, ExceptionGroup)
+    assert any(
+        "service pending unit changed" in str(error)
+        for error in exc_info.value.__cause__.exceptions
+    )
+    assert service_module._pending_unit_snapshot(service_path) == externally_replaced
+    current = (root / "current").lstat()
+    assert (current.st_dev, current.st_ino) == (
+        pending_current.st_dev,
+        pending_current.st_ino,
+    )
+    assert journal_path.read_bytes() == journal_bytes
+    for path in paths:
+        assert staged[path].read_bytes() == staged_bytes[path]
+        item = staged[path].stat()
+        assert (item.st_dev, item.st_ino, item.st_mtime_ns) == staged_ids[path]
+    assert systemctl_calls == []
+
+
+def test_pending_recovery_accepts_only_its_journal_bound_restored_old_unit(
+    tmp_path,
+    monkeypatch,
+):
+    """A retry may recognize an old Unit only after its own durable restore binding."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    monkeypatch.setattr(service_module, "_systemctl", _inactive_systemctl)
+    config_path = tmp_path / "config.toml"
+    service_install(AppConfig(accounts=()), config_path)
+    unit_dir = tmp_path / "config" / "systemd" / "user"
+    service_path = unit_dir / SERVICE_NAME
+    timer_path = unit_dir / TIMER_NAME
+    paths = (service_path, timer_path)
+    previous = {path: service_module._read_unit_snapshot(path) for path in paths}
+    root = tmp_path / "data" / "codex-usage-service-runtime-v2"
+    pending = None
+
+    def before_cutover(new, old, staging):
+        nonlocal pending
+        pending = service_module._prepare_pending_service_transaction(
+            unit_dir=unit_dir,
+            operation="install",
+            previous_units=previous,
+            new_units={
+                service_path: "pending service unit\n",
+                timer_path: "pending timer unit\n",
+            },
+            activation=("disabled", "inactive"),
+            enable_link=None,
+            root=root,
+            staging=staging,
+            old=old,
+            new=new,
+        )
+
+    service_module._materialize_service_runtime(
+        service_module._resolve_codex_usage(),
+        before_cutover=before_cutover,
+    )
+    assert pending is not None
+    service_module._advance_pending_service_transaction(pending, "runtime")
+    for path in paths:
+        service_module._publish_pending_service_unit_generation(pending, path)
+    service_module._advance_pending_service_transaction(pending, "units")
+    original_write = service_module.write_private_text
+
+    def fail_timer_restore(path, text, *, label, mode):
+        if path == timer_path and text == previous[timer_path]:
+            raise OSError("timer restore interrupted")
+        return original_write(path, text, label=label, mode=mode)
+
+    monkeypatch.setattr(service_module, "write_private_text", fail_timer_restore)
+    with pytest.raises(ServiceError):
+        service_module._recover_pending_service_operation()
+
+    persisted = service_module._load_pending_service_operation(unit_dir)
+    assert persisted is not None
+    restored_service = service_module._pending_unit_snapshot(service_path)
+    assert restored_service is not None
+    assert (
+        persisted["units"][SERVICE_NAME]["restored_old_identity"]
+        == restored_service["identity"]
+    )
+    monkeypatch.setattr(service_module, "write_private_text", original_write)
+
+    service_module._recover_pending_service_operation()
+
+    assert {path: service_module._read_unit_snapshot(path) for path in paths} == previous
+    assert not (unit_dir / service_module.SERVICE_PENDING_V1_NAME).exists()
+
+
+def test_pending_recovery_blocks_reactivation_after_runtime_rollback_failure(
+    tmp_path,
+    monkeypatch,
+):
+    """A failed runtime rollback remains transparent and keeps the timer quiesced."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    calls: list[tuple[str, ...]] = []
+
+    def systemctl(*args: str, check: bool = True):
+        calls.append(args)
+        if args[:1] == ("is-enabled",):
+            return subprocess.CompletedProcess(args, 1, "disabled\n", "")
+        if args[:1] == ("is-active",):
+            return subprocess.CompletedProcess(args, 1, "inactive\n", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    monkeypatch.setattr(service_module, "_systemctl", systemctl)
+    config_path = tmp_path / "config.toml"
+    service_install(AppConfig(accounts=()), config_path)
+    unit_dir = tmp_path / "config" / "systemd" / "user"
+    paths = (unit_dir / SERVICE_NAME, unit_dir / TIMER_NAME)
+    previous = {path: service_module._read_unit_snapshot(path) for path in paths}
+    root = tmp_path / "data" / "codex-usage-service-runtime-v2"
+    pending = None
+
+    def before_cutover(new, old, staging):
+        nonlocal pending
+        pending = service_module._prepare_pending_service_transaction(
+            unit_dir=unit_dir,
+            operation="install",
+            previous_units=previous,
+            new_units={
+                unit_dir / SERVICE_NAME: previous[unit_dir / SERVICE_NAME] or "",
+                unit_dir / TIMER_NAME: previous[unit_dir / TIMER_NAME] or "",
+            },
+            activation=("enabled", "active"),
+            enable_link=None,
+            root=root,
+            staging=staging,
+            old=old,
+            new=new,
+        )
+
+    service_module._materialize_service_runtime(
+        service_module._resolve_codex_usage(),
+        before_cutover=before_cutover,
+    )
+    assert pending is not None
+    service_module._advance_pending_service_transaction(pending, "runtime")
+    monkeypatch.setattr(
+        service_module,
+        "_recover_pending_runtime",
+        lambda _runtime: (_ for _ in ()).throw(ServiceError("runtime rollback failed")),
+    )
+    calls.clear()
+
+    with pytest.raises(ServiceError) as exc_info:
+        service_module._recover_pending_service_operation()
+
+    assert isinstance(exc_info.value.__cause__, ExceptionGroup)
+    assert any(
+        str(error) == "runtime rollback failed"
+        for error in exc_info.value.__cause__.exceptions
+    )
+    assert any(
+        str(error) == "service pending transaction activation is blocked"
+        for error in exc_info.value.__cause__.exceptions
+    )
+    assert not any(args[:1] in {("enable",), ("start",)} for args in calls)
+
+
+def test_runtime_builder_rejects_user_owned_producer_venv_interpreter(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if Core reused a producer or user-owned Python runtime."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    producer_python = tmp_path / "producer" / "venv" / "bin" / "python"
+    producer_python.parent.mkdir(parents=True)
+    shutil.copyfile(sys.executable, producer_python)
+    producer_python.chmod(0o700)
+    monkeypatch.setattr(service_module.sys, "executable", str(producer_python))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    executable = service_module._resolve_codex_usage()
+
+    with pytest.raises(ServiceError, match="system Python"):
+        service_module._materialize_service_runtime(executable)
+
+
+@pytest.mark.parametrize(
+    "drift",
+    ("symlink", "hardlink", "version", "interpreter", "module"),
+)
+def test_runtime_revalidation_fails_closed_for_attested_component_drift(
+    tmp_path,
+    monkeypatch,
+    drift,
+):
+    """Would fail if a runtime component escaped its recorded binding."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    executable = service_module._resolve_codex_usage()
+    runtime = service_module._materialize_service_runtime(executable)
+    root = tmp_path / "data" / "codex-usage-service-runtime-v2"
+    current = root / "current"
+    if drift == "symlink":
+        relocated = root / "relocated-current"
+        current.rename(relocated)
+        current.symlink_to(relocated, target_is_directory=True)
+    elif drift == "hardlink":
+        os.link(
+            current / "bin" / "codex-usage-integration-watchdog-v2",
+            current / "bin" / "watchdog-hardlink",
+        )
+    elif drift == "version":
+        metadata = (
+            current
+            / "venv"
+            / "lib"
+            / f"python{sys.version_info.major}.{sys.version_info.minor}"
+            / "site-packages"
+            / "codex_usage-0.6.538.dist-info"
+            / "METADATA"
+        )
+        metadata.write_text("Name: codex-usage\nVersion: 0.0.0\n", encoding="utf-8")
+        metadata.chmod(0o600)
+    elif drift == "interpreter":
+        interpreter = current / "venv" / "bin" / "python"
+        interpreter.write_bytes(b"interpreter drift")
+        interpreter.chmod(0o700)
+    else:
+        module = (
+            current
+            / "venv"
+            / "lib"
+            / f"python{sys.version_info.major}.{sys.version_info.minor}"
+            / "site-packages"
+            / "codex_usage"
+            / "integration_watchdog.py"
+        )
+        module.write_text("def main():\n    return 1\n", encoding="utf-8")
+        module.chmod(0o600)
+
+    with pytest.raises(ServiceError):
+        service_module._revalidate_service_runtime_for_unit_write(runtime)
+
+
+def test_runtime_watchdog_ignores_user_site_module_shadow(
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if PYTHONPATH could select a user or producer module instead."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+    shadow_module = tmp_path / "producer-shadow" / "codex_usage"
+    shadow_module.mkdir(parents=True)
+    (shadow_module / "__init__.py").write_text("", encoding="utf-8")
+    (shadow_module / "integration_watchdog.py").write_text(
+        "def main():\n    return 37\n",
+        encoding="utf-8",
+    )
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    executable = service_module._resolve_codex_usage()
+    runtime = service_module._materialize_service_runtime(executable)
+    completed = subprocess.run(
+        [
+            "/usr/bin/env",
+            f"PYTHONPATH={tmp_path / 'producer-shadow'}",
+            str(runtime.binding.watchdog.path),
+            "--config",
+            str(tmp_path / "config.toml"),
+        ],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONSAFEPATH": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "XDG_DATA_HOME": str(tmp_path / "data"),
+            "XDG_STATE_HOME": str(tmp_path / "state"),
+        },
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 class _BrokenInt(int):
@@ -429,8 +2101,11 @@ def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
     timer = timer_path.read_text(encoding="utf-8")
     assert "ExecStart=" in service
     assert "Type=oneshot" in service
-    assert str(executable.with_name("codex-usage-integration-watchdog")) in service
-    assert '"watchdog"' not in service
+    assert (
+        str(tmp_path / "data" / "codex-usage-service-runtime-v2" / "current" / "bin")
+        in service
+    )
+    assert "--config" not in service
     assert f'Environment="XDG_DATA_HOME={tmp_path / "data"}"' in service
     assert f'Environment="XDG_STATE_HOME={tmp_path / ".local" / "state"}"' in service
     assert (
@@ -449,9 +2124,9 @@ def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
     assert "TasksMax=256" in service
     assert "OOMPolicy=kill" in service
     assert "Restart=no" in service
-    assert f'ReadWritePaths="{profile_dir}"' in service
-    assert f'ReadWritePaths="{local_profile_dir}"' in service
-    assert f'ReadWritePaths="{auth_home}"' in service
+    assert f'ReadWritePaths="{profile_dir}"' not in service
+    assert f'ReadWritePaths="{local_profile_dir}"' not in service
+    assert f'ReadWritePaths="{auth_home}"' not in service
     assert f'ReadWritePaths="{tmp_path / "config" / "codex-usage"}"' not in service
     assert "OnActiveSec=1min" in timer
     assert "OnBootSec=" not in timer
@@ -467,20 +2142,24 @@ def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
     assert result["service_result"] == "success"
     assert result["service_exit_status"] == "0"
     assert result["service_exit_code"] == "exited"
-    assert managed_service_config_path() == (
-        tmp_path / "config" / "codex-usage" / "config.toml"
-    ).absolute()
+    assert managed_service_config_path() is None
 
 
 def test_service_enable_removes_new_units_when_activation_fails(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    executable = tmp_path / "bin" / "codex-usage"
-    executable.parent.mkdir()
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
-    _mock_resolved_executable_without_attestation(monkeypatch, executable)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
     calls: list[tuple[str, ...]] = []
 
     def fail_enable(*args, check=True):
@@ -501,20 +2180,30 @@ def test_service_enable_removes_new_units_when_activation_fails(tmp_path, monkey
     unit_dir = tmp_path / "config" / "systemd" / "user"
     assert not (unit_dir / "codex-usage.service").exists()
     assert not (unit_dir / "codex-usage.timer").exists()
-    assert ("disable", TIMER_NAME) not in calls
+    assert ("disable", TIMER_NAME) in calls
 
 
 def test_service_enable_cleans_partial_enable_after_command_failure(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    monkeypatch.setattr("codex_usage.service._service_install_unlocked", lambda *_args: {})
-    monkeypatch.setattr(
-        "codex_usage.service._systemd_activation_snapshot",
-        lambda: ("not-found", "inactive"),
-    )
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
     cleaned = []
 
     def fail_after_enable_started(*args, check=True):
+        if args == ("is-enabled", TIMER_NAME):
+            return subprocess.CompletedProcess(args, 1, "disabled\n", "")
+        if args == ("is-active", TIMER_NAME):
+            return subprocess.CompletedProcess(args, 1, "inactive\n", "")
         if args == ("enable", TIMER_NAME):
             raise ServiceError("systemctl enable failed after link creation")
         return subprocess.CompletedProcess(args, 0, "", "")
@@ -534,11 +2223,16 @@ def test_service_enable_cleans_partial_enable_after_command_failure(tmp_path, mo
 def test_service_install_serializes_concurrent_calls(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    executable = tmp_path / "bin" / "codex-usage"
-    executable.parent.mkdir(parents=True)
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
-    _mock_resolved_executable_without_attestation(monkeypatch, executable)
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
     first_reload_entered = threading.Event()
     second_reload_entered = threading.Event()
     release_first_reload = threading.Event()
@@ -547,6 +2241,10 @@ def test_service_install_serializes_concurrent_calls(tmp_path, monkeypatch):
 
     def block_first_reload(*args, check=True):
         nonlocal reload_count
+        if args == ("is-enabled", TIMER_NAME):
+            return subprocess.CompletedProcess(args, 1, "not-found\n", "")
+        if args == ("is-active", TIMER_NAME):
+            return subprocess.CompletedProcess(args, 3, "inactive\n", "")
         if args == ("daemon-reload",):
             with reload_lock:
                 reload_count += 1
@@ -612,11 +2310,17 @@ def test_service_enable_removes_first_install_enable_link_after_restart_failure(
 ):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    executable = tmp_path / "bin" / "codex-usage"
-    executable.parent.mkdir(parents=True)
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
-    _mock_resolved_executable_without_attestation(monkeypatch, executable)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
     unit_dir = tmp_path / "config" / "systemd" / "user"
     wants_dir = unit_dir / "timers.target.wants"
     timer_path = unit_dir / TIMER_NAME
@@ -651,11 +2355,17 @@ def test_service_enable_removes_first_install_enable_link_after_restart_failure(
 def test_service_enable_removes_enable_link_when_disable_fails(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    executable = tmp_path / "bin" / "codex-usage"
-    executable.parent.mkdir(parents=True)
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
-    _mock_resolved_executable_without_attestation(monkeypatch, executable)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
     unit_dir = tmp_path / "config" / "systemd" / "user"
     wants_dir = unit_dir / "timers.target.wants"
     timer_path = unit_dir / TIMER_NAME
@@ -681,7 +2391,16 @@ def test_service_enable_removes_enable_link_when_disable_fails(tmp_path, monkeyp
         service_enable(AppConfig(accounts=()), tmp_path / "config.toml")
 
     assert isinstance(exc.value.__cause__, ExceptionGroup)
-    assert any(str(error) == "systemctl disable failed" for error in exc.value.__cause__.exceptions)
+    recovery_error = next(
+        error
+        for error in exc.value.__cause__.exceptions
+        if str(error) == "could not recover service pending transaction"
+    )
+    assert isinstance(recovery_error.__cause__, ExceptionGroup)
+    assert any(
+        str(error) == "systemctl disable failed"
+        for error in recovery_error.__cause__.exceptions
+    )
     assert not (wants_dir / TIMER_NAME).is_symlink()
 
 
@@ -757,10 +2476,17 @@ def test_cleanup_managed_timer_link_refuses_symlinked_wants_directory(
 def test_service_enable_restores_previous_units_when_restart_fails(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    executable = tmp_path / "bin" / "codex-usage"
-    executable.parent.mkdir()
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
     unit_dir = tmp_path / "config" / "systemd" / "user"
     unit_dir.mkdir(parents=True)
     service_path = unit_dir / "codex-usage.service"
@@ -769,7 +2495,6 @@ def test_service_enable_restores_previous_units_when_restart_fails(tmp_path, mon
     old_timer = "old timer\nX-Codex-Usage-Managed=true\n"
     service_path.write_text(old_service, encoding="utf-8")
     timer_path.write_text(old_timer, encoding="utf-8")
-    _mock_resolved_executable_without_attestation(monkeypatch, executable)
     restart_attempts = 0
 
     def fail_restart(*args, check=True):
@@ -798,10 +2523,17 @@ def test_service_enable_restores_disabled_inactive_state_after_partial_enable(
 ):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    executable = tmp_path / "bin" / "codex-usage"
-    executable.parent.mkdir(parents=True)
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
     unit_dir = tmp_path / "config" / "systemd" / "user"
     unit_dir.mkdir(parents=True)
     for name in (SERVICE_NAME, TIMER_NAME):
@@ -809,7 +2541,6 @@ def test_service_enable_restores_disabled_inactive_state_after_partial_enable(
             "old unit\nX-Codex-Usage-Managed=true\n",
             encoding="utf-8",
         )
-    _mock_resolved_executable_without_attestation(monkeypatch, executable)
     calls: list[tuple[str, ...]] = []
 
     def fail_restart(*args, check=True):
@@ -878,49 +2609,76 @@ def test_reject_home_write_path_wraps_runtime_resolution_errors(monkeypatch):
         service_module._reject_home_write_path(Path("/tmp/profile"), label="profile")
 
 
-@pytest.mark.parametrize("field", ("profile", "auth"))
-def test_service_rejects_home_as_account_writable_path(tmp_path, monkeypatch, field):
+def test_config_rejects_home_as_account_profile_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path),
+        auth_json_path=str(tmp_path / "agent" / "auth.json"),
+        backend="app-server",
+    )
+
+    with pytest.raises(ValueError, match="profile dir must not be a protected directory"):
+        service_module._validate_config(AppConfig(accounts=(account,)))
+
+
+def test_publisher_service_does_not_render_account_writable_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    executable = tmp_path / "bin" / "codex-usage"
-    executable.parent.mkdir()
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    monkeypatch.setattr(service_module, "_systemctl", _inactive_systemctl)
     profile_dir = tmp_path / "profile"
     profile_dir.mkdir()
     auth_home = tmp_path / "agent"
     auth_home.mkdir()
-    auth_json_path = (
-        tmp_path / "auth.json" if field == "auth" else auth_home / "auth.json"
-    )
+    auth_json_path = auth_home / "auth.json"
     account = Account(
         id="work",
         label="Work",
-        profile_dir=str(tmp_path if field == "profile" else profile_dir),
+        profile_dir=str(profile_dir),
         auth_json_path=str(auth_json_path),
         backend="app-server",
     )
 
-    _mock_resolved_executable_without_attestation(monkeypatch, executable)
+    service_install(
+        AppConfig(accounts=(account,)),
+        tmp_path / "config" / "codex-usage" / "config.toml",
+    )
 
-    with pytest.raises(
-        (ServiceError, ValueError), match=r"home directory|protected directory"
-    ):
-        service_install(
-            AppConfig(accounts=(account,)),
-            tmp_path / "config" / "codex-usage" / "config.toml",
-        )
+    service_text = (
+        tmp_path / "config" / "systemd" / "user" / SERVICE_NAME
+    ).read_text(encoding="utf-8")
+    assert str(profile_dir) not in service_text
+    assert str(auth_home) not in service_text
 
 
-def test_service_units_escape_percent_specifiers_and_restore_config_path(tmp_path, monkeypatch):
+def test_publisher_service_escapes_runtime_percent_specifiers_without_config_path(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    executable = tmp_path / "bin" / "codex%usage"
-    executable.parent.mkdir()
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data%home"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
     profile_dir = tmp_path / "profile%user"
     profile_dir.mkdir()
     auth_home = tmp_path / "agent%user"
@@ -932,8 +2690,6 @@ def test_service_units_escape_percent_specifiers_and_restore_config_path(tmp_pat
         auth_json_path=str(auth_home / "auth.json"),
         backend="direct",
     )
-
-    _mock_resolved_executable_without_attestation(monkeypatch, executable)
 
     def fake_systemctl(*args, check=True):
         stdout = ""
@@ -959,7 +2715,10 @@ def test_service_units_escape_percent_specifiers_and_restore_config_path(tmp_pat
     service_path = tmp_path / "config" / "systemd" / "user" / "codex-usage.service"
     service = service_path.read_text(encoding="utf-8")
     assert "%%" in service
-    assert managed_service_config_path() == config_path.absolute()
+    assert str(config_path) not in service
+    assert str(profile_dir) not in service
+    assert str(auth_home) not in service
+    assert managed_service_config_path() is None
 
 
 def test_service_uninstall_refuses_unmanaged_unit(tmp_path, monkeypatch):
@@ -1237,19 +2996,25 @@ def test_service_install_rolls_back_new_units_when_timer_write_fails(
 ):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    executable = tmp_path / "bin" / "codex-usage"
-    executable.parent.mkdir()
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
-    _mock_resolved_executable_without_attestation(monkeypatch, executable)
-    original_write = service_module.write_private_text
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
 
-    def fail_timer_write(path, text, *, label, mode=0o600):
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    monkeypatch.setattr(service_module, "_systemctl", _inactive_systemctl)
+    def fail_timer_write(path):
         if path.name == "codex-usage.timer":
             raise OSError("simulated timer write failure")
-        return original_write(path, text, label=label, mode=mode)
 
-    monkeypatch.setattr("codex_usage.service.write_private_text", fail_timer_write)
+    monkeypatch.setattr(
+        "codex_usage.service._after_pending_service_unit_cutover", fail_timer_write
+    )
 
     with pytest.raises(OSError, match="simulated timer write failure"):
         service_install(AppConfig(accounts=(), interval_seconds=300), tmp_path / "config.toml")
@@ -1266,20 +3031,18 @@ def test_service_install_rolls_back_baseexception_after_service_write(
     """Would fail if BaseException bypassed the unit write transaction rollback."""
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    executable = tmp_path / "bin" / "codex-usage"
-    executable.parent.mkdir()
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
-    _mock_resolved_executable_without_attestation(monkeypatch, executable)
-    original_write = service_module.write_private_text
+    _prepare_record_bound_service_install(tmp_path, monkeypatch)
+    monkeypatch.setattr(service_module, "_systemctl", _inactive_systemctl)
+    writes = 0
 
-    def interrupt_after_service_write(path, text, *, label, mode=0o600):
-        original_write(path, text, label=label, mode=mode)
-        if path.name == SERVICE_NAME:
+    def interrupt_after_service_write(path):
+        nonlocal writes
+        if path.name == SERVICE_NAME and writes == 0:
+            writes += 1
             raise KeyboardInterrupt("service write interrupted")
 
     monkeypatch.setattr(
-        "codex_usage.service.write_private_text",
+        "codex_usage.service._after_pending_service_unit_cutover",
         interrupt_after_service_write,
     )
 
@@ -1298,17 +3061,12 @@ def test_service_install_reports_partial_units_when_baseexception_rollback_fails
     """Would fail if a rollback failure hid a partial dual-unit write."""
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    executable = tmp_path / "bin" / "codex-usage"
-    executable.parent.mkdir()
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
-    _mock_resolved_executable_without_attestation(monkeypatch, executable)
-    original_write = service_module.write_private_text
+    _prepare_record_bound_service_install(tmp_path, monkeypatch)
+    monkeypatch.setattr(service_module, "_systemctl", _inactive_systemctl)
     unit_dir = tmp_path / "config" / "systemd" / "user"
     service_path = unit_dir / SERVICE_NAME
 
-    def interrupt_after_service_write(path, text, *, label, mode=0o600):
-        original_write(path, text, label=label, mode=mode)
+    def interrupt_after_service_write(path):
         if path.name == SERVICE_NAME:
             raise KeyboardInterrupt("service write interrupted")
 
@@ -1320,7 +3078,7 @@ def test_service_install_reports_partial_units_when_baseexception_rollback_fails
         return original_unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(
-        "codex_usage.service.write_private_text",
+        "codex_usage.service._after_pending_service_unit_cutover",
         interrupt_after_service_write,
     )
     monkeypatch.setattr(Path, "unlink", fail_service_rollback_unlink)
@@ -1340,20 +3098,14 @@ def test_service_install_rolls_back_baseexception_after_timer_write(
     """Would fail if BaseException after second write left a partial service+timer."""
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    executable = tmp_path / "bin" / "codex-usage"
-    executable.parent.mkdir()
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
-    _mock_resolved_executable_without_attestation(monkeypatch, executable)
-    original_write = service_module.write_private_text
-
-    def interrupt_after_timer_write(path, text, *, label, mode=0o600):
-        original_write(path, text, label=label, mode=mode)
+    _prepare_record_bound_service_install(tmp_path, monkeypatch)
+    monkeypatch.setattr(service_module, "_systemctl", _inactive_systemctl)
+    def interrupt_after_timer_write(path):
         if path.name == TIMER_NAME:
             raise SystemExit("timer write interrupted")
 
     monkeypatch.setattr(
-        "codex_usage.service.write_private_text",
+        "codex_usage.service._after_pending_service_unit_cutover",
         interrupt_after_timer_write,
     )
 
@@ -1370,10 +3122,8 @@ def test_service_install_restores_existing_units_when_timer_write_fails(
 ):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    executable = tmp_path / "bin" / "codex-usage"
-    executable.parent.mkdir()
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
+    _prepare_record_bound_service_install(tmp_path, monkeypatch)
+    monkeypatch.setattr(service_module, "_systemctl", _inactive_systemctl)
     unit_dir = tmp_path / "config" / "systemd" / "user"
     unit_dir.mkdir(parents=True)
     service_path = unit_dir / "codex-usage.service"
@@ -1382,18 +3132,18 @@ def test_service_install_restores_existing_units_when_timer_write_fails(
     old_timer = "old timer\nX-Codex-Usage-Managed=true\n"
     service_path.write_text(old_service, encoding="utf-8")
     timer_path.write_text(old_timer, encoding="utf-8")
-    _mock_resolved_executable_without_attestation(monkeypatch, executable)
-    original_write = service_module.write_private_text
     timer_attempts = 0
 
-    def fail_after_timer_write(path, text, *, label, mode=0o600):
+    def fail_after_timer_write(path):
         nonlocal timer_attempts
-        original_write(path, text, label=label, mode=mode)
         if path.name == "codex-usage.timer" and timer_attempts == 0:
             timer_attempts += 1
             raise OSError("simulated timer fsync failure")
 
-    monkeypatch.setattr("codex_usage.service.write_private_text", fail_after_timer_write)
+    monkeypatch.setattr(
+        "codex_usage.service._after_pending_service_unit_cutover",
+        fail_after_timer_write,
+    )
 
     with pytest.raises(OSError, match="simulated timer fsync failure"):
         service_install(AppConfig(accounts=(), interval_seconds=300), tmp_path / "config.toml")
@@ -1407,126 +3157,128 @@ def test_service_install_aggregates_install_and_restore_failures(
 ):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    executable = tmp_path / "bin" / "codex-usage"
-    executable.parent.mkdir()
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
+    _prepare_record_bound_service_install(tmp_path, monkeypatch)
+    monkeypatch.setattr(service_module, "_systemctl", _inactive_systemctl)
     unit_dir = tmp_path / "config" / "systemd" / "user"
     unit_dir.mkdir(parents=True)
     service_path = unit_dir / "codex-usage.service"
     timer_path = unit_dir / "codex-usage.timer"
     service_path.write_text("old service\nX-Codex-Usage-Managed=true\n", encoding="utf-8")
     timer_path.write_text("old timer\nX-Codex-Usage-Managed=true\n", encoding="utf-8")
-    _mock_resolved_executable_without_attestation(monkeypatch, executable)
     original_write = service_module.write_private_text
-    timer_attempts = 0
 
-    def fail_timer_write(path, text, *, label, mode=0o600):
-        nonlocal timer_attempts
+    def fail_timer_restore(path, text, *, label, mode=0o600):
         if path.name == "codex-usage.timer":
-            timer_attempts += 1
-            if timer_attempts == 1:
-                raise OSError("timer write failed")
             raise OSError("timer restore failed")
         return original_write(path, text, label=label, mode=mode)
 
-    monkeypatch.setattr("codex_usage.service.write_private_text", fail_timer_write)
+    monkeypatch.setattr("codex_usage.service.write_private_text", fail_timer_restore)
+    monkeypatch.setattr(
+        "codex_usage.service._after_pending_service_unit_cutover",
+        lambda path: (
+            (_ for _ in ()).throw(OSError("timer write failed"))
+            if path.name == TIMER_NAME
+            else None
+        ),
+    )
 
     with pytest.raises(ServiceError) as exc:
         service_install(AppConfig(accounts=(), interval_seconds=300), tmp_path / "config.toml")
 
     assert isinstance(exc.value.__cause__, ExceptionGroup)
-    assert [str(error) for error in exc.value.__cause__.exceptions] == [
+    rollback_errors = exc.value.__cause__.exceptions
+    assert [str(error) for error in rollback_errors] == [
         "timer write failed",
+        "could not recover service pending transaction",
+    ]
+    assert isinstance(rollback_errors[1].__cause__, ExceptionGroup)
+    assert [str(error) for error in rollback_errors[1].__cause__.exceptions] == [
         "timer restore failed",
+        "service pending transaction activation is blocked",
     ]
 
 
 def test_service_install_preserves_both_unit_restore_failures(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    executable = tmp_path / "bin" / "codex-usage"
-    executable.parent.mkdir(parents=True)
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
+    _prepare_record_bound_service_install(tmp_path, monkeypatch)
+    monkeypatch.setattr(service_module, "_systemctl", _inactive_systemctl)
     unit_dir = tmp_path / "config" / "systemd" / "user"
     unit_dir.mkdir(parents=True)
     service_path = unit_dir / "codex-usage.service"
     timer_path = unit_dir / "codex-usage.timer"
     service_path.write_text("old service\nX-Codex-Usage-Managed=true\n", encoding="utf-8")
     timer_path.write_text("old timer\nX-Codex-Usage-Managed=true\n", encoding="utf-8")
-    _mock_resolved_executable_without_attestation(monkeypatch, executable)
     original_write = service_module.write_private_text
-    service_writes = 0
-    timer_writes = 0
 
     def fail_both_restores(path, text, *, label, mode=0o600):
-        nonlocal service_writes, timer_writes
         if path == service_path:
-            service_writes += 1
-            if service_writes > 1:
-                raise OSError("service restore failed")
+            raise OSError("service restore failed")
         if path == timer_path:
-            timer_writes += 1
-            if timer_writes == 1:
-                raise OSError("timer write failed")
             raise OSError("timer restore failed")
         return original_write(path, text, label=label, mode=mode)
 
     monkeypatch.setattr("codex_usage.service.write_private_text", fail_both_restores)
+    monkeypatch.setattr(
+        "codex_usage.service._after_pending_service_unit_cutover",
+        lambda path: (
+            (_ for _ in ()).throw(OSError("timer write failed"))
+            if path.name == TIMER_NAME
+            else None
+        ),
+    )
 
     with pytest.raises(ServiceError) as exc:
         service_install(AppConfig(accounts=(), interval_seconds=300), tmp_path / "config.toml")
 
     rollback_errors = exc.value.__cause__.exceptions
     assert [str(error) for error in rollback_errors[0:1]] == ["timer write failed"]
-    assert isinstance(rollback_errors[1], ExceptionGroup)
-    assert [str(error) for error in rollback_errors[1].exceptions] == [
+    assert str(rollback_errors[1]) == "could not recover service pending transaction"
+    assert isinstance(rollback_errors[1].__cause__, ExceptionGroup)
+    recovery_errors = rollback_errors[1].__cause__.exceptions
+    assert len(recovery_errors) == 2
+    assert isinstance(recovery_errors[0], ExceptionGroup)
+    assert [str(error) for error in recovery_errors[0].exceptions] == [
         "service restore failed",
         "timer restore failed",
     ]
+    assert str(recovery_errors[1]) == "service pending transaction activation is blocked"
 
 
-def test_service_enable_aggregates_all_activation_rollback_failures(
+def test_service_enable_groups_activation_and_pending_recovery_failures(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    monkeypatch.setattr("codex_usage.service._service_install_unlocked", lambda *_args: {})
-    monkeypatch.setattr(
-        "codex_usage.service.service_install",
-        lambda *_args: pytest.fail("nested public service_install call"),
+    receipt = service_module._ServiceInstallReceipt(
+        result={"installed": True},
+        runtime=SimpleNamespace(),
+        pending=SimpleNamespace(),
     )
     monkeypatch.setattr(
-        "codex_usage.service._systemd_activation_snapshot",
-        lambda: ("enabled", "active"),
+        "codex_usage.service._service_install_unlocked",
+        lambda *_args, **_kwargs: receipt,
     )
 
     def fail_systemctl(*args, check=True):
         if args == ("enable", TIMER_NAME):
             raise OSError("activation enable failed")
-        raise OSError(f"rollback systemctl failed: {args[0]}")
-
-    def fail_unit_restore(*_args):
-        raise OSError("unit restore failed")
-
-    def fail_activation_restore(*_args):
-        raise OSError("activation restore failed")
+        return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr("codex_usage.service._systemctl", fail_systemctl)
-    monkeypatch.setattr("codex_usage.service._restore_unit_snapshot", fail_unit_restore)
     monkeypatch.setattr(
-        "codex_usage.service._restore_systemd_activation", fail_activation_restore
+        "codex_usage.service._recover_pending_service_operation",
+        lambda: (_ for _ in ()).throw(ServiceError("pending recovery failed")),
     )
 
     with pytest.raises(ServiceError) as exc:
-        service_enable(AppConfig(accounts=()), tmp_path / "config.toml")
+        service_module._service_enable_unlocked(
+            AppConfig(accounts=()), tmp_path / "config.toml"
+        )
 
     assert isinstance(exc.value.__cause__, ExceptionGroup)
     assert [str(error) for error in exc.value.__cause__.exceptions] == [
         "activation enable failed",
-        "unit restore failed",
-        "rollback systemctl failed: daemon-reload",
-        "activation restore failed",
+        "pending recovery failed",
     ]
 
 
@@ -1578,10 +3330,7 @@ def test_service_install_reloads_systemd_after_daemon_reload_failure(
 ):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    executable = tmp_path / "bin" / "codex-usage"
-    executable.parent.mkdir()
-    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    executable.chmod(0o700)
+    _prepare_record_bound_service_install(tmp_path, monkeypatch)
     unit_dir = tmp_path / "config" / "systemd" / "user"
     unit_dir.mkdir(parents=True)
     service_path = unit_dir / "codex-usage.service"
@@ -1590,11 +3339,14 @@ def test_service_install_reloads_systemd_after_daemon_reload_failure(
     old_timer = "old timer\nX-Codex-Usage-Managed=true\n"
     service_path.write_text(old_service, encoding="utf-8")
     timer_path.write_text(old_timer, encoding="utf-8")
-    _mock_resolved_executable_without_attestation(monkeypatch, executable)
     reload_calls = 0
 
     def fail_once(*args, check=True):
         nonlocal reload_calls
+        if args == ("is-enabled", TIMER_NAME):
+            return subprocess.CompletedProcess(args, 1, "disabled\n", "")
+        if args == ("is-active", TIMER_NAME):
+            return subprocess.CompletedProcess(args, 1, "inactive\n", "")
         if args == ("daemon-reload",):
             reload_calls += 1
             if reload_calls == 1:
@@ -1670,21 +3422,23 @@ def test_service_install_rejects_symlinked_config_home(tmp_path, monkeypatch):
     assert not (outside / "systemd" / "user").exists()
 
 
-def test_service_enable_collects_enable_link_cleanup_failure(monkeypatch):
+def test_service_enable_reports_pending_recovery_failure(monkeypatch):
     monkeypatch.setattr(service_module, "_unit_directory", lambda: Path("/tmp/units"))
     monkeypatch.setattr(service_module, "_validate_existing_managed_units", lambda _path: None)
-    monkeypatch.setattr(service_module, "_service_install_unlocked", lambda *_args: {})
-    monkeypatch.setattr(
-        service_module,
-        "_systemd_activation_snapshot",
-        lambda: ("not-found", "inactive"),
+    receipt = service_module._ServiceInstallReceipt(
+        result={"installed": True},
+        runtime=SimpleNamespace(),
+        pending=SimpleNamespace(),
     )
-    monkeypatch.setattr(service_module, "_restore_unit_snapshot", lambda _previous: None)
-    monkeypatch.setattr(service_module, "_restore_systemd_activation", lambda _snapshot: None)
     monkeypatch.setattr(
         service_module,
-        "_cleanup_managed_timer_enable_link",
-        lambda: (_ for _ in ()).throw(ServiceError("cleanup failed")),
+        "_service_install_unlocked",
+        lambda *_args, **_kwargs: receipt,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "_recover_pending_service_operation",
+        lambda: (_ for _ in ()).throw(ServiceError("pending recovery failed")),
     )
 
     def systemctl(*args, check=True):
@@ -1694,8 +3448,14 @@ def test_service_enable_collects_enable_link_cleanup_failure(monkeypatch):
 
     monkeypatch.setattr(service_module, "_systemctl", systemctl)
 
-    with pytest.raises(ServiceError, match="could not roll back service activation"):
+    with pytest.raises(ServiceError, match="could not roll back service activation") as exc:
         service_module._service_enable_unlocked(AppConfig(accounts=()), Path("/tmp/config.toml"))
+
+    assert isinstance(exc.value.__cause__, ExceptionGroup)
+    assert [str(error) for error in exc.value.__cause__.exceptions] == [
+        "restart failed",
+        "pending recovery failed",
+    ]
 
 
 def test_service_install_collects_reload_rollback_failure(tmp_path, monkeypatch):
@@ -2317,7 +4077,7 @@ def test_resolve_codex_usage_rejects_byte_equal_0536_distribution(
 
     monkeypatch.setattr(service_module.shutil, "which", which)
 
-    with pytest.raises(ServiceError, match="0\\.6\\.537"):
+    with pytest.raises(ServiceError, match="0\\.6\\.538"):
         service_module._resolve_codex_usage()
 
 
@@ -2497,7 +4257,7 @@ def test_metadata_headers_accepts_only_repeatable_core_metadata_fields(field):
         (
             "Metadata-Version: 2.4\n"
             "Name: codex-usage\n"
-            "Version: 0.6.537\n"
+            "Version: 0.6.538\n"
             f"{field}: first\n"
             f"{field.lower()}: second\n"
         ).encode()
@@ -2506,7 +4266,7 @@ def test_metadata_headers_accepts_only_repeatable_core_metadata_fields(field):
     assert headers == {
         "metadata-version": "2.4",
         "name": "codex-usage",
-        "version": "0.6.537",
+        "version": "0.6.538",
     }
 
 
@@ -2514,7 +4274,7 @@ def test_metadata_headers_accepts_only_repeatable_core_metadata_fields(field):
     "metadata_suffix",
     [
         pytest.param("Name: codex-usage\n", id="duplicate-name"),
-        pytest.param("Version: 0.6.537\n", id="duplicate-version"),
+        pytest.param("Version: 0.6.538\n", id="duplicate-version"),
         pytest.param("Metadata-Version: 2.4\n", id="duplicate-metadata-version"),
         pytest.param(
             "Unrecognized-Field: first\nunrecognized-field: second\n",
@@ -2529,7 +4289,7 @@ def test_metadata_headers_rejects_duplicate_identity_or_unknown_field(metadata_s
             (
                 "Metadata-Version: 2.4\n"
                 "Name: codex-usage\n"
-                "Version: 0.6.537\n"
+                "Version: 0.6.538\n"
                 f"{metadata_suffix}"
             ).encode()
         )
@@ -2576,7 +4336,7 @@ def test_resolve_codex_usage_rejects_dist_info_rebind_between_scan_and_read(
     rebound_metadata = (
         b"Metadata-Version: 2.4\n"
         b"Name: codex-usage\n"
-        b"Version: 0.6.537\n"
+        b"Version: 0.6.538\n"
         b"Summary: rebound metadata\n"
     )
     rebound_record_rows = []
@@ -2598,10 +4358,10 @@ def test_resolve_codex_usage_rejects_dist_info_rebind_between_scan_and_read(
     locate_counts: dict[str, int] = {}
 
     class RebindingDistribution:
-        version = "0.6.537"
+        version = "0.6.538"
         metadata: ClassVar[dict[str, str]] = {
             "Name": "codex-usage",
-            "Version": "0.6.537",
+            "Version": "0.6.538",
         }
 
         def locate_file(self, path: object) -> Path:
@@ -2733,8 +4493,8 @@ def test_resolve_codex_usage_scans_record_without_distribution_files_property(
 
     class RecordOnlyDistribution:
         def __init__(self) -> None:
-            self.version = "0.6.537"
-            self.metadata = {"Name": "codex-usage", "Version": "0.6.537"}
+            self.version = "0.6.538"
+            self.metadata = {"Name": "codex-usage", "Version": "0.6.538"}
 
         @property
         def files(self):  # pragma: no cover - failure path is the assertion itself
@@ -2830,14 +4590,14 @@ def test_resolve_codex_usage_rejects_duplicate_dist_info_roots(
 ):
     """Would fail if resolver trusted RECORD rows while another dist-info root existed."""
     codex_usage, wrapper, record = _write_recorded_distribution(tmp_path, monkeypatch)
-    duplicate = record.parent.with_name("codex_usage_duplicate-0.6.537.dist-info")
+    duplicate = record.parent.with_name("codex_usage_duplicate-0.6.538.dist-info")
     duplicate.mkdir()
     (duplicate / "METADATA").write_text(
-        "Metadata-Version: 2.4\nName: codex-usage\nVersion: 0.6.537\n",
+        "Metadata-Version: 2.4\nName: codex-usage\nVersion: 0.6.538\n",
         encoding="utf-8",
     )
     (duplicate / "RECORD").write_text(
-        "codex_usage_duplicate-0.6.537.dist-info/RECORD,,\n",
+        "codex_usage_duplicate-0.6.538.dist-info/RECORD,,\n",
         encoding="utf-8",
     )
 
@@ -2863,7 +4623,7 @@ def test_resolve_codex_usage_rejects_missing_record_selfrow(
     rows = [
         row
         for row in record.read_text(encoding="utf-8").splitlines()
-        if not row.startswith("codex_usage-0.6.537.dist-info/RECORD,")
+        if not row.startswith("codex_usage-0.6.538.dist-info/RECORD,")
     ]
     record.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
@@ -2903,6 +4663,10 @@ def test_service_install_rechecks_integration_watchdog_immediately_before_unit_w
 
     def systemctl(*args, check=True):
         systemctl_calls.append(args)
+        if args == ("is-enabled", TIMER_NAME):
+            return subprocess.CompletedProcess(args, 1, "disabled\n", "")
+        if args == ("is-active", TIMER_NAME):
+            return subprocess.CompletedProcess(args, 1, "inactive\n", "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(service_module.shutil, "which", which)
@@ -2915,7 +4679,15 @@ def test_service_install_rechecks_integration_watchdog_immediately_before_unit_w
     unit_dir = tmp_path / "config" / "systemd" / "user"
     assert not (unit_dir / SERVICE_NAME).exists()
     assert not (unit_dir / TIMER_NAME).exists()
-    assert systemctl_calls == []
+    assert systemctl_calls == [
+        ("is-enabled", TIMER_NAME),
+        ("is-active", TIMER_NAME),
+        ("is-enabled", TIMER_NAME),
+        ("is-active", TIMER_NAME),
+        ("daemon-reload",),
+        ("disable", TIMER_NAME),
+        ("stop", TIMER_NAME),
+    ]
 
 
 def test_service_install_revalidates_distribution_immediately_before_unit_write(
@@ -2940,6 +4712,10 @@ def test_service_install_revalidates_distribution_immediately_before_unit_write(
 
     def systemctl(*args, check=True):
         systemctl_calls.append(args)
+        if args == ("is-enabled", TIMER_NAME):
+            return subprocess.CompletedProcess(args, 1, "disabled\n", "")
+        if args == ("is-active", TIMER_NAME):
+            return subprocess.CompletedProcess(args, 1, "inactive\n", "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(service_module.shutil, "which", which)
@@ -2952,7 +4728,15 @@ def test_service_install_revalidates_distribution_immediately_before_unit_write(
     unit_dir = tmp_path / "config" / "systemd" / "user"
     assert not (unit_dir / SERVICE_NAME).exists()
     assert not (unit_dir / TIMER_NAME).exists()
-    assert systemctl_calls == []
+    assert systemctl_calls == [
+        ("is-enabled", TIMER_NAME),
+        ("is-active", TIMER_NAME),
+        ("is-enabled", TIMER_NAME),
+        ("is-active", TIMER_NAME),
+        ("daemon-reload",),
+        ("disable", TIMER_NAME),
+        ("stop", TIMER_NAME),
+    ]
 
 
 def test_service_install_revalidates_between_dual_unit_writes_and_rolls_back(
@@ -2964,7 +4748,6 @@ def test_service_install_revalidates_between_dual_unit_writes_and_rolls_back(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     codex_usage, wrapper, _record = _write_recorded_distribution(tmp_path, monkeypatch)
     systemctl_calls: list[tuple[str, ...]] = []
-    original_write = service_module.write_private_text
     drifted = False
 
     def which(name: str) -> str | None:
@@ -2974,21 +4757,27 @@ def test_service_install_revalidates_between_dual_unit_writes_and_rolls_back(
             return str(wrapper)
         raise AssertionError(f"unexpected executable lookup: {name}")
 
-    def drift_after_service_write(path, text, *, label, mode=0o600):
+    def drift_after_service_write(path):
         nonlocal drifted
-        result = original_write(path, text, label=label, mode=mode)
         if path.name == SERVICE_NAME and not drifted:
             drifted = True
             wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             wrapper.chmod(0o700)
-        return result
 
     def systemctl(*args, check=True):
         systemctl_calls.append(args)
+        if args == ("is-enabled", TIMER_NAME):
+            return subprocess.CompletedProcess(args, 1, "disabled\n", "")
+        if args == ("is-active", TIMER_NAME):
+            return subprocess.CompletedProcess(args, 1, "inactive\n", "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(service_module.shutil, "which", which)
-    monkeypatch.setattr(service_module, "write_private_text", drift_after_service_write)
+    monkeypatch.setattr(
+        service_module,
+        "_after_pending_service_unit_cutover",
+        drift_after_service_write,
+    )
     monkeypatch.setattr(service_module, "_systemctl", systemctl)
 
     with pytest.raises(ServiceError, match="changed before unit write"):
@@ -2998,24 +4787,24 @@ def test_service_install_revalidates_between_dual_unit_writes_and_rolls_back(
     assert drifted
     assert not (unit_dir / SERVICE_NAME).exists()
     assert not (unit_dir / TIMER_NAME).exists()
-    assert systemctl_calls == []
+    assert systemctl_calls == [
+        ("is-enabled", TIMER_NAME),
+        ("is-active", TIMER_NAME),
+        ("is-enabled", TIMER_NAME),
+        ("is-active", TIMER_NAME),
+        ("daemon-reload",),
+        ("disable", TIMER_NAME),
+        ("stop", TIMER_NAME),
+    ]
 
 
-def test_service_install_revalidates_interpreter_bytes_between_dual_unit_writes(
-    tmp_path,
-    monkeypatch,
-):
-    """Would fail if interpreter bytes were validated but not bound to the cutover."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+def test_service_unit_revalidation_rejects_interpreter_byte_drift(tmp_path, monkeypatch):
+    """Would fail if the resolve-time interpreter binding were not rechecked."""
     interpreter = tmp_path / "python"
     interpreter.write_bytes(b"trusted-interpreter-bytes")
     interpreter.chmod(0o700)
     monkeypatch.setattr(service_module.sys, "executable", str(interpreter))
     codex_usage, wrapper, _record = _write_recorded_distribution(tmp_path, monkeypatch)
-    systemctl_calls: list[tuple[str, ...]] = []
-    original_write = service_module.write_private_text
-    drifted = False
 
     def which(name: str) -> str | None:
         if name == "codex-usage":
@@ -3024,31 +4813,13 @@ def test_service_install_revalidates_interpreter_bytes_between_dual_unit_writes(
             return str(wrapper)
         raise AssertionError(f"unexpected executable lookup: {name}")
 
-    def drift_interpreter_after_service_write(path, text, *, label, mode=0o600):
-        nonlocal drifted
-        result = original_write(path, text, label=label, mode=mode)
-        if path.name == SERVICE_NAME and not drifted:
-            drifted = True
-            interpreter.write_bytes(b"changed-interpreter-bytes")
-            interpreter.chmod(0o700)
-        return result
-
-    def systemctl(*args, check=True):
-        systemctl_calls.append(args)
-        return subprocess.CompletedProcess(args, 0, "", "")
-
     monkeypatch.setattr(service_module.shutil, "which", which)
-    monkeypatch.setattr(service_module, "write_private_text", drift_interpreter_after_service_write)
-    monkeypatch.setattr(service_module, "_systemctl", systemctl)
+    executable = service_module._resolve_codex_usage()
+    interpreter.write_bytes(b"changed-interpreter-bytes")
+    interpreter.chmod(0o700)
 
     with pytest.raises(ServiceError, match="changed before unit write"):
-        service_install(AppConfig(accounts=()), tmp_path / "config.toml")
-
-    unit_dir = tmp_path / "config" / "systemd" / "user"
-    assert drifted
-    assert not (unit_dir / SERVICE_NAME).exists()
-    assert not (unit_dir / TIMER_NAME).exists()
-    assert systemctl_calls == []
+        service_module._revalidate_integration_watchdog_for_unit_write(executable)
 
 
 def test_service_unit_write_revalidation_cache_miss_fails_closed(tmp_path):

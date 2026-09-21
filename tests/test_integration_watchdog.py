@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import shutil
 import signal
 import subprocess
@@ -18,6 +19,8 @@ from codex_usage.private_io import (
     IntegrationEvidenceInvalid,
     IntegrationEvidenceUnavailable,
 )
+
+pytest_plugins = ("test_integration_evidence",)
 
 
 def _flatten_exception_group(exc: BaseException) -> list[BaseException]:
@@ -94,7 +97,7 @@ def test_execute_passes_remaining_monotonic_budget_to_each_stage(tmp_path, monke
     assert integration_watchdog.execute(
         ("--config", str(config_path)),
         environ=environment,
-        trusted_entrypoint_path=trusted_entrypoint,
+        runtime_entrypoint_path=trusted_entrypoint,
         watchdog_runner=lambda _path, **_kwargs: 0,
         verifier=lambda **_kwargs: verified,
         publisher_runner=lambda _launcher, _argv, timeout, **_kwargs: publisher_timeouts.append(
@@ -105,10 +108,192 @@ def test_execute_passes_remaining_monotonic_budget_to_each_stage(tmp_path, monke
     ) == 0
     assert calls == [
         ("generic watchdog", 30.0),
-        ("trusted entrypoint attestation", 20.0),
-        ("runtime self attestation", 20.0),
+        ("private service runtime attestation", 20.0),
+        ("private service runtime self attestation", 20.0),
     ]
     assert publisher_timeouts == [100.0]
+
+
+def test_execute_publisher_only_never_runs_the_generic_cli_stage(tmp_path, monkeypatch):
+    """The V2 service contract publishes attested evidence without refreshing usage."""
+    from codex_usage import integration_watchdog
+
+    environment = _environment(tmp_path)
+    verified = _verified_manifest(tmp_path)
+    published: list[tuple[Path, tuple[str, ...]]] = []
+    monkeypatch.setattr(
+        integration_watchdog,
+        "_runtime_self_attestation",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        integration_watchdog,
+        "_run_watchdog_stage",
+        lambda *_args, **_kwargs: pytest.fail("generic CLI path must not run"),
+    )
+
+    assert integration_watchdog.execute_publisher_only(
+        (),
+        environ=environment,
+        runtime_entrypoint_path=tmp_path / "trusted.py",
+        verifier=lambda **_kwargs: verified,
+        publisher_runner=lambda launcher, argv, _timeout, **_kwargs: published.append(
+            (launcher, argv)
+        )
+        or 0,
+    ) == 0
+    assert published == [
+        (verified.active_release.launcher_path, integration_watchdog.PUBLISH_ARGV)
+    ]
+
+
+def test_execute_publisher_only_reports_invalid_arguments_without_input_data(
+    tmp_path,
+    capsys,
+):
+    """An invalid unit argv must be diagnosable without echoing its contents."""
+    from codex_usage import integration_watchdog
+
+    secret_argument = "publisher-argument-secret"
+
+    assert integration_watchdog.execute_publisher_only(
+        (secret_argument,),
+        environ=_environment(tmp_path),
+        runtime_entrypoint_path=tmp_path / "runtime.py",
+        verifier=lambda **_kwargs: pytest.fail("attestation after invalid argv"),
+        publisher_runner=lambda *_args, **_kwargs: pytest.fail("publish after invalid argv"),
+    ) == 64
+
+    diagnostic = capsys.readouterr().err
+    assert "stage=arguments" in diagnostic
+    assert "rc=64" in diagnostic
+    assert "exception=ValueError" in diagnostic
+    assert secret_argument not in diagnostic
+    assert len(diagnostic.encode()) <= 512
+
+
+def test_execute_publisher_only_reports_initial_attestation_failure_without_message(
+    tmp_path,
+    capsys,
+):
+    """Unavailable private runtime evidence must retain its RC69 cause class."""
+    from codex_usage import integration_watchdog
+
+    secret_message = "initial-attestation-secret"
+
+    def unavailable(**_kwargs):
+        raise IntegrationEvidenceUnavailable(secret_message)
+
+    assert integration_watchdog.execute_publisher_only(
+        (),
+        environ=_environment(tmp_path),
+        runtime_entrypoint_path=tmp_path / "runtime.py",
+        verifier=unavailable,
+        publisher_runner=lambda *_args, **_kwargs: pytest.fail("publish after unavailable"),
+    ) == 69
+
+    diagnostic = capsys.readouterr().err
+    assert "stage=initial_runtime_attestation" in diagnostic
+    assert "rc=69" in diagnostic
+    assert "exception=IntegrationEvidenceUnavailable" in diagnostic
+    assert secret_message not in diagnostic
+    assert len(diagnostic.encode()) <= 512
+
+
+def test_execute_publisher_only_reports_self_attestation_failure_without_message(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    """Invalid runtime self-attestation must retain RC70 without leaking data."""
+    from codex_usage import integration_watchdog
+
+    secret_message = "self-attestation-secret"
+    monkeypatch.setattr(
+        integration_watchdog,
+        "_runtime_self_attestation",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            IntegrationEvidenceInvalid(secret_message)
+        ),
+    )
+
+    assert integration_watchdog.execute_publisher_only(
+        (),
+        environ=_environment(tmp_path),
+        runtime_entrypoint_path=tmp_path / "runtime.py",
+        verifier=lambda **_kwargs: _verified_manifest(tmp_path),
+        publisher_runner=lambda *_args, **_kwargs: pytest.fail("publish after invalid runtime"),
+    ) == 70
+
+    diagnostic = capsys.readouterr().err
+    assert "stage=runtime_self_attestation" in diagnostic
+    assert "rc=70" in diagnostic
+    assert "exception=IntegrationEvidenceInvalid" in diagnostic
+    assert secret_message not in diagnostic
+    assert len(diagnostic.encode()) <= 512
+
+
+def test_execute_publisher_only_reports_outer_failure_without_message(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    """Unexpected wrapper failures must be fail-closed and minimally observable."""
+    from codex_usage import integration_watchdog
+
+    secret_message = "outer-wrapper-secret"
+    monkeypatch.setattr(
+        integration_watchdog,
+        "_validated_child_environment",
+        lambda _environment: (_ for _ in ()).throw(RuntimeError(secret_message)),
+    )
+
+    assert integration_watchdog.execute_publisher_only(
+        (),
+        environ=_environment(tmp_path),
+        runtime_entrypoint_path=tmp_path / "runtime.py",
+        verifier=lambda **_kwargs: pytest.fail("attestation after outer failure"),
+        publisher_runner=lambda *_args, **_kwargs: pytest.fail("publish after outer failure"),
+    ) == 69
+
+    diagnostic = capsys.readouterr().err
+    assert "stage=outer_failure" in diagnostic
+    assert "rc=69" in diagnostic
+    assert "exception=RuntimeError" in diagnostic
+    assert secret_message not in diagnostic
+    assert len(diagnostic.encode()) <= 512
+
+
+def test_execute_publisher_only_redacts_custom_exception_class_name(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    """A custom exception class name is untrusted diagnostic data, not metadata."""
+    from codex_usage import integration_watchdog
+
+    secret_class_name = "custom_diagnostic_class_secret"
+    custom_error = type(secret_class_name, (Exception,), {})
+    monkeypatch.setattr(
+        integration_watchdog,
+        "_validated_child_environment",
+        lambda _environment: (_ for _ in ()).throw(custom_error()),
+    )
+
+    assert integration_watchdog.execute_publisher_only(
+        (),
+        environ=_environment(tmp_path),
+        runtime_entrypoint_path=tmp_path / "runtime.py",
+        verifier=lambda **_kwargs: pytest.fail("attestation after outer failure"),
+        publisher_runner=lambda *_args, **_kwargs: pytest.fail("publish after outer failure"),
+    ) == 69
+
+    diagnostic = capsys.readouterr().err
+    assert "stage=outer_failure" in diagnostic
+    assert "rc=69" in diagnostic
+    assert "exception=unrecognized" in diagnostic
+    assert secret_class_name not in diagnostic
+    assert len(diagnostic.encode()) <= 512
 
 
 def test_execute_reserves_cleanup_budget_from_publisher_timeout(
@@ -137,7 +322,7 @@ def test_execute_reserves_cleanup_budget_from_publisher_timeout(
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=environment,
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=lambda _path, **_kwargs: 0,
         verifier=lambda **_kwargs: verified,
         publisher_runner=lambda _launcher, _argv, timeout, **_kwargs: publisher_timeouts.append(
@@ -152,7 +337,7 @@ def test_execute_reserves_cleanup_budget_from_publisher_timeout(
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=environment,
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=lambda _path, **_kwargs: 0,
         verifier=lambda **_kwargs: verified,
         publisher_runner=lambda *_args, **_kwargs: pytest.fail(
@@ -178,7 +363,7 @@ def test_execute_returns_temporary_failure_before_systemd_kill_on_slow_generic(
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=_environment(tmp_path),
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=lambda _path, **_kwargs: pytest.fail("watchdog should be wrapped"),
         verifier=lambda **_kwargs: pytest.fail("attestation after generic timeout"),
         publisher_runner=lambda *_args, **_kwargs: pytest.fail(
@@ -215,7 +400,7 @@ def test_execute_rejects_generic_watchdog_status_returned_after_sigalrm_timeout(
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=_environment(tmp_path),
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=watchdog_runner,
         verifier=lambda **_kwargs: pytest.fail("attestation after timed out generic"),
         publisher_runner=lambda *_args, **_kwargs: pytest.fail(
@@ -235,7 +420,7 @@ def test_execute_returns_temporary_failure_before_systemd_kill_on_slow_attestati
 
     def fake_timeout(label: str, _timeout_seconds: float, callback):
         labels.append(label)
-        if label == "trusted entrypoint attestation":
+        if label == "private service runtime attestation":
             raise TimeoutError(label)
         return callback()
 
@@ -244,14 +429,14 @@ def test_execute_returns_temporary_failure_before_systemd_kill_on_slow_attestati
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=_environment(tmp_path),
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=lambda _path, **_kwargs: 0,
         verifier=lambda **_kwargs: pytest.fail("attestation should be wrapped"),
         publisher_runner=lambda *_args, **_kwargs: pytest.fail(
             "publish after attestation timeout"
         ),
     ) == 75
-    assert labels == ["generic watchdog", "trusted entrypoint attestation"]
+    assert labels == ["generic watchdog", "private service runtime attestation"]
 
 
 def test_execute_maps_attestation_error_after_sigalrm_timeout_to_rc75(
@@ -282,7 +467,7 @@ def test_execute_maps_attestation_error_after_sigalrm_timeout_to_rc75(
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=_environment(tmp_path),
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=lambda _path, **_kwargs: 0,
         verifier=verifier,
         publisher_runner=lambda *_args, **_kwargs: pytest.fail(
@@ -370,6 +555,16 @@ def _expected_child_environment(environment: dict[str, str]) -> dict[str, str]:
     }
 
 
+def _runtime_environment(data_home: Path, state_home: Path) -> dict[str, str]:
+    return {
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONSAFEPATH": "1",
+        "XDG_DATA_HOME": str(data_home),
+        "XDG_STATE_HOME": str(state_home),
+    }
+
+
 def _static_child_environment() -> dict[str, str]:
     return {
         "PYTHONDONTWRITEBYTECODE": "1",
@@ -445,6 +640,273 @@ def _runtime_module_relative(module_name: str) -> str:
 def _record_digest(payload: bytes) -> str:
     encoded = base64.urlsafe_b64encode(hashlib.sha256(payload).digest())
     return "sha256=" + encoded.decode("ascii").rstrip("=")
+
+
+def _write_private_service_runtime(
+    data_home: Path,
+    release_entrypoint: Path,
+) -> tuple[Path, Path]:
+    """Create the intended private service layout from an attested test release."""
+    from codex_usage.integration_attestation import TRUSTED_CORE_MODULES
+
+    abi = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    current = data_home / "codex-usage-service-runtime-v2" / "current"
+    venv = current / "venv"
+    site_packages = venv / "lib" / abi / "site-packages"
+    package = site_packages / "codex_usage"
+    dist_info = site_packages / "codex_usage-0.6.538.dist-info"
+    for directory in (
+        data_home / "codex-usage-service-runtime-v2",
+        current,
+        venv,
+        venv / "bin",
+        venv / "lib",
+        venv / "lib" / abi,
+        site_packages,
+        package,
+        dist_info,
+    ):
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        directory.chmod(0o700)
+
+    release_package = release_entrypoint.parent
+    project_package = Path(__file__).resolve().parents[1] / "src" / "codex_usage"
+    for module_name in TRUSTED_CORE_MODULES:
+        source = release_package / module_name
+        if not source.is_file():
+            source = project_package / module_name
+        target = package / module_name
+        target.write_bytes(source.read_bytes())
+        target.chmod(0o600)
+
+    metadata = dist_info / "METADATA"
+    metadata.write_bytes(
+        b"Metadata-Version: 2.4\nName: codex-usage\nVersion: 0.6.538\n"
+    )
+    metadata.chmod(0o600)
+    record = dist_info / "RECORD"
+    rows = [
+        (
+            f"codex_usage/{module_name},"
+            f"{_record_digest((package / module_name).read_bytes())},"
+            f"{(package / module_name).stat().st_size}"
+        )
+        for module_name in TRUSTED_CORE_MODULES
+    ]
+    rows.extend(
+        (
+            (
+                "codex_usage-0.6.538.dist-info/METADATA,"
+                f"{_record_digest(metadata.read_bytes())},{metadata.stat().st_size}"
+            ),
+            "codex_usage-0.6.538.dist-info/RECORD,,",
+        )
+    )
+    _write_record(record, rows)
+    record.chmod(0o600)
+
+    pyvenv = venv / "pyvenv.cfg"
+    pyvenv.write_bytes(
+        b"home = /private-service-python\n"
+        b"include-system-site-packages = false\n"
+        b"version = 3.14.0\n"
+    )
+    pyvenv.chmod(0o600)
+    interpreter = venv / "bin" / "python"
+    interpreter.write_bytes(b"#!/bin/sh\nexit 127\n")
+    interpreter.chmod(0o700)
+    return package / "integration_entrypoint.py", interpreter
+
+
+def _patch_private_service_runtime_origins(
+    monkeypatch,
+    runtime_entrypoint: Path,
+) -> None:
+    from codex_usage import integration_watchdog
+
+    site_packages = runtime_entrypoint.parent.parent
+    for module_name in integration_watchdog.RUNTIME_SELF_ATTESTED_CORE_MODULES:
+        module = sys.modules[module_name]
+        path = site_packages / _runtime_module_relative(module_name)
+        monkeypatch.setattr(module, "__file__", str(path), raising=False)
+        assert module.__spec__ is not None
+        monkeypatch.setattr(module.__spec__, "origin", str(path), raising=False)
+
+
+def _rewrite_private_runtime_record_binding(
+    record_path: Path,
+    relative: str,
+    payload: bytes,
+) -> None:
+    replacement = f"{relative},{_record_digest(payload)},{len(payload)}"
+    rows = record_path.read_text(encoding="utf-8").splitlines()
+    rewritten = [
+        replacement if row.startswith(f"{relative},") else row for row in rows
+    ]
+    assert rewritten != rows
+    record_path.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+    record_path.chmod(0o600)
+
+
+def test_private_service_runtime_attestation_accepts_attested_private_layout(
+    evidence_layout,
+    monkeypatch,
+):
+    """Would fail if the watchdog had no strict private service-runtime contract."""
+    from codex_usage import integration_watchdog
+
+    state_home, data_home, release_entrypoint, _payload, expected = evidence_layout
+    runtime_entrypoint, interpreter = _write_private_service_runtime(
+        data_home,
+        release_entrypoint,
+    )
+    monkeypatch.setattr(integration_watchdog.sys, "executable", str(interpreter))
+
+    verified = integration_watchdog.verify_active_manifest_against_private_service_runtime(
+        state_home,
+        data_home,
+        runtime_entrypoint,
+        interpreter,
+    )
+    assert verified == expected
+    _patch_private_service_runtime_origins(monkeypatch, runtime_entrypoint)
+    integration_watchdog.verify_private_service_runtime_self_attestation(
+        runtime_entrypoint,
+        interpreter,
+        verified,
+    )
+
+
+@pytest.mark.parametrize(
+    "defect",
+    (
+        "wrong-root",
+        "wrong-interpreter",
+        "producer-venv",
+        "wrong-abi",
+        "system-site-packages",
+        "metadata-version-drift",
+        "symlinked-core-module",
+        "hardlinked-core-module",
+        "nonprivate-core-module",
+        "record-drift",
+        "producer-byte-drift",
+    ),
+)
+def test_private_service_runtime_attestation_rejects_unsafe_layout_or_drift(
+    evidence_layout,
+    tmp_path,
+    monkeypatch,
+    defect,
+):
+    """Would fail if the private service contract accepted a principal unsafe state."""
+    from codex_usage import integration_watchdog
+    from codex_usage.private_io import IntegrationEvidenceUnavailable
+
+    state_home, data_home, release_entrypoint, _payload, _expected = evidence_layout
+    runtime_entrypoint, interpreter = _write_private_service_runtime(
+        data_home,
+        release_entrypoint,
+    )
+    monkeypatch.setattr(integration_watchdog.sys, "executable", str(interpreter))
+    package = runtime_entrypoint.parent
+    dist_info = runtime_entrypoint.parent.parent / "codex_usage-0.6.538.dist-info"
+    candidate_entrypoint = runtime_entrypoint
+    candidate_interpreter = interpreter
+
+    if defect == "wrong-root":
+        candidate_entrypoint = tmp_path / "other/current/entrypoint.py"
+    elif defect == "wrong-interpreter":
+        candidate_interpreter = tmp_path / "user-site/bin/python"
+        candidate_interpreter.parent.mkdir(mode=0o700, parents=True)
+        candidate_interpreter.write_bytes(b"#!/bin/sh\nexit 127\n")
+        candidate_interpreter.chmod(0o700)
+    elif defect == "producer-venv":
+        candidate_entrypoint = release_entrypoint
+        candidate_interpreter = release_entrypoint.parents[4] / "bin" / "python"
+    elif defect == "wrong-abi":
+        runtime_entrypoint.parents[2].rename(
+            runtime_entrypoint.parents[2].with_name("python3.99")
+        )
+    elif defect == "system-site-packages":
+        pyvenv = interpreter.parents[1] / "pyvenv.cfg"
+        pyvenv.write_bytes(b"include-system-site-packages = true\n")
+        pyvenv.chmod(0o600)
+    elif defect == "metadata-version-drift":
+        metadata = dist_info / "METADATA"
+        metadata.write_bytes(
+            b"Metadata-Version: 2.4\nName: codex-usage\nVersion: 0.6.536\n"
+        )
+        metadata.chmod(0o600)
+        _rewrite_private_runtime_record_binding(
+            dist_info / "RECORD",
+            "codex_usage-0.6.538.dist-info/METADATA",
+            metadata.read_bytes(),
+        )
+    elif defect == "symlinked-core-module":
+        runtime_entrypoint.unlink()
+        runtime_entrypoint.symlink_to(package / "integration_snapshot.py")
+    elif defect == "hardlinked-core-module":
+        os.link(package / "integration_watchdog.py", package / "watchdog-hardlink.py")
+    elif defect == "nonprivate-core-module":
+        package.joinpath("integration_watchdog.py").chmod(0o644)
+    elif defect == "record-drift":
+        module = package / "integration_watchdog.py"
+        module.write_bytes(module.read_bytes() + b"\n# unrecorded drift\n")
+        module.chmod(0o600)
+    elif defect == "producer-byte-drift":
+        module = package / "integration_snapshot.py"
+        module.write_bytes(module.read_bytes() + b"\n# forged private producer\n")
+        module.chmod(0o600)
+        _rewrite_private_runtime_record_binding(
+            dist_info / "RECORD",
+            "codex_usage/integration_snapshot.py",
+            module.read_bytes(),
+        )
+    else:  # pragma: no cover - parametrization is exhaustive
+        raise AssertionError(defect)
+
+    with pytest.raises(IntegrationEvidenceUnavailable):
+        integration_watchdog.verify_active_manifest_against_private_service_runtime(
+            state_home,
+            data_home,
+            candidate_entrypoint,
+            candidate_interpreter,
+        )
+
+
+def test_execute_uses_private_runtime_verifiers_for_configured_publisher_gate(
+    evidence_layout,
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if the real --config gate bypassed either private verifier."""
+    from codex_usage import integration_watchdog
+
+    state_home, data_home, release_entrypoint, _payload, expected = evidence_layout
+    runtime_entrypoint, interpreter = _write_private_service_runtime(
+        data_home,
+        release_entrypoint,
+    )
+    monkeypatch.setattr(integration_watchdog.sys, "executable", str(interpreter))
+    _patch_private_service_runtime_origins(monkeypatch, runtime_entrypoint)
+    published: list[tuple[Path, tuple[str, ...], float]] = []
+
+    assert integration_watchdog.execute(
+        ("--config", str(tmp_path / "config.toml")),
+        environ=_runtime_environment(data_home, state_home),
+        runtime_entrypoint_path=runtime_entrypoint,
+        watchdog_runner=lambda _path, **_kwargs: 2,
+        verifier=integration_watchdog.verify_active_manifest_against_private_service_runtime,
+        publisher_runner=lambda launcher, argv, timeout, **_kwargs: published.append(
+            (launcher, argv, timeout)
+        )
+        or 0,
+        interpreter_path=interpreter,
+    ) == 0
+    assert len(published) == 1
+    assert published[0][0] == expected.active_release.launcher_path
+    assert published[0][1] == integration_watchdog.PUBLISH_ARGV
 
 
 def _write_record(record_path: Path, rows: list[str]) -> None:
@@ -617,7 +1079,7 @@ def test_execute_rejects_shadowing_runtime_environment_before_watchdog(
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=environment,
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=lambda _path, **_kwargs: pytest.fail(
             "watchdog after unsafe runtime env"
         ),
@@ -666,7 +1128,7 @@ def test_execute_passes_sanitized_environment_to_generic_watchdog_child(
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=environment,
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=integration_watchdog._run_watchdog_stage,
         verifier=lambda **_kwargs: verified,
         publisher_runner=lambda *_args, **_kwargs: 0,
@@ -715,7 +1177,7 @@ def test_execute_passes_sanitized_environment_to_publisher_child(
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=environment,
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=lambda _path, **_kwargs: 2,
         verifier=lambda **_kwargs: verified,
         publisher_runner=integration_watchdog._run_publisher_stage,
@@ -775,7 +1237,7 @@ def test_execute_freezes_child_environment_before_ambient_and_mapping_race(
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=environment,
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=integration_watchdog._run_watchdog_stage,
         verifier=verifier,
         publisher_runner=integration_watchdog._run_publisher_stage,
@@ -795,7 +1257,7 @@ def test_execute_rejects_missing_required_child_environment_before_subprocess(
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=environment,
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=lambda _path, **_kwargs: pytest.fail(
             "watchdog after missing child env"
         ),
@@ -832,7 +1294,7 @@ def test_execute_runs_runtime_self_attestation_after_release_attestation_before_
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=environment,
-        trusted_entrypoint_path=trusted_entrypoint,
+        runtime_entrypoint_path=trusted_entrypoint,
         watchdog_runner=lambda _path, **_kwargs: events.append(("watchdog", _path)) or 2,
         verifier=lambda **kwargs: events.append(("verify-release", kwargs)) or verified,
         publisher_runner=lambda *_args, **_kwargs: pytest.fail(
@@ -846,19 +1308,24 @@ def test_execute_runs_runtime_self_attestation_after_release_attestation_before_
     ]
 
 
-def test_execute_rejects_runtime_shadow_package_before_publisher(tmp_path, monkeypatch):
-    """Would fail if imported Watchdog origin were not bound to the trusted Core path."""
+def test_execute_rejects_private_service_runtime_shadow_before_publisher(
+    evidence_layout,
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if an imported Watchdog origin escaped the private runtime."""
     from codex_usage import integration_watchdog
 
-    trusted_site, trusted_entrypoint, verified = _write_trusted_runtime_core_layout(
-        tmp_path
+    state_home, data_home, release_entrypoint, _payload, _verified = evidence_layout
+    runtime_entrypoint, interpreter = _write_private_service_runtime(
+        data_home,
+        release_entrypoint,
     )
-    _patch_runtime_module_origins(monkeypatch, trusted_site)
-    shadow_site = tmp_path / "shadow-site"
-    shutil.copytree(trusted_site, shadow_site, symlinks=False)
-    shadow_watchdog = shadow_site / "codex_usage/integration_watchdog.py"
-    shadow_watchdog.write_bytes(shadow_watchdog.read_bytes() + b"\n# shadow\n")
-    shadow_watchdog.chmod(0o644)
+    monkeypatch.setattr(integration_watchdog.sys, "executable", str(interpreter))
+    _patch_private_service_runtime_origins(monkeypatch, runtime_entrypoint)
+    shadow_watchdog = tmp_path / "shadow-watchdog.py"
+    shadow_watchdog.write_bytes(b"# shadow\n")
+    shadow_watchdog.chmod(0o600)
     monkeypatch.setattr(integration_watchdog, "__file__", str(shadow_watchdog))
     assert integration_watchdog.__spec__ is not None
     monkeypatch.setattr(integration_watchdog.__spec__, "origin", str(shadow_watchdog))
@@ -866,71 +1333,126 @@ def test_execute_rejects_runtime_shadow_package_before_publisher(tmp_path, monke
     published: list[object] = []
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
-        environ=_environment(tmp_path),
-        trusted_entrypoint_path=trusted_entrypoint,
+        environ=_runtime_environment(data_home, state_home),
+        runtime_entrypoint_path=runtime_entrypoint,
         watchdog_runner=lambda _path, **_kwargs: 2,
-        verifier=lambda **_kwargs: verified,
+        verifier=integration_watchdog.verify_active_manifest_against_private_service_runtime,
         publisher_runner=lambda *_args, **_kwargs: published.append(_args) or 0,
-    ) == 69
+        interpreter_path=interpreter,
+    ) == 70
     assert published == []
 
 
-def test_execute_rejects_world_writable_runtime_dist_info_before_publisher(
+def test_execute_rejects_nonprivate_service_dist_info_before_publisher(
+    evidence_layout,
     tmp_path,
     monkeypatch,
 ):
-    """Would fail if runtime distribution metadata permissions were trusted blindly."""
+    """Would fail if private runtime distribution metadata permissions were ignored."""
     from codex_usage import integration_watchdog
 
-    trusted_site, trusted_entrypoint, verified = _write_trusted_runtime_core_layout(
-        tmp_path
+    state_home, data_home, release_entrypoint, _payload, _verified = evidence_layout
+    runtime_entrypoint, interpreter = _write_private_service_runtime(
+        data_home,
+        release_entrypoint,
     )
-    _patch_runtime_module_origins(monkeypatch, trusted_site)
-    trusted_site.joinpath("codex_usage-0.6.538.dist-info").chmod(0o777)
+    monkeypatch.setattr(integration_watchdog.sys, "executable", str(interpreter))
+    _patch_private_service_runtime_origins(monkeypatch, runtime_entrypoint)
+    runtime_entrypoint.parent.parent.joinpath("codex_usage-0.6.538.dist-info").chmod(
+        0o777
+    )
 
     published: list[object] = []
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
-        environ=_environment(tmp_path),
-        trusted_entrypoint_path=trusted_entrypoint,
+        environ=_runtime_environment(data_home, state_home),
+        runtime_entrypoint_path=runtime_entrypoint,
         watchdog_runner=lambda _path, **_kwargs: 2,
-        verifier=lambda **_kwargs: verified,
+        verifier=integration_watchdog.verify_active_manifest_against_private_service_runtime,
         publisher_runner=lambda *_args, **_kwargs: published.append(_args) or 0,
+        interpreter_path=interpreter,
     ) == 69
     assert published == []
 
 
 def test_execute_rejects_runtime_core_rebind_immediately_before_publisher(
+    evidence_layout,
     tmp_path,
     monkeypatch,
 ):
     """Would fail if the final runtime recheck were not adjacent to publisher launch."""
-    from codex_usage import integration_attestation, integration_watchdog
+    from codex_usage import integration_watchdog
 
-    trusted_site, trusted_entrypoint, verified = _write_trusted_runtime_core_layout(
-        tmp_path
+    state_home, data_home, release_entrypoint, _payload, _verified = evidence_layout
+    runtime_entrypoint, interpreter = _write_private_service_runtime(
+        data_home,
+        release_entrypoint,
     )
-    _patch_runtime_module_origins(monkeypatch, trusted_site)
+    monkeypatch.setattr(integration_watchdog.sys, "executable", str(interpreter))
+    _patch_private_service_runtime_origins(monkeypatch, runtime_entrypoint)
 
-    def rebind_before_final_runtime_check(_trusted_entrypoint_path: Path) -> None:
-        watchdog = trusted_site / "codex_usage/integration_watchdog.py"
-        watchdog.write_bytes(watchdog.read_bytes() + b"\n# rebound\n")
-        watchdog.chmod(0o644)
+    def verifier(**kwargs) -> VerifiedActiveManifest:
+        verified = integration_watchdog.verify_active_manifest_against_private_service_runtime(
+            **kwargs
+        )
+        runtime_entrypoint.parent.joinpath("integration_watchdog.py").chmod(0o644)
+        return verified
 
-    monkeypatch.setattr(
-        integration_attestation,
-        "_before_runtime_self_attestation_recheck",
-        rebind_before_final_runtime_check,
-        raising=False,
-    )
     published: list[object] = []
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
-        environ=_environment(tmp_path),
-        trusted_entrypoint_path=trusted_entrypoint,
+        environ=_runtime_environment(data_home, state_home),
+        runtime_entrypoint_path=runtime_entrypoint,
         watchdog_runner=lambda _path, **_kwargs: 2,
-        verifier=lambda **_kwargs: verified,
+        verifier=verifier,
         publisher_runner=lambda *_args, **_kwargs: published.append(_args) or 0,
+        interpreter_path=interpreter,
+    ) == 70
+    assert published == []
+
+
+def test_execute_rejects_record_consistent_core_runtime_rebind_before_publisher(
+    evidence_layout,
+    tmp_path,
+    monkeypatch,
+):
+    """Would fail if a self-consistent Core-only rebind escaped the final check."""
+    from codex_usage import integration_watchdog
+
+    state_home, data_home, release_entrypoint, _payload, _verified = evidence_layout
+    runtime_entrypoint, interpreter = _write_private_service_runtime(
+        data_home,
+        release_entrypoint,
+    )
+    monkeypatch.setattr(integration_watchdog.sys, "executable", str(interpreter))
+    _patch_private_service_runtime_origins(monkeypatch, runtime_entrypoint)
+    record = (
+        runtime_entrypoint.parent.parent / "codex_usage-0.6.538.dist-info" / "RECORD"
+    )
+
+    def verifier(**kwargs) -> VerifiedActiveManifest:
+        verified = integration_watchdog.verify_active_manifest_against_private_service_runtime(
+            **kwargs
+        )
+        module = runtime_entrypoint.parent / "integration_watchdog.py"
+        module.write_bytes(module.read_bytes() + b"\n# self-consistent core rebind\n")
+        module.chmod(0o600)
+        _rewrite_private_runtime_record_binding(
+            record,
+            "codex_usage/integration_watchdog.py",
+            module.read_bytes(),
+        )
+        return verified
+
+    published: list[object] = []
+    assert integration_watchdog.execute(
+        ("--config", str(tmp_path / "config.toml")),
+        environ=_runtime_environment(data_home, state_home),
+        runtime_entrypoint_path=runtime_entrypoint,
+        watchdog_runner=lambda _path, **_kwargs: 2,
+        verifier=verifier,
+        publisher_runner=lambda *_args, **_kwargs: published.append(_args) or 0,
+        interpreter_path=interpreter,
     ) == 70
     assert published == []
 
@@ -954,7 +1476,7 @@ def test_execute_runs_allowed_watchdog_stage_before_attested_publisher(
         return watchdog_status
 
     def verifier(**kwargs) -> VerifiedActiveManifest:
-        events.append(("verify-trusted-core", kwargs))
+        events.append(("verify-private-runtime", kwargs))
         return verified
 
     def runtime_self_attestation(**kwargs) -> None:
@@ -978,7 +1500,7 @@ def test_execute_runs_allowed_watchdog_stage_before_attested_publisher(
     assert integration_watchdog.execute(
         ("--config", str(config_path)),
         environ=environment,
-        trusted_entrypoint_path=trusted_entrypoint,
+        runtime_entrypoint_path=trusted_entrypoint,
         watchdog_runner=watchdog_runner,
         verifier=verifier,
         publisher_runner=publisher_runner,
@@ -986,17 +1508,19 @@ def test_execute_runs_allowed_watchdog_stage_before_attested_publisher(
     assert events == [
         ("watchdog", config_path),
         (
-            "verify-trusted-core",
+            "verify-private-runtime",
             {
                 "state_home": Path(environment["XDG_STATE_HOME"]),
                 "data_home": Path(environment["XDG_DATA_HOME"]),
-                "trusted_entrypoint_path": trusted_entrypoint,
+                "runtime_entrypoint_path": trusted_entrypoint,
+                "interpreter_path": Path(sys.executable),
             },
         ),
         (
             "runtime-self-attest",
             {
-                "trusted_entrypoint_path": trusted_entrypoint,
+                "runtime_entrypoint_path": trusted_entrypoint,
+                "interpreter_path": Path(sys.executable),
                 "verified": verified,
             },
         ),
@@ -1019,7 +1543,7 @@ def test_execute_stops_before_attestation_on_hard_watchdog_failure(
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=_environment(tmp_path),
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=lambda _path, **_kwargs: watchdog_status,
         verifier=lambda **_kwargs: pytest.fail("attestation after watchdog failure"),
         publisher_runner=lambda *_args, **_kwargs: pytest.fail(
@@ -1041,7 +1565,7 @@ def test_execute_propagates_missing_authority_publisher_failure(tmp_path, monkey
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=_environment(tmp_path),
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=lambda _path, **_kwargs: 2,
         verifier=lambda **_kwargs: verified,
         publisher_runner=lambda *_args, **_kwargs: 65,
@@ -1052,11 +1576,15 @@ def test_execute_propagates_missing_authority_publisher_failure(tmp_path, monkey
     ("error", "status"),
     (
         (IntegrationEvidenceUnavailable(), 69),
-        (IntegrationEvidenceInvalid(), 70),
+        (IntegrationEvidenceInvalid(), 69),
     ),
 )
-def test_execute_maps_attestation_failure_statuses(tmp_path, error, status):
-    """Wrong RC mapping hides whether attestation was unavailable or invalid."""
+def test_execute_maps_initial_private_attestation_failures_to_rc69(
+    tmp_path,
+    error,
+    status,
+):
+    """Initial private attestation failures must never be misreported as rechecks."""
     from codex_usage import integration_watchdog
 
     def verifier(**_kwargs):
@@ -1065,7 +1593,7 @@ def test_execute_maps_attestation_failure_statuses(tmp_path, error, status):
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=_environment(tmp_path),
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=lambda _path, **_kwargs: 0,
         verifier=verifier,
         publisher_runner=lambda *_args, **_kwargs: pytest.fail(
@@ -1091,7 +1619,7 @@ def test_execute_rejects_malformed_xdg_roots_after_watchdog(tmp_path, environmen
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=environment,
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=lambda _path, **_kwargs: 2,
         verifier=lambda **_kwargs: pytest.fail("verify after malformed XDG"),
         publisher_runner=lambda *_args, **_kwargs: pytest.fail(
@@ -1116,7 +1644,7 @@ def test_execute_rejects_nonexact_unit_arguments_before_watchdog(tmp_path, argv)
     assert integration_watchdog.execute(
         argv,
         environ=_environment(tmp_path),
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=lambda _path, **_kwargs: pytest.fail(
             "watchdog after invalid arguments"
         ),
@@ -1556,7 +2084,7 @@ def test_execute_maps_nonfatal_baseexceptiongroup_to_unavailable_rc(
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=_environment(tmp_path),
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=lambda _path, **_kwargs: (_ for _ in ()).throw(
             BaseExceptionGroup(
                 "synthetic grouped cleanup",
@@ -2338,7 +2866,7 @@ def test_execute_outer_generic_timeout_kills_real_process_group_before_mutation(
     assert integration_watchdog.execute(
         ("--config", str(tmp_path / "config.toml")),
         environ=_environment(tmp_path),
-        trusted_entrypoint_path=tmp_path / "trusted.py",
+        runtime_entrypoint_path=tmp_path / "trusted.py",
         watchdog_runner=watchdog_runner,
         verifier=lambda **_kwargs: pytest.fail("attestation after generic timeout"),
         publisher_runner=lambda *_args, **_kwargs: pytest.fail(
@@ -2367,7 +2895,7 @@ def test_publisher_stage_maps_launch_oserror(monkeypatch, tmp_path):
     ) == 69
 
 
-def test_main_wires_trusted_core_entrypoint_dependency(monkeypatch):
+def test_main_wires_private_service_runtime_attestation_dependency(monkeypatch):
     from codex_usage import integration_entrypoint, integration_watchdog
 
     observed: dict[str, object] = {}
@@ -2377,17 +2905,18 @@ def test_main_wires_trusted_core_entrypoint_dependency(monkeypatch):
         observed.update(kwargs)
         return 0
 
-    monkeypatch.setattr(integration_watchdog, "execute", fake_execute)
+    monkeypatch.setattr(integration_watchdog, "execute_publisher_only", fake_execute)
 
-    assert integration_watchdog.main(("--config", "/tmp/config.toml")) == 0
-    assert observed["argv"] == ("--config", "/tmp/config.toml")
+    assert integration_watchdog.main(()) == 0
+    assert observed["argv"] == ()
     assert observed["environ"] is integration_watchdog.os.environ
-    assert observed["trusted_entrypoint_path"] == Path(
+    assert observed["runtime_entrypoint_path"] == Path(
         integration_entrypoint.__file__
     )
-    assert observed["watchdog_runner"] is integration_watchdog._run_watchdog_stage
+    assert "watchdog_runner" not in observed
     assert (
         observed["verifier"]
-        is integration_watchdog.verify_active_manifest_against_trusted_entrypoint
+        is integration_watchdog.verify_active_manifest_against_private_service_runtime
     )
     assert observed["publisher_runner"] is integration_watchdog._run_publisher_stage
+    assert observed["interpreter_path"] == Path(sys.executable)

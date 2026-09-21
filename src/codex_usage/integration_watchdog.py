@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import base64
+import csv
+import hashlib
+import io
 import math
 import os
 import selectors
 import signal
+import stat
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -17,9 +23,13 @@ from typing import IO, cast
 from . import integration_entrypoint
 from .integration_attestation import (
     RUNTIME_SELF_ATTESTED_CORE_MODULES,
+    TRUSTED_CORE_MODULES,
     VerifiedActiveManifest,
-    verify_active_manifest_against_trusted_entrypoint,
-    verify_runtime_self_attestation,
+    _active_entrypoint_candidate_from_active_manifest,
+    _active_release_core_module_evidence,
+    _CoreModuleEvidence,
+    _metadata_header,
+    verify_active_manifest_at,
 )
 from .integration_timeout_contract import (
     INTEGRATION_WATCHDOG_ATTESTATION_TIMEOUT_SECONDS,
@@ -31,7 +41,13 @@ from .integration_timeout_contract import (
     INTEGRATION_WATCHDOG_SYSTEMD_TIMEOUT_SECONDS,
     INTEGRATION_WATCHDOG_TOTAL_RUNTIME_BUDGET_SECONDS,
 )
-from .private_io import IntegrationEvidenceInvalid, IntegrationEvidenceUnavailable
+from .private_io import (
+    IntegrationEvidenceInvalid,
+    IntegrationEvidenceUnavailable,
+    open_private_dir_at,
+    open_verified_state_home,
+    read_private_bytes_at,
+)
 
 PUBLISH_TIMEOUT_SECONDS = INTEGRATION_WATCHDOG_PUBLISH_TIMEOUT_SECONDS
 GENERIC_WATCHDOG_TIMEOUT_SECONDS = INTEGRATION_WATCHDOG_GENERIC_TIMEOUT_SECONDS
@@ -52,6 +68,27 @@ _DIAGNOSTIC_MAX_BYTES = 4096
 _DIAGNOSTIC_READ_CHUNK_BYTES = 8192
 _DIAGNOSTIC_MAX_ERROR_TYPES = 8
 _DIAGNOSTIC_STATUS_CODES = frozenset((64, 65, 69, 70, 75))
+_PUBLISHER_ONLY_DIAGNOSTIC_MAX_BYTES = 512
+_PUBLISHER_ONLY_DIAGNOSTIC_STAGES = frozenset(
+    (
+        "arguments",
+        "initial_runtime_attestation",
+        "runtime_self_attestation",
+        "outer_failure",
+    )
+)
+_PUBLISHER_ONLY_EXCEPTION_CLASS_TOKENS = {
+    BaseExceptionGroup: "BaseExceptionGroup",
+    Exception: "Exception",
+    ExceptionGroup: "ExceptionGroup",
+    IntegrationEvidenceInvalid: "IntegrationEvidenceInvalid",
+    IntegrationEvidenceUnavailable: "IntegrationEvidenceUnavailable",
+    OSError: "OSError",
+    RuntimeError: "RuntimeError",
+    TimeoutError: "TimeoutError",
+    TypeError: "TypeError",
+    ValueError: "ValueError",
+}
 _KNOWN_PUBLISHER_STDERR_TOKENS = frozenset(
     (
         "integration_snapshot_invalid_arguments",
@@ -98,6 +135,10 @@ _CHILD_RUNTIME_ENVIRONMENT_NAMES = (
     "XDG_DATA_HOME",
     "XDG_STATE_HOME",
 )
+_PRIVATE_SERVICE_RUNTIME_DIRECTORY = "codex-usage-service-runtime-v2"
+_PRIVATE_SERVICE_RUNTIME_MAX_BYTES = 4 * 1024 * 1024
+_PRIVATE_SERVICE_RUNTIME_INTERPRETER_MAX_BYTES = 128 * 1024 * 1024
+_EXPECTED_CORE_DISTRIBUTION = "codex-usage"
 
 
 class _IntegrationWatchdogStageTimeout(TimeoutError):
@@ -106,6 +147,35 @@ class _IntegrationWatchdogStageTimeout(TimeoutError):
 
 class _ProcessGroupCleanupError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class _PrivateRuntimeFileEvidence:
+    relative: str
+    identity: tuple[int, ...]
+    payload_sha256: str
+    size: int
+
+
+@dataclass(frozen=True)
+class _PrivateServiceRuntimeEvidence:
+    directories: tuple[tuple[int, ...], ...]
+    pyvenv: _PrivateRuntimeFileEvidence
+    interpreter: _PrivateRuntimeFileEvidence
+    metadata: _PrivateRuntimeFileEvidence
+    record: _PrivateRuntimeFileEvidence
+    modules: tuple[_PrivateRuntimeFileEvidence, ...]
+
+
+@dataclass(frozen=True)
+class _PrivateRuntimeInitialAttestation:
+    runtime_entrypoint_path: Path
+    interpreter_path: Path
+    verified: VerifiedActiveManifest
+    runtime_evidence: _PrivateServiceRuntimeEvidence
+
+
+_PRIVATE_RUNTIME_INITIAL_ATTESTATION = threading.local()
 
 
 @dataclass(frozen=True)
@@ -176,15 +246,449 @@ def _validated_child_environment(environ: Mapping[str, str]) -> Mapping[str, str
 
 def _runtime_self_attestation(
     *,
-    trusted_entrypoint_path: Path,
+    runtime_entrypoint_path: Path,
+    interpreter_path: Path,
     verified: VerifiedActiveManifest,
 ) -> None:
-    verify_runtime_self_attestation(
-        trusted_entrypoint_path=trusted_entrypoint_path,
-        verified=verified,
-        module_names=RUNTIME_SELF_ATTESTED_CORE_MODULES,
-        interpreter_path=Path(sys.executable),
+    verify_private_service_runtime_self_attestation(
+        runtime_entrypoint_path,
+        interpreter_path,
+        verified,
     )
+
+
+def _validate_private_service_runtime_paths(
+    *,
+    data_home: Path,
+    runtime_entrypoint_path: Path,
+    interpreter_path: Path,
+) -> str:
+    if (
+        not isinstance(data_home, Path)
+        or not isinstance(runtime_entrypoint_path, Path)
+        or not isinstance(interpreter_path, Path)
+        or not data_home.is_absolute()
+        or not runtime_entrypoint_path.is_absolute()
+        or not interpreter_path.is_absolute()
+        or any(part in {"", ".", ".."} for part in data_home.parts[1:])
+        or any(
+            part in {"", ".", ".."} for part in runtime_entrypoint_path.parts[1:]
+        )
+        or any(part in {"", ".", ".."} for part in interpreter_path.parts[1:])
+        or "\x00" in str(data_home)
+        or "\x00" in str(runtime_entrypoint_path)
+        or "\x00" in str(interpreter_path)
+    ):
+        raise IntegrationEvidenceUnavailable()
+    abi = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    runtime_root = data_home / _PRIVATE_SERVICE_RUNTIME_DIRECTORY / "current"
+    expected_entrypoint = (
+        runtime_root
+        / "venv"
+        / "lib"
+        / abi
+        / "site-packages"
+        / "codex_usage"
+        / "integration_entrypoint.py"
+    )
+    expected_interpreter = runtime_root / "venv" / "bin" / "python"
+    if (
+        runtime_entrypoint_path != expected_entrypoint
+        or interpreter_path != expected_interpreter
+        or Path(sys.executable) != expected_interpreter
+    ):
+        raise IntegrationEvidenceUnavailable()
+    return abi
+
+
+def _private_runtime_record_rows(payload: bytes) -> dict[str, tuple[str, int]]:
+    rows: dict[str, tuple[str, int]] = {}
+    try:
+        reader = csv.reader(io.StringIO(payload.decode("utf-8")))
+        for count, row in enumerate(reader, start=1):
+            if count > 4096 or len(row) != 3:
+                raise IntegrationEvidenceUnavailable()
+            relative, digest, size_text = row
+            if (
+                relative in rows
+                or not relative
+                or relative.startswith("/")
+                or "\\" in relative
+                or "\x00" in relative
+                or any(part in {"", ".", ".."} for part in relative.split("/"))
+            ):
+                raise IntegrationEvidenceUnavailable()
+            if digest or size_text:
+                if not digest or not size_text.isdecimal():
+                    raise IntegrationEvidenceUnavailable()
+                rows[relative] = (digest, int(size_text))
+            else:
+                rows[relative] = ("", -1)
+    except (UnicodeDecodeError, csv.Error, OverflowError, ValueError) as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    if not rows:
+        raise IntegrationEvidenceUnavailable()
+    return rows
+
+
+def _private_runtime_record_digest(payload: bytes) -> str:
+    encoded = base64.urlsafe_b64encode(hashlib.sha256(payload).digest())
+    return "sha256=" + encoded.decode("ascii").rstrip("=")
+
+
+def _require_private_runtime_record_binding(
+    rows: Mapping[str, tuple[str, int]],
+    relative: str,
+    payload: bytes,
+) -> None:
+    if rows.get(relative) != (_private_runtime_record_digest(payload), len(payload)):
+        raise IntegrationEvidenceUnavailable()
+
+
+def _private_runtime_file_identity(identity: object) -> tuple[int, ...]:
+    values = (
+        getattr(identity, "device", None),
+        getattr(identity, "inode", None),
+        getattr(identity, "mode", None),
+        getattr(identity, "gid", None),
+        getattr(identity, "uid", None),
+        getattr(identity, "ctime_ns", None),
+    )
+    if any(type(value) is not int for value in values):
+        raise IntegrationEvidenceUnavailable()
+    return cast(tuple[int, ...], values)
+
+
+def _private_runtime_directory_identity(descriptor: int) -> tuple[int, ...]:
+    try:
+        item = os.fstat(descriptor)
+    except OSError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    if (
+        not stat.S_ISDIR(item.st_mode)
+        or stat.S_IMODE(item.st_mode) != 0o700
+        or item.st_uid != os.geteuid()
+    ):
+        raise IntegrationEvidenceUnavailable()
+    return (
+        item.st_dev,
+        item.st_ino,
+        stat.S_IMODE(item.st_mode),
+        item.st_uid,
+        item.st_gid,
+        item.st_nlink,
+        item.st_size,
+        item.st_mtime_ns,
+        item.st_ctime_ns,
+    )
+
+
+def _private_runtime_file_evidence(
+    *,
+    relative: str,
+    payload: bytes,
+    identity: object,
+) -> _PrivateRuntimeFileEvidence:
+    return _PrivateRuntimeFileEvidence(
+        relative=relative,
+        identity=_private_runtime_file_identity(identity),
+        payload_sha256=hashlib.sha256(payload).hexdigest(),
+        size=len(payload),
+    )
+
+
+def _validate_private_service_pyvenv(payload: bytes) -> None:
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    if "\x00" in text:
+        raise IntegrationEvidenceUnavailable()
+    values: list[str] = []
+    for line in text.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip().casefold() == "include-system-site-packages":
+            values.append(value.strip().casefold())
+    if values != ["false"]:
+        raise IntegrationEvidenceUnavailable()
+
+
+def _private_service_runtime_core_evidence(
+    *,
+    data_home: Path,
+    runtime_entrypoint_path: Path,
+    interpreter_path: Path,
+    verified: VerifiedActiveManifest,
+) -> _PrivateServiceRuntimeEvidence:
+    abi = _validate_private_service_runtime_paths(
+        data_home=data_home,
+        runtime_entrypoint_path=runtime_entrypoint_path,
+        interpreter_path=interpreter_path,
+    )
+    expected_dist_info = f"codex_usage-{verified.active_release.version}.dist-info"
+    if (
+        verified.active_release.version != "0.6.538"
+        or not verified.release_id.startswith("0.6.538-")
+    ):
+        raise IntegrationEvidenceUnavailable()
+
+    descriptors: list[int] = []
+    try:
+        data_fd = open_verified_state_home(data_home)
+        descriptors.append(data_fd)
+        runtime_fd = open_private_dir_at(data_fd, _PRIVATE_SERVICE_RUNTIME_DIRECTORY)
+        descriptors.append(runtime_fd)
+        current_fd = open_private_dir_at(runtime_fd, "current")
+        descriptors.append(current_fd)
+        venv_fd = open_private_dir_at(current_fd, "venv")
+        descriptors.append(venv_fd)
+        bin_fd = open_private_dir_at(venv_fd, "bin")
+        descriptors.append(bin_fd)
+        lib_fd = open_private_dir_at(venv_fd, "lib")
+        descriptors.append(lib_fd)
+        abi_fd = open_private_dir_at(lib_fd, abi)
+        descriptors.append(abi_fd)
+        site_fd = open_private_dir_at(abi_fd, "site-packages")
+        descriptors.append(site_fd)
+        package_fd = open_private_dir_at(site_fd, "codex_usage")
+        descriptors.append(package_fd)
+        dist_fd = open_private_dir_at(site_fd, expected_dist_info)
+        descriptors.append(dist_fd)
+        initial_directories = tuple(
+            _private_runtime_directory_identity(descriptor)
+            for descriptor in descriptors
+        )
+
+        pyvenv, pyvenv_identity = read_private_bytes_at(
+            venv_fd,
+            "pyvenv.cfg",
+            maximum=_PRIVATE_SERVICE_RUNTIME_MAX_BYTES,
+            mode=0o600,
+        )
+        _validate_private_service_pyvenv(pyvenv)
+        interpreter, interpreter_identity = read_private_bytes_at(
+            bin_fd,
+            "python",
+            maximum=_PRIVATE_SERVICE_RUNTIME_INTERPRETER_MAX_BYTES,
+            mode=0o700,
+        )
+        metadata, metadata_identity = read_private_bytes_at(
+            dist_fd,
+            "METADATA",
+            maximum=_PRIVATE_SERVICE_RUNTIME_MAX_BYTES,
+            mode=0o600,
+        )
+        record, record_identity = read_private_bytes_at(
+            dist_fd,
+            "RECORD",
+            maximum=_PRIVATE_SERVICE_RUNTIME_MAX_BYTES,
+            mode=0o600,
+        )
+        if (
+            _metadata_header(metadata, "Name") != _EXPECTED_CORE_DISTRIBUTION
+            or _metadata_header(metadata, "Version") != verified.active_release.version
+        ):
+            raise IntegrationEvidenceUnavailable()
+        rows = _private_runtime_record_rows(record)
+        metadata_relative = f"{expected_dist_info}/METADATA"
+        record_relative = f"{expected_dist_info}/RECORD"
+        _require_private_runtime_record_binding(rows, metadata_relative, metadata)
+        if rows.get(record_relative) != ("", -1):
+            raise IntegrationEvidenceUnavailable()
+
+        modules: list[_CoreModuleEvidence] = []
+        runtime_modules: list[_PrivateRuntimeFileEvidence] = []
+        for module_name in TRUSTED_CORE_MODULES:
+            payload, identity = read_private_bytes_at(
+                package_fd,
+                module_name,
+                maximum=_PRIVATE_SERVICE_RUNTIME_MAX_BYTES,
+                mode=0o600,
+            )
+            relative = f"codex_usage/{module_name}"
+            _require_private_runtime_record_binding(rows, relative, payload)
+            runtime_modules.append(
+                _private_runtime_file_evidence(
+                    relative=relative,
+                    payload=payload,
+                    identity=identity,
+                )
+            )
+            modules.append(
+                _CoreModuleEvidence(
+                    relative=relative,
+                    identity=_private_runtime_file_identity(identity),
+                    payload_sha256=hashlib.sha256(payload).hexdigest(),
+                    size=len(payload),
+                    payload=payload,
+                )
+            )
+        modules.sort(key=lambda module: module.relative)
+        if {
+            module.relative.removeprefix("codex_usage/") for module in modules
+        } != set(TRUSTED_CORE_MODULES):
+            raise IntegrationEvidenceUnavailable()
+        _active_release_core_module_evidence(verified, tuple(modules))
+        runtime_modules.sort(key=lambda module: module.relative)
+        final_directories = tuple(
+            _private_runtime_directory_identity(descriptor)
+            for descriptor in descriptors
+        )
+        if final_directories != initial_directories:
+            raise IntegrationEvidenceUnavailable()
+        return _PrivateServiceRuntimeEvidence(
+            directories=initial_directories,
+            pyvenv=_private_runtime_file_evidence(
+                relative="venv/pyvenv.cfg",
+                payload=pyvenv,
+                identity=pyvenv_identity,
+            ),
+            interpreter=_private_runtime_file_evidence(
+                relative="venv/bin/python",
+                payload=interpreter,
+                identity=interpreter_identity,
+            ),
+            metadata=_private_runtime_file_evidence(
+                relative=metadata_relative,
+                payload=metadata,
+                identity=metadata_identity,
+            ),
+            record=_private_runtime_file_evidence(
+                relative=record_relative,
+                payload=record,
+                identity=record_identity,
+            ),
+            modules=tuple(runtime_modules),
+        )
+    except IntegrationEvidenceUnavailable:
+        raise
+    except (OSError, TypeError, ValueError) as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def _verify_active_manifest_against_private_service_runtime(
+    state_home: Path,
+    data_home: Path,
+    runtime_entrypoint_path: Path,
+    interpreter_path: Path,
+) -> tuple[VerifiedActiveManifest, _PrivateServiceRuntimeEvidence]:
+    candidate_entrypoint = _active_entrypoint_candidate_from_active_manifest(
+        state_home=state_home,
+        data_home=data_home,
+    )
+    verified = verify_active_manifest_at(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=candidate_entrypoint,
+    )
+    runtime_evidence = _private_service_runtime_core_evidence(
+        data_home=data_home,
+        runtime_entrypoint_path=runtime_entrypoint_path,
+        interpreter_path=interpreter_path,
+        verified=verified,
+    )
+    return verified, runtime_evidence
+
+
+def verify_active_manifest_against_private_service_runtime(
+    state_home: Path,
+    data_home: Path,
+    runtime_entrypoint_path: Path,
+    interpreter_path: Path,
+) -> VerifiedActiveManifest:
+    """Bind the private service venv to the active, exact Producer release."""
+    _PRIVATE_RUNTIME_INITIAL_ATTESTATION.value = None
+    verified, runtime_evidence = _verify_active_manifest_against_private_service_runtime(
+        state_home,
+        data_home,
+        runtime_entrypoint_path,
+        interpreter_path,
+    )
+    _PRIVATE_RUNTIME_INITIAL_ATTESTATION.value = _PrivateRuntimeInitialAttestation(
+        runtime_entrypoint_path=runtime_entrypoint_path,
+        interpreter_path=interpreter_path,
+        verified=verified,
+        runtime_evidence=runtime_evidence,
+    )
+    return verified
+
+
+def _private_service_runtime_data_home(runtime_entrypoint_path: Path) -> Path:
+    try:
+        data_home = runtime_entrypoint_path.parents[7]
+    except IndexError as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    if data_home / _PRIVATE_SERVICE_RUNTIME_DIRECTORY / "current" / "venv" / "lib" / (
+        f"python{sys.version_info.major}.{sys.version_info.minor}"
+    ) / "site-packages" / "codex_usage" / "integration_entrypoint.py" != runtime_entrypoint_path:
+        raise IntegrationEvidenceInvalid()
+    return data_home
+
+
+def _private_service_runtime_state_home(verified: VerifiedActiveManifest) -> Path:
+    release_dir = verified.active_release.release_dir
+    try:
+        releases = release_dir.parent
+        integration = releases.parent
+        application = integration.parent
+        state_home = application.parent
+    except (AttributeError, TypeError) as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    if (
+        releases.name != "releases"
+        or integration.name != "integration"
+        or application.name != "codex-usage"
+        or not state_home.is_absolute()
+    ):
+        raise IntegrationEvidenceInvalid()
+    return state_home
+
+
+def verify_private_service_runtime_self_attestation(
+    runtime_entrypoint_path: Path,
+    interpreter_path: Path,
+    verified: VerifiedActiveManifest,
+) -> None:
+    """Revalidate the private service venv and imported modules before publish."""
+    initial = getattr(_PRIVATE_RUNTIME_INITIAL_ATTESTATION, "value", None)
+    _PRIVATE_RUNTIME_INITIAL_ATTESTATION.value = None
+    if (
+        type(verified) is not VerifiedActiveManifest
+        or type(initial) is not _PrivateRuntimeInitialAttestation
+        or initial.verified is not verified
+        or initial.runtime_entrypoint_path != runtime_entrypoint_path
+        or initial.interpreter_path != interpreter_path
+    ):
+        raise IntegrationEvidenceInvalid()
+    try:
+        reverified, runtime_evidence = _verify_active_manifest_against_private_service_runtime(
+            _private_service_runtime_state_home(verified),
+            _private_service_runtime_data_home(runtime_entrypoint_path),
+            runtime_entrypoint_path,
+            interpreter_path,
+        )
+    except (IntegrationEvidenceUnavailable, OSError, TypeError, ValueError) as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    if reverified != verified or runtime_evidence != initial.runtime_evidence:
+        raise IntegrationEvidenceInvalid()
+    site_packages = runtime_entrypoint_path.parent.parent
+    for module_name in RUNTIME_SELF_ATTESTED_CORE_MODULES:
+        if module_name == "codex_usage":
+            relative = "codex_usage/__init__.py"
+        else:
+            relative = f"codex_usage/{module_name.removeprefix('codex_usage.')}.py"
+        module = sys.modules.get(module_name)
+        module_spec = None if module is None else getattr(module, "__spec__", None)
+        module_file = None if module is None else getattr(module, "__file__", None)
+        origin = None if module_spec is None else getattr(module_spec, "origin", None)
+        expected = site_packages / relative
+        if module_file != str(expected) or origin != str(expected):
+            raise IntegrationEvidenceInvalid()
 
 
 def _stage_timeout_seconds(
@@ -656,6 +1160,28 @@ def _emit_stage_diagnostic(
     sys.stderr.write(("; ".join(parts).encode()[:4607]).decode("utf-8", "ignore") + "\n")
 
 
+def _publisher_only_exception_class(error: BaseException) -> str:
+    """Return an intentionally small, message-free diagnostic exception class."""
+    return _PUBLISHER_ONLY_EXCEPTION_CLASS_TOKENS.get(type(error), "unrecognized")
+
+
+def _emit_publisher_only_diagnostic(
+    stage: str,
+    *,
+    status: int,
+    error: BaseException,
+) -> None:
+    """Report a wrapper failure without serializing exception or input data."""
+    safe_stage = stage if stage in _PUBLISHER_ONLY_DIAGNOSTIC_STAGES else "unrecognized"
+    safe_status = status if status in _DIAGNOSTIC_STATUS_CODES else 69
+    message = (
+        "integration publisher service "
+        f"stage={safe_stage} rc={safe_status} "
+        f"exception={_publisher_only_exception_class(error)}\n"
+    )
+    sys.stderr.write(message[:_PUBLISHER_ONLY_DIAGNOSTIC_MAX_BYTES])
+
+
 def _run_subprocess_stage(
     command: Sequence[str],
     *,
@@ -785,11 +1311,12 @@ def execute(
     argv: Sequence[str],
     *,
     environ: Mapping[str, str],
-    trusted_entrypoint_path: Path,
+    runtime_entrypoint_path: Path,
     watchdog_runner: Callable[..., int],
     verifier: Callable[..., VerifiedActiveManifest],
     publisher_runner: Callable[..., int],
     monotonic: Callable[[], float] = time.monotonic,
+    interpreter_path: Path | None = None,
 ) -> int:
     try:
         config_path = _parse_unit_argv(argv)
@@ -817,31 +1344,40 @@ def execute(
             return watchdog_status
         state_home = _runtime_root(child_environ, "XDG_STATE_HOME")
         data_home = _runtime_root(child_environ, "XDG_DATA_HOME")
-        verified = _call_with_timeout(
-            "trusted entrypoint attestation",
-            _stage_timeout_seconds(
-                deadline=deadline,
-                stage_limit=ATTESTATION_TIMEOUT_SECONDS,
-                monotonic=monotonic,
-            ),
-            lambda: verifier(
-                state_home=state_home,
-                data_home=data_home,
-                trusted_entrypoint_path=trusted_entrypoint_path,
-            ),
-        )
-        _call_with_timeout(
-            "runtime self attestation",
-            _stage_timeout_seconds(
-                deadline=deadline,
-                stage_limit=RUNTIME_SELF_ATTESTATION_TIMEOUT_SECONDS,
-                monotonic=monotonic,
-            ),
-            lambda: _runtime_self_attestation(
-                trusted_entrypoint_path=trusted_entrypoint_path,
-                verified=verified,
-            ),
-        )
+        runtime_interpreter = Path(sys.executable) if interpreter_path is None else interpreter_path
+        try:
+            verified = _call_with_timeout(
+                "private service runtime attestation",
+                _stage_timeout_seconds(
+                    deadline=deadline,
+                    stage_limit=ATTESTATION_TIMEOUT_SECONDS,
+                    monotonic=monotonic,
+                ),
+                lambda: verifier(
+                    state_home=state_home,
+                    data_home=data_home,
+                    runtime_entrypoint_path=runtime_entrypoint_path,
+                    interpreter_path=runtime_interpreter,
+                ),
+            )
+        except (IntegrationEvidenceUnavailable, IntegrationEvidenceInvalid):
+            return 69
+        try:
+            _call_with_timeout(
+                "private service runtime self attestation",
+                _stage_timeout_seconds(
+                    deadline=deadline,
+                    stage_limit=RUNTIME_SELF_ATTESTATION_TIMEOUT_SECONDS,
+                    monotonic=monotonic,
+                ),
+                lambda: _runtime_self_attestation(
+                    runtime_entrypoint_path=runtime_entrypoint_path,
+                    interpreter_path=runtime_interpreter,
+                    verified=verified,
+                ),
+            )
+        except (IntegrationEvidenceUnavailable, IntegrationEvidenceInvalid):
+            return 70
         publisher_timeout = _stage_timeout_seconds(
             deadline=deadline,
             stage_limit=PUBLISH_TIMEOUT_SECONDS,
@@ -875,6 +1411,125 @@ def execute(
                 raise
         return 69
     except Exception:
+        return 69
+
+
+def execute_publisher_only(
+    argv: Sequence[str],
+    *,
+    environ: Mapping[str, str],
+    runtime_entrypoint_path: Path,
+    verifier: Callable[..., VerifiedActiveManifest],
+    publisher_runner: Callable[..., int],
+    monotonic: Callable[[], float] = time.monotonic,
+    interpreter_path: Path | None = None,
+) -> int:
+    """Publish only the already captured V2 evidence through an attested release.
+
+    This is intentionally separate from the historical generic watchdog API:
+    the service unit has no refresh authority and cannot reach the CLI,
+    scheduler, browser, direct, or Spark paths.
+    """
+    try:
+        normalized_argv = tuple(argv)
+    except (TypeError, ValueError) as exc:
+        _emit_publisher_only_diagnostic("arguments", status=64, error=exc)
+        return 64
+    if normalized_argv:
+        _emit_publisher_only_diagnostic(
+            "arguments",
+            status=64,
+            error=ValueError(),
+        )
+        return 64
+    try:
+        child_environ = _validated_child_environment(environ)
+        deadline = monotonic() + TOTAL_RUNTIME_BUDGET_SECONDS
+        state_home = _runtime_root(child_environ, "XDG_STATE_HOME")
+        data_home = _runtime_root(child_environ, "XDG_DATA_HOME")
+        runtime_interpreter = Path(sys.executable) if interpreter_path is None else interpreter_path
+        try:
+            verified = _call_with_timeout(
+                "private service runtime attestation",
+                _stage_timeout_seconds(
+                    deadline=deadline,
+                    stage_limit=ATTESTATION_TIMEOUT_SECONDS,
+                    monotonic=monotonic,
+                ),
+                lambda: verifier(
+                    state_home=state_home,
+                    data_home=data_home,
+                    runtime_entrypoint_path=runtime_entrypoint_path,
+                    interpreter_path=runtime_interpreter,
+                ),
+            )
+        except (IntegrationEvidenceUnavailable, IntegrationEvidenceInvalid) as exc:
+            _emit_publisher_only_diagnostic(
+                "initial_runtime_attestation",
+                status=69,
+                error=exc,
+            )
+            return 69
+        try:
+            _call_with_timeout(
+                "private service runtime self attestation",
+                _stage_timeout_seconds(
+                    deadline=deadline,
+                    stage_limit=RUNTIME_SELF_ATTESTATION_TIMEOUT_SECONDS,
+                    monotonic=monotonic,
+                ),
+                lambda: _runtime_self_attestation(
+                    runtime_entrypoint_path=runtime_entrypoint_path,
+                    interpreter_path=runtime_interpreter,
+                    verified=verified,
+                ),
+            )
+        except (IntegrationEvidenceUnavailable, IntegrationEvidenceInvalid) as exc:
+            _emit_publisher_only_diagnostic(
+                "runtime_self_attestation",
+                status=70,
+                error=exc,
+            )
+            return 70
+        publisher_timeout = _stage_timeout_seconds(
+            deadline=deadline,
+            stage_limit=PUBLISH_TIMEOUT_SECONDS,
+            monotonic=monotonic,
+            reserve_seconds=PROCESS_CLEANUP_TIMEOUT_SECONDS,
+        )
+        return _bounded_status(
+            publisher_runner(
+                verified.active_release.launcher_path,
+                PUBLISH_ARGV,
+                publisher_timeout,
+                child_environ=child_environ,
+            ),
+            fallback=69,
+        )
+    except IntegrationEvidenceUnavailable as exc:
+        _emit_publisher_only_diagnostic("outer_failure", status=69, error=exc)
+        return 69
+    except IntegrationEvidenceInvalid as exc:
+        _emit_publisher_only_diagnostic("outer_failure", status=70, error=exc)
+        return 70
+    except TimeoutError as exc:
+        _emit_publisher_only_diagnostic("outer_failure", status=75, error=exc)
+        return 75
+    except (OSError, TypeError, ValueError) as exc:
+        _emit_publisher_only_diagnostic("outer_failure", status=70, error=exc)
+        return 70
+    except BaseExceptionGroup as exc:
+        pending: list[BaseException] = [exc]
+        while pending:
+            item = pending.pop()
+            if isinstance(item, BaseExceptionGroup):
+                pending.extend(item.exceptions)
+            elif isinstance(item, (KeyboardInterrupt, SystemExit)):
+                raise
+        _emit_publisher_only_diagnostic("outer_failure", status=69, error=exc)
+        return 69
+    except Exception as exc:
+        _emit_publisher_only_diagnostic("outer_failure", status=69, error=exc)
         return 69
 
 
@@ -923,13 +1578,13 @@ def _run_publisher_stage(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    return execute(
+    return execute_publisher_only(
         tuple(sys.argv[1:] if argv is None else argv),
         environ=os.environ,
-        trusted_entrypoint_path=Path(integration_entrypoint.__file__),
-        watchdog_runner=_run_watchdog_stage,
-        verifier=verify_active_manifest_against_trusted_entrypoint,
+        runtime_entrypoint_path=Path(integration_entrypoint.__file__),
+        verifier=verify_active_manifest_against_private_service_runtime,
         publisher_runner=_run_publisher_stage,
+        interpreter_path=Path(sys.executable),
     )
 
 

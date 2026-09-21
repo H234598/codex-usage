@@ -202,15 +202,16 @@ def _forge_active_release_module_self_consistent(
     _update_active_manifest_after_release_forgery(state_home)
 
 
-def test_runtime_self_attestation_mode_race_returns_invalid_status(
+def test_legacy_runtime_self_attestation_mode_race_returns_invalid(
     evidence_layout,
     tmp_path,
     monkeypatch,
 ):
-    """Would fail if a recheck mode race leaked an attestation exception."""
-    from codex_usage import integration_attestation, integration_watchdog
+    """The retained 0644 Producer API must still reject its own mode recheck race."""
+    from codex_usage import integration_attestation
+    from codex_usage.private_io import IntegrationEvidenceInvalid
 
-    state_home, data_home, release_entrypoint, _payload, verified = evidence_layout
+    _state_home, _data_home, release_entrypoint, _payload, verified = evidence_layout
     trusted_entrypoint = _trusted_entrypoint_copy(tmp_path, release_entrypoint)
     runtime_module = trusted_entrypoint.parent / "integration_attestation.py"
     real_read = integration_attestation._read_nofollow_bytes
@@ -249,31 +250,13 @@ def test_runtime_self_attestation_mode_race_returns_invalid_status(
         "origin",
         str(runtime_module),
     )
-    monkeypatch.setattr(
-        integration_watchdog,
-        "RUNTIME_SELF_ATTESTED_CORE_MODULES",
-        ("codex_usage.integration_attestation",),
-    )
-    environment = {
-        "PYTHONDONTWRITEBYTECODE": "1",
-        "PYTHONNOUSERSITE": "1",
-        "PYTHONSAFEPATH": "1",
-        "XDG_DATA_HOME": str(data_home),
-        "XDG_STATE_HOME": str(state_home),
-    }
-    published: list[object] = []
-
-    status = integration_watchdog.execute(
-        ("--config", str(tmp_path / "config.toml")),
-        environ=environment,
-        trusted_entrypoint_path=trusted_entrypoint,
-        watchdog_runner=lambda _path, **_kwargs: 2,
-        verifier=lambda **_kwargs: verified,
-        publisher_runner=lambda *_args, **_kwargs: published.append(_args) or 0,
-    )
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_attestation.verify_runtime_self_attestation(
+            trusted_entrypoint_path=trusted_entrypoint,
+            verified=verified,
+            module_names=("codex_usage.integration_attestation",),
+        )
     assert mode_transitioned
-    assert published == []
-    assert status == 70
 
 
 def test_external_entrypoint_binding_uses_manifest_candidate_then_trusted_core(

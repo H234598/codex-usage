@@ -25,13 +25,6 @@ from .bridge import (
     run_bridge_server,
     write_bridge_extension,
 )
-from .browser import (
-    _profile_browser_dir,
-    _profile_lock,
-    diagnose_account,
-    login_account,
-    probe_account,
-)
 from .config import (
     SUPPORTED_BACKENDS,
     SUPPORTED_BROWSERS,
@@ -156,6 +149,61 @@ from .state import (
     remove_account_state,
 )
 from .terminal import TerminalError, start_account_terminal
+
+
+def _profile_browser_dir(browser: str) -> str:
+    """Load browser-only profile normalization only for browser profile actions."""
+    from .browser import _profile_browser_dir as resolve_profile_browser_dir
+
+    return resolve_profile_browser_dir(browser)
+
+
+def _profile_lock(profile_dir: Path, *, lock_root: Path | None = None) -> Any:
+    """Load browser-only profile locking only for browser profile actions."""
+    from .browser import _profile_lock as lock_profile
+
+    return lock_profile(profile_dir, lock_root=lock_root)
+
+
+def login_account(account: Any, config: Any) -> None:
+    """Run the optional browser login command without coupling generic CLI import."""
+    from .browser import login_account as login
+
+    login(account, config)
+
+
+def probe_account(
+    account: Any,
+    config: Any,
+    *,
+    headed: bool = True,
+    save_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Run the optional browser probe command only when it is requested."""
+    from .browser import probe_account as probe
+
+    return probe(account, config, headed=headed, save_dir=save_dir)
+
+
+def diagnose_account(
+    account: Any,
+    config: Any,
+    *,
+    headed: bool = False,
+    screenshot_dir: Path | None = None,
+    auth_json_path: Path | None = None,
+) -> dict[str, Any]:
+    """Run the optional browser diagnosis command only when it is requested."""
+    from .browser import diagnose_account as diagnose
+
+    return diagnose(
+        account,
+        config,
+        headed=headed,
+        screenshot_dir=screenshot_dir,
+        auth_json_path=auth_json_path,
+    )
+
 
 # `auto` selects a browser; it does not create an OAuth profile. Keep a little
 # room for stale profiles while bounding hostile directory enumeration.

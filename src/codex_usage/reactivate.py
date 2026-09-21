@@ -12,7 +12,6 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .account_lock import AccountLockError, account_lock
-from .browser import _profile_lock
 from .config import SUPPORTED_REACTIVATION_BROWSERS, _validate_account_id
 from .direct import (
     DirectAuthError,
@@ -68,6 +67,13 @@ REACTIVATION_ENV_NAMES = {
 
 class ReactivationError(Exception):
     pass
+
+
+def _profile_lock(profile_dir: Path) -> Any:
+    """Load browser-only profile locking only for the browser reactivation path."""
+    from .browser import _profile_lock as lock_profile
+
+    return lock_profile(profile_dir)
 
 
 def reactivate_account(

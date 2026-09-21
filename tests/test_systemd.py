@@ -13,9 +13,11 @@ def test_service_runs_dedicated_integration_watchdog_with_hardening():
     service = Path("systemd/codex-usage.service").read_text(encoding="utf-8")
 
     assert (
-        'ExecStart="%h/.local/bin/codex-usage-integration-watchdog" '
-        '"--config" "%h/.config/codex-usage/config.toml"'
+        'ExecStart="%h/.local/share/codex-usage-service-runtime-v2/current/bin/'
+        'codex-usage-integration-watchdog-v2"'
     ) in service
+    assert "--config" not in service
+    assert "ms-playwright" not in service
     assert " codex-usage watchdog " not in service
     assert 'Environment="XDG_DATA_HOME=%h/.local/share"' in service
     assert 'Environment="XDG_STATE_HOME=%h/.local/state"' in service
@@ -65,7 +67,13 @@ def test_static_and_rendered_service_share_integration_watchdog_contract(
     data_home = home / ".local" / "share"
     state_home = home / ".local" / "state"
     lock_root = state_home / "codex-usage" / "locks"
-    executable = home / ".local" / "bin" / "codex-usage"
+    watchdog = (
+        data_home
+        / "codex-usage-service-runtime-v2"
+        / "current"
+        / "bin"
+        / "codex-usage-integration-watchdog-v2"
+    )
     config_path = home / ".config" / "codex-usage" / "config.toml"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
@@ -75,7 +83,7 @@ def test_static_and_rendered_service_share_integration_watchdog_contract(
     static = Path("systemd/codex-usage.service").read_text(encoding="utf-8")
     rendered = service_module._render_service(
         AppConfig(accounts=()),
-        executable,
+        watchdog,
         config_path,
     )
     static_normalized = static.replace("%h", str(home))

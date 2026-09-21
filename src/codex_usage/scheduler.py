@@ -16,7 +16,6 @@ from typing import Any, cast
 
 from .account_lock import account_lock
 from .app_server import AppServerUnavailableError, fetch_account_usage_app_server
-from .browser import fetch_account_usage
 from .config import MAX_CONFIG_ACCOUNTS, AppConfig
 from .direct import (
     DirectAuthError,
@@ -69,6 +68,24 @@ AUTHENTICATED_RESET_FALLBACK_REASON = (
 REUSABLE_RESET_FALLBACK_REASONS = frozenset(
     (LEGACY_DIRECT_RESET_FALLBACK_REASON, AUTHENTICATED_RESET_FALLBACK_REASON)
 )
+
+
+def fetch_account_usage(
+    account: Account,
+    config: AppConfig,
+    *,
+    headed: bool = False,
+    timeout_ms: int = 45_000,
+) -> AccountUsage:
+    """Load the optional Playwright backend only for a selected browser fetch."""
+    from .browser import fetch_account_usage as fetch_browser_usage
+
+    return fetch_browser_usage(
+        account,
+        config,
+        headed=headed,
+        timeout_ms=timeout_ms,
+    )
 
 
 def _bounded_account_list(accounts: Iterable[Account]) -> list[Account]:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import runpy
+import subprocess
 import sys
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
@@ -53,6 +54,75 @@ class _BrokenInt(int):
 
     def __lt__(self, _other):
         raise RuntimeError("synthetic CLI integer comparison marker")
+
+
+def _run_local_cli_with_playwright_blocked(
+    tmp_path: Path,
+    program: str,
+) -> subprocess.CompletedProcess[str]:
+    """Run the worktree CLI under the service's isolated import conditions."""
+    source_root = Path(__file__).parents[1] / "src"
+    script = f"""
+import importlib.abc
+import sys
+
+class BlockPlaywright(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "playwright" or fullname.startswith("playwright."):
+            raise ModuleNotFoundError("playwright deliberately unavailable", name="playwright")
+        return None
+
+sys.meta_path.insert(0, BlockPlaywright())
+sys.path.insert(0, {str(source_root)!r})
+{program}
+"""
+    return subprocess.run(
+        [sys.executable, "-I", "-B", "-c", script],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONSAFEPATH": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "XDG_DATA_HOME": str(tmp_path / "data"),
+            "XDG_STATE_HOME": str(tmp_path / "state"),
+        },
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+
+def test_cli_watchdog_import_is_browser_independent_under_hardened_runtime(tmp_path):
+    """Would fail while CLI imports the optional browser backend at module scope."""
+    completed = _run_local_cli_with_playwright_blocked(
+        tmp_path,
+        (
+            "from codex_usage.cli import _build_parser\n"
+            "from codex_usage.scheduler import watchdog\n"
+            "assert watchdog is not None\n"
+            "assert _build_parser().prog == 'codex-usage'"
+        ),
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_browser_module_remains_unavailable_when_playwright_is_not_installed(tmp_path):
+    """The service runtime must not silently vendor or fall back to browser imports."""
+    completed = _run_local_cli_with_playwright_blocked(
+        tmp_path,
+        """
+try:
+    import codex_usage.browser
+except ModuleNotFoundError as exc:
+    if exc.name != "playwright":
+        raise
+else:
+    raise SystemExit("browser import unexpectedly succeeded without playwright")
+""",
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_cli_numeric_boundaries_reject_subclasses(tmp_path, monkeypatch):
