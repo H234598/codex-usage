@@ -20,7 +20,7 @@ POOL_AUTHORITY_PENDING_FILENAME = "pool-authority-owner-pending-v2.json"
 POOL_AUTHORITY_FILENAME = "pool-authority-v2.json"
 POOL_AUTHORITY_SOURCE_SCHEMA_VERSION = 2
 POOL_AUTHORITY_SCHEMA_VERSION = 2
-PRODUCER_VERSION = "0.6.538"
+PRODUCER_VERSION = "0.6.539"
 POOL_AUTHORITY_SOURCE_MAX_BYTES = 128 * 1024
 POOL_AUTHORITY_MAX_BYTES = 256 * 1024
 POOL_AUTHORITY_MAX_ENTRIES = 256
@@ -56,7 +56,7 @@ _PROJECTION_FIELDS = frozenset(
 )
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 _GENERATION_ID_RE = re.compile(r"[0-9a-f]{32}")
-_RELEASE_ID_RE = re.compile(r"0\.6\.538-[0-9a-f]{16}")
+_RELEASE_ID_RE = re.compile(r"0\.6\.539-[0-9a-f]{16}")
 _POOL_ID_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 _PROVIDER_RE = re.compile(r"[a-z][a-z0-9-]{0,31}")
 _MODEL_FAMILY_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")

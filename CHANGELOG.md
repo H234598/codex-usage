@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.539 - 2026-09-21
+
+### Changed
+
+- D297 ersetzt die byte-driftende `0.6.538`-Releasegrenze durch den neuen,
+  vollständig attestierten Producer `0.6.539`. Projekt, Producer-Wheel,
+  Manifest, Runtimeattestierung, Evidence, Pool-Authority-Projektion und
+  Servicebindung verlangen dieselbe Version.
+- Der Installer akzeptiert für den einmaligen, leeren V2-Cutover weiterhin
+  ausschließlich die attestierte `0.6.537`-Provenienz. Ein `0.6.538`-Active
+  ist weder Upgradequelle noch Fallback und wird vor Recovery ohne
+  Pointermutation abgelehnt.
+
 ## 0.6.536 - 2026-08-25
 
 ### Changed

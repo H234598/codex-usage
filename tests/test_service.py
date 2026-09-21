@@ -126,7 +126,7 @@ def _write_recorded_distribution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    version: str = "0.6.538",
+    version: str = "0.6.539",
     corrupt_record_for: str | None = None,
     metadata_suffix: str = "",
     files_override: object | None = None,
@@ -148,7 +148,7 @@ def _write_recorded_distribution(
     _write_console_script(watchdog, "codex_usage.integration_watchdog")
     package.mkdir(parents=True, exist_ok=True)
     dist_info.mkdir(parents=True, exist_ok=True)
-    package_init.write_text('__version__ = "0.6.538"\n', encoding="utf-8")
+    package_init.write_text('__version__ = "0.6.539"\n', encoding="utf-8")
     cli_module.write_text("def main():\n    return 0\n", encoding="utf-8")
     watchdog_module.write_text("def main():\n    return 0\n", encoding="utf-8")
     from codex_usage.integration_attestation import TRUSTED_CORE_MODULES
@@ -199,7 +199,7 @@ def _write_recorded_distribution(
 
     active = VerifiedActiveManifest(
         active_release=ActiveRelease(
-            version="0.6.538",
+            version="0.6.539",
             release_dir=release,
             launcher_path=codex_usage,
             entrypoint_path=package / "integration_entrypoint.py",
@@ -209,7 +209,7 @@ def _write_recorded_distribution(
             launcher_sha256="0" * 64,
             release_tree_sha256="0" * 64,
         ),
-        release_id="0.6.538-0000000000000000",
+        release_id="0.6.539-0000000000000000",
         source_manifest_sha256="0" * 64,
         active_manifest_bytes=b"{}",
         active_manifest_sha256="0" * 64,
@@ -235,7 +235,7 @@ def _write_recorded_worktree_distribution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[Path, Path, Path]:
     """Build a RECORD-bound test distribution from this exact worktree source."""
-    version = "0.6.538"
+    version = "0.6.539"
     release = tmp_path / "worktree-release"
     bin_dir = release / "bin"
     site_packages = release / "lib" / "python" / "site-packages"
@@ -255,7 +255,7 @@ def _write_recorded_worktree_distribution(
     dist_info.mkdir(parents=True)
     metadata = dist_info / "METADATA"
     metadata.write_text(
-        "Metadata-Version: 2.4\nName: codex-usage\nVersion: 0.6.538\n",
+        "Metadata-Version: 2.4\nName: codex-usage\nVersion: 0.6.539\n",
         encoding="utf-8",
     )
     metadata.chmod(0o600)
@@ -292,7 +292,7 @@ def _write_recorded_worktree_distribution(
 
     active = VerifiedActiveManifest(
         active_release=ActiveRelease(
-            version="0.6.538",
+            version="0.6.539",
             release_dir=release,
             launcher_path=codex_usage,
             entrypoint_path=package / "integration_entrypoint.py",
@@ -302,7 +302,7 @@ def _write_recorded_worktree_distribution(
             launcher_sha256="0" * 64,
             release_tree_sha256="0" * 64,
         ),
-        release_id="0.6.538-0000000000000000",
+        release_id="0.6.539-0000000000000000",
         source_manifest_sha256="0" * 64,
         active_manifest_bytes=b"{}",
         active_manifest_sha256="0" * 64,
@@ -498,7 +498,7 @@ def test_service_install_materializes_record_bound_runtime_importable_when_harde
         / "lib"
         / f"python{sys.version_info.major}.{sys.version_info.minor}"
         / "site-packages"
-        / "codex_usage-0.6.538.dist-info"
+        / "codex_usage-0.6.539.dist-info"
         / "RECORD"
     ).read_text(encoding="utf-8")
     assert "codex_usage/cli.py" not in record
@@ -1783,7 +1783,7 @@ def test_runtime_revalidation_fails_closed_for_attested_component_drift(
             / "lib"
             / f"python{sys.version_info.major}.{sys.version_info.minor}"
             / "site-packages"
-            / "codex_usage-0.6.538.dist-info"
+            / "codex_usage-0.6.539.dist-info"
             / "METADATA"
         )
         metadata.write_text("Name: codex-usage\nVersion: 0.0.0\n", encoding="utf-8")
@@ -4257,7 +4257,7 @@ def test_metadata_headers_accepts_only_repeatable_core_metadata_fields(field):
         (
             "Metadata-Version: 2.4\n"
             "Name: codex-usage\n"
-            "Version: 0.6.538\n"
+            "Version: 0.6.539\n"
             f"{field}: first\n"
             f"{field.lower()}: second\n"
         ).encode()
@@ -4266,7 +4266,7 @@ def test_metadata_headers_accepts_only_repeatable_core_metadata_fields(field):
     assert headers == {
         "metadata-version": "2.4",
         "name": "codex-usage",
-        "version": "0.6.538",
+        "version": "0.6.539",
     }
 
 
@@ -4274,7 +4274,7 @@ def test_metadata_headers_accepts_only_repeatable_core_metadata_fields(field):
     "metadata_suffix",
     [
         pytest.param("Name: codex-usage\n", id="duplicate-name"),
-        pytest.param("Version: 0.6.538\n", id="duplicate-version"),
+        pytest.param("Version: 0.6.539\n", id="duplicate-version"),
         pytest.param("Metadata-Version: 2.4\n", id="duplicate-metadata-version"),
         pytest.param(
             "Unrecognized-Field: first\nunrecognized-field: second\n",
@@ -4289,7 +4289,7 @@ def test_metadata_headers_rejects_duplicate_identity_or_unknown_field(metadata_s
             (
                 "Metadata-Version: 2.4\n"
                 "Name: codex-usage\n"
-                "Version: 0.6.538\n"
+                "Version: 0.6.539\n"
                 f"{metadata_suffix}"
             ).encode()
         )
@@ -4336,7 +4336,7 @@ def test_resolve_codex_usage_rejects_dist_info_rebind_between_scan_and_read(
     rebound_metadata = (
         b"Metadata-Version: 2.4\n"
         b"Name: codex-usage\n"
-        b"Version: 0.6.538\n"
+        b"Version: 0.6.539\n"
         b"Summary: rebound metadata\n"
     )
     rebound_record_rows = []
@@ -4358,10 +4358,10 @@ def test_resolve_codex_usage_rejects_dist_info_rebind_between_scan_and_read(
     locate_counts: dict[str, int] = {}
 
     class RebindingDistribution:
-        version = "0.6.538"
+        version = "0.6.539"
         metadata: ClassVar[dict[str, str]] = {
             "Name": "codex-usage",
-            "Version": "0.6.538",
+            "Version": "0.6.539",
         }
 
         def locate_file(self, path: object) -> Path:
@@ -4493,8 +4493,8 @@ def test_resolve_codex_usage_scans_record_without_distribution_files_property(
 
     class RecordOnlyDistribution:
         def __init__(self) -> None:
-            self.version = "0.6.538"
-            self.metadata = {"Name": "codex-usage", "Version": "0.6.538"}
+            self.version = "0.6.539"
+            self.metadata = {"Name": "codex-usage", "Version": "0.6.539"}
 
         @property
         def files(self):  # pragma: no cover - failure path is the assertion itself
@@ -4590,14 +4590,14 @@ def test_resolve_codex_usage_rejects_duplicate_dist_info_roots(
 ):
     """Would fail if resolver trusted RECORD rows while another dist-info root existed."""
     codex_usage, wrapper, record = _write_recorded_distribution(tmp_path, monkeypatch)
-    duplicate = record.parent.with_name("codex_usage_duplicate-0.6.538.dist-info")
+    duplicate = record.parent.with_name("codex_usage_duplicate-0.6.539.dist-info")
     duplicate.mkdir()
     (duplicate / "METADATA").write_text(
-        "Metadata-Version: 2.4\nName: codex-usage\nVersion: 0.6.538\n",
+        "Metadata-Version: 2.4\nName: codex-usage\nVersion: 0.6.539\n",
         encoding="utf-8",
     )
     (duplicate / "RECORD").write_text(
-        "codex_usage_duplicate-0.6.538.dist-info/RECORD,,\n",
+        "codex_usage_duplicate-0.6.539.dist-info/RECORD,,\n",
         encoding="utf-8",
     )
 
@@ -4623,7 +4623,7 @@ def test_resolve_codex_usage_rejects_missing_record_selfrow(
     rows = [
         row
         for row in record.read_text(encoding="utf-8").splitlines()
-        if not row.startswith("codex_usage-0.6.538.dist-info/RECORD,")
+        if not row.startswith("codex_usage-0.6.539.dist-info/RECORD,")
     ]
     record.write_text("\n".join(rows) + "\n", encoding="utf-8")
 

@@ -349,16 +349,16 @@ def _expected_entrypoint(tmp_path: Path) -> Path:
 
 
 def _verified_manifest(tmp_path: Path, entrypoint: Path | None = None):
-    """Synthetic attested 0.6.538 manifest for entrypoint isolation tests."""
+    """Synthetic attested 0.6.539 manifest for entrypoint isolation tests."""
     from codex_usage.integration_attestation import ActiveRelease, VerifiedActiveManifest
     from codex_usage.private_io import FileIdentity
 
     entrypoint = entrypoint or _expected_entrypoint(tmp_path)
-    active_bytes = b'{"release_id":"0.6.538-aaaaaaaaaaaaaaaa","version":"0.6.538"}'
+    active_bytes = b'{"release_id":"0.6.539-aaaaaaaaaaaaaaaa","version":"0.6.539"}'
     identity = FileIdentity(1, 2, 0o700)
     return VerifiedActiveManifest(
         active_release=ActiveRelease(
-            version="0.6.538",
+            version="0.6.539",
             release_dir=entrypoint.parents[3],
             launcher_path=entrypoint.parents[3] / "bin/codex-usage-integration",
             entrypoint_path=entrypoint,
@@ -368,7 +368,7 @@ def _verified_manifest(tmp_path: Path, entrypoint: Path | None = None):
             launcher_sha256="e" * 64,
             release_tree_sha256="f" * 64,
         ),
-        release_id="0.6.538-aaaaaaaaaaaaaaaa",
+        release_id="0.6.539-aaaaaaaaaaaaaaaa",
         source_manifest_sha256="1" * 64,
         active_manifest_bytes=active_bytes,
         active_manifest_sha256=hashlib.sha256(active_bytes).hexdigest(),

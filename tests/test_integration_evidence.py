@@ -916,7 +916,7 @@ def _create_complete_generations(
                     payload_sha256=hashlib.sha256(payload).hexdigest(),
                     payload_size_bytes=len(payload),
                     published_at=published_at,
-                    producer_version="0.6.538",
+                    producer_version="0.6.539",
                     release_id=verified_active_manifest.release_id,
                     source_manifest_sha256=(
                         verified_active_manifest.source_manifest_sha256
@@ -1367,7 +1367,7 @@ def _rewrite_complete_generation(
         binding = replace(
             binding,
             active_manifest_sha256="c" * 64,
-            release_id="0.6.538-" + "d" * 16,
+            release_id="0.6.539-" + "d" * 16,
             source_manifest_sha256="e" * 64,
         )
     from codex_usage.integration_pool_authority import (
@@ -4894,8 +4894,8 @@ def test_binding_requires_exact_nested_fields_and_32kib_limit():
         payload_sha256="c" * 64,
         payload_size_bytes=64,
         published_at="2026-08-25T10:00:00Z",
-        producer_version="0.6.538",
-        release_id="0.6.538-" + "d" * 16,
+        producer_version="0.6.539",
+        release_id="0.6.539-" + "d" * 16,
         source_manifest_sha256="e" * 64,
         usage_binding_schema_version=2,
         pool_authority_filename="pool-authority-v2.json",
@@ -5316,7 +5316,7 @@ def test_reader_fails_closed_on_pool_authority_bundle_tampering(
     else:
         authority = parse_pool_authority_projection(authority_path.read_bytes())
         if mutation == "authority_release_mismatch":
-            authority["release_id"] = "0.6.538-" + "d" * 16
+            authority["release_id"] = "0.6.539-" + "d" * 16
         elif mutation == "authority_generation_mismatch":
             authority["generation_id"] = "e" * 32
         elif mutation == "authority_usage_digest_tamper":

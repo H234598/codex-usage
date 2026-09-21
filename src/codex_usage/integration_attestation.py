@@ -34,11 +34,11 @@ _MANIFEST_MAX_BYTES = 128 * 1024
 MAX_ATTESTATION_FILE_BYTES = 4 * 1024 * 1024
 MAX_RELEASE_TREE_ENTRIES = 4096
 MAX_RELEASE_TREE_BYTES = 128 * 1024 * 1024
-_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.538.dist-info"
-_EXPECTED_VERSION = "0.6.538"
+_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.539.dist-info"
+_EXPECTED_VERSION = "0.6.539"
 _EXPECTED_DISTRIBUTION = "codex-usage-integration-producer"
 _EXPECTED_CORE_DISTRIBUTION = "codex-usage"
-_CORE_DIST_INFO_PREFIX = "codex_usage-0.6.538.dist-info"
+_CORE_DIST_INFO_PREFIX = "codex_usage-0.6.539.dist-info"
 TRUSTED_CORE_MODULES = (
     "__init__.py",
     "account_lock.py",
