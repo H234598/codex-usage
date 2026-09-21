@@ -5,6 +5,7 @@ import math
 import os
 import sqlite3
 import stat
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import chain, islice
@@ -24,6 +25,7 @@ from .private_io import (
     ensure_private_directory,
     private_path_lock,
 )
+from .source_lock import source_lock, source_root_for_history_path
 
 MAX_HISTORY_SAMPLES = 500_000
 MAX_HISTORY_WINDOW_SECONDS = 2_592_000
@@ -191,14 +193,20 @@ class HistoryStore:
         connection = self._connection
         self._connection = None
         if connection is not None:
-            connection.close()
+            with self._source_access():
+                connection.close()
+
+    @contextmanager
+    def _source_access(self):
+        with source_lock(source_root_for_history_path(self.path)):
+            yield
 
     def _connect(self) -> sqlite3.Connection:
         if self._connection is not None:
             return self._connection
         # Lock file lives beside database; create/validate its parent first.
         self._prepare_path()
-        with private_path_lock(self.path, label="history lock"):
+        with self._source_access(), private_path_lock(self.path, label="history lock"):
             if self._connection is not None:
                 return self._connection
             path, expected_stat = self._prepare_path()
@@ -360,38 +368,39 @@ class HistoryStore:
             raise ValueError("samples are invalid")
         if not samples:
             return 0
-        connection = self._connect()
-        with private_path_lock(self.path, label="history lock"):
-            try:
-                connection.execute("BEGIN")
-                cursor = connection.executemany(
-                    """
-                    INSERT INTO samples(
-                        account_id, pool_key, window_seconds, captured_at_ms,
-                        used_percent, reset_at_ms, reset_generation, source
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(account_id, pool_key, window_seconds, captured_at_ms)
-                    DO UPDATE SET
-                        used_percent = excluded.used_percent,
-                        reset_at_ms = excluded.reset_at_ms,
-                        reset_generation = excluded.reset_generation,
-                        source = excluded.source
-                    WHERE samples.used_percent IS NOT excluded.used_percent
-                       OR samples.reset_at_ms IS NOT excluded.reset_at_ms
-                       OR samples.reset_generation IS NOT excluded.reset_generation
-                       OR samples.source IS NOT excluded.source
-                    """,
-                    (_sample_record_values(sample) for sample in samples),
-                )
-                count = cursor.rowcount
-                connection.commit()
-            except Exception:
+        with self._source_access():
+            connection = self._connect()
+            with private_path_lock(self.path, label="history lock"):
                 try:
-                    connection.rollback()
+                    connection.execute("BEGIN")
+                    cursor = connection.executemany(
+                        """
+                        INSERT INTO samples(
+                            account_id, pool_key, window_seconds, captured_at_ms,
+                            used_percent, reset_at_ms, reset_generation, source
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(account_id, pool_key, window_seconds, captured_at_ms)
+                        DO UPDATE SET
+                            used_percent = excluded.used_percent,
+                            reset_at_ms = excluded.reset_at_ms,
+                            reset_generation = excluded.reset_generation,
+                            source = excluded.source
+                        WHERE samples.used_percent IS NOT excluded.used_percent
+                           OR samples.reset_at_ms IS NOT excluded.reset_at_ms
+                           OR samples.reset_generation IS NOT excluded.reset_generation
+                           OR samples.source IS NOT excluded.source
+                        """,
+                        (_sample_record_values(sample) for sample in samples),
+                    )
+                    count = cursor.rowcount
+                    connection.commit()
                 except Exception:
-                    pass
-                raise
-            self._secure_related_files()
+                    try:
+                        connection.rollback()
+                    except Exception:
+                        pass
+                    raise
+                self._secure_related_files()
         return count
 
     def samples(
@@ -420,12 +429,13 @@ class HistoryStore:
         if end is not None:
             clauses.append("captured_at_ms <= ?")
             parameters.append(_to_millis(end))
-        rows = self._connect().execute(
-            "SELECT * FROM samples WHERE "
-            + " AND ".join(clauses)
-            + " ORDER BY captured_at_ms DESC LIMIT ?",
-            [*parameters, MAX_HISTORY_SAMPLES],
-        ).fetchall()
+        with self._source_access():
+            rows = self._connect().execute(
+                "SELECT * FROM samples WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY captured_at_ms DESC LIMIT ?",
+                [*parameters, MAX_HISTORY_SAMPLES],
+            ).fetchall()
         rows.reverse()
         return tuple(_sample_from_row(row) for row in rows)
 
@@ -450,22 +460,23 @@ class HistoryStore:
         if start_ms > end_ms:
             return ()
         parameters = (account_id, pool, window_seconds, start_ms)
-        connection = self._connect()
-        baseline_row = connection.execute(
-            "SELECT * FROM samples WHERE account_id = ? AND pool_key = ? "
-            "AND window_seconds = ? AND captured_at_ms <= ? "
-            "ORDER BY captured_at_ms DESC LIMIT 1",
-            parameters,
-        ).fetchone()
-        observation_limit = max(
-            0, MAX_HISTORY_SAMPLES - (1 if baseline_row is not None else 0)
-        )
-        observations = connection.execute(
-            "SELECT * FROM samples WHERE account_id = ? AND pool_key = ? "
-            "AND window_seconds = ? AND captured_at_ms > ? AND captured_at_ms <= ? "
-            "ORDER BY captured_at_ms DESC LIMIT ?",
-            (*parameters[:3], parameters[3], end_ms, observation_limit),
-        ).fetchall()
+        with self._source_access():
+            connection = self._connect()
+            baseline_row = connection.execute(
+                "SELECT * FROM samples WHERE account_id = ? AND pool_key = ? "
+                "AND window_seconds = ? AND captured_at_ms <= ? "
+                "ORDER BY captured_at_ms DESC LIMIT 1",
+                parameters,
+            ).fetchone()
+            observation_limit = max(
+                0, MAX_HISTORY_SAMPLES - (1 if baseline_row is not None else 0)
+            )
+            observations = connection.execute(
+                "SELECT * FROM samples WHERE account_id = ? AND pool_key = ? "
+                "AND window_seconds = ? AND captured_at_ms > ? AND captured_at_ms <= ? "
+                "ORDER BY captured_at_ms DESC LIMIT ?",
+                (*parameters[:3], parameters[3], end_ms, observation_limit),
+            ).fetchall()
         observations.reverse()
         samples: list[UsageSample] = []
         if baseline_row is not None:
@@ -489,19 +500,20 @@ class HistoryStore:
         end_ms = _to_millis(end)
         if start_ms > end_ms:
             return ()
-        rows = self._connect().execute(
-            "SELECT DISTINCT window_seconds FROM samples "
-            "WHERE account_id = ? AND pool_key = ? "
-            "AND captured_at_ms >= ? AND captured_at_ms <= ? "
-            "ORDER BY window_seconds LIMIT ?",
-            (
-                account_id,
-                pool,
-                start_ms,
-                end_ms,
-                MAX_CONSUMPTION_WINDOWS,
-            ),
-        ).fetchall()
+        with self._source_access():
+            rows = self._connect().execute(
+                "SELECT DISTINCT window_seconds FROM samples "
+                "WHERE account_id = ? AND pool_key = ? "
+                "AND captured_at_ms >= ? AND captured_at_ms <= ? "
+                "ORDER BY window_seconds LIMIT ?",
+                (
+                    account_id,
+                    pool,
+                    start_ms,
+                    end_ms,
+                    MAX_CONSUMPTION_WINDOWS,
+                ),
+            ).fetchall()
         durations: list[int] = []
         for row in rows:
             duration = row["window_seconds"]
@@ -520,34 +532,36 @@ class HistoryStore:
         if not isinstance(dry_run, bool):
             raise ValueError("dry_run must be boolean")
         _require_aware(before, "before")
-        connection = self._connect()
-        if dry_run:
-            row = connection.execute(
-                "SELECT COUNT(*) AS count FROM samples WHERE captured_at_ms < ?",
-                (_to_millis(before),),
-            ).fetchone()
-            return int(row["count"])
-        with private_path_lock(self.path, label="history lock"):
-            try:
-                count = connection.execute(
-                    "DELETE FROM samples WHERE captured_at_ms < ?",
+        with self._source_access():
+            connection = self._connect()
+            if dry_run:
+                row = connection.execute(
+                    "SELECT COUNT(*) AS count FROM samples WHERE captured_at_ms < ?",
                     (_to_millis(before),),
-                ).rowcount
-                connection.commit()
-            except Exception:
+                ).fetchone()
+                return int(row["count"])
+            with private_path_lock(self.path, label="history lock"):
                 try:
-                    connection.rollback()
+                    count = connection.execute(
+                        "DELETE FROM samples WHERE captured_at_ms < ?",
+                        (_to_millis(before),),
+                    ).rowcount
+                    connection.commit()
                 except Exception:
-                    pass
-                raise
-            self._secure_related_files()
+                    try:
+                        connection.rollback()
+                    except Exception:
+                        pass
+                    raise
+                self._secure_related_files()
         return count
 
     def status(self) -> dict[str, int | str]:
-        row = self._connect().execute(
-            "SELECT COUNT(*) AS count, MIN(captured_at_ms) AS oldest, "
-            "MAX(captured_at_ms) AS newest FROM samples"
-        ).fetchone()
+        with self._source_access():
+            row = self._connect().execute(
+                "SELECT COUNT(*) AS count, MIN(captured_at_ms) AS oldest, "
+                "MAX(captured_at_ms) AS newest FROM samples"
+            ).fetchone()
         return {
             "path": str(self.path),
             "schema_version": HISTORY_SCHEMA_VERSION,
@@ -559,6 +573,16 @@ class HistoryStore:
                 _validated_millis(row["newest"]) if row["newest"] is not None else 0
             ),
         }
+
+    def has_pool_evidence(self, pool: str) -> bool:
+        """Return whether this exact pool has any persisted history evidence."""
+        _validate_history_key(account_id="_", pool=pool, window_seconds=1)
+        with self._source_access():
+            row = self._connect().execute(
+                "SELECT 1 FROM samples WHERE pool_key = ? LIMIT 1",
+                (pool,),
+            ).fetchone()
+        return row is not None
 
 
 def _chmod_private_regular(path: Path, *, label: str) -> None:
@@ -588,12 +612,13 @@ def _chmod_private_regular(path: Path, *, label: str) -> None:
             raise ValueError(f"{label} must be owned by current user")
         if file_stat.st_nlink != 1:
             raise ValueError(f"{label} must not be hard-linked")
-        while True:
-            try:
-                os.fchmod(fd, 0o600)
-                break
-            except InterruptedError:
-                continue
+        if stat.S_IMODE(file_stat.st_mode) != 0o600:
+            while True:
+                try:
+                    os.fchmod(fd, 0o600)
+                    break
+                except InterruptedError:
+                    continue
     finally:
         os.close(fd)
 

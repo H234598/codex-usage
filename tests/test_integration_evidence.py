@@ -33,16 +33,81 @@ _SOURCE_FILES = (
     "src/codex_usage/models.py",
     "src/codex_usage/history.py",
     "src/codex_usage/private_io.py",
+    "src/codex_usage/source_lock.py",
     "src/codex_usage/state.py",
     "src/codex_usage/usage_limits.py",
     "src/codex_usage/usage_resets.py",
 )
 
 
+def _source_input_contract() -> dict[str, object]:
+    """Explicit inert Source-binding seam for evidence-storage unit tests.
+
+    Real publisher tests bind on-disk Current/History inputs in the entrypoint;
+    these storage tests isolate generation and pointer semantics.
+    """
+    return {
+        "current_directory": {
+            "device": 1,
+            "gid": os.getegid(),
+            "inode": 2,
+            "mode": 0o700,
+            "uid": os.geteuid(),
+        },
+        "history": {
+            "consumed_rows": [],
+            "database": None,
+            "shm": None,
+            "wal": None,
+        },
+        "records": [],
+        "source_input_binding_schema_version": 1,
+    }
+
+
+def _spark_payload(*, tracker: bool) -> bytes:
+    """Return a canonical V2 payload whose only prohibited claim is Spark."""
+    from codex_usage.integration_snapshot import serialize_schema2_document
+    from codex_usage.usage_limits import SPARK_MODEL
+
+    account = _complete_reader_account()
+    account["limits"][0]["pool"] = SPARK_MODEL
+    if tracker:
+        account["tracker_evidence"][0]["pool"] = SPARK_MODEL
+    else:
+        account["tracker_evidence"] = []
+    return serialize_schema2_document(
+        {
+            "accounts": [account],
+            "generated_at": "2026-08-25T10:00:00Z",
+            "schema_version": 2,
+        }
+    )
+
+
+def _source_contract_with_spark_history() -> dict[str, object]:
+    """Return a canonical Source contract that explicitly binds Spark history."""
+    from codex_usage.usage_limits import SPARK_MODEL
+
+    contract = _source_input_contract()
+    history = contract["history"]
+    assert isinstance(history, dict)
+    history["consumed_rows"] = [
+        {
+            "account_id": "account-1",
+            "pool": SPARK_MODEL,
+            "rows_sha256": "0" * 64,
+            "sample_count": 0,
+            "window_seconds": 18_000,
+        }
+    ]
+    return contract
+
+
 def _source_copy(tmp_path: Path) -> Path:
     project_root = Path(__file__).resolve().parents[1]
     source_root = tmp_path / "source"
-    source_root.mkdir(mode=0o700)
+    source_root.mkdir(mode=0o700, exist_ok=True)
     for relative_text in _SOURCE_FILES:
         source = project_root / relative_text
         destination = source_root / relative_text
@@ -72,6 +137,9 @@ def evidence_layout(tmp_path):
     for path in (state_home, data_home, temporary_root):
         path.mkdir(mode=0o700)
         path.chmod(0o700)
+    (data_home / "codex-usage" / "current").mkdir(parents=True, mode=0o700)
+    (data_home / "codex-usage").chmod(0o700)
+    (data_home / "codex-usage" / "current").chmod(0o700)
     release = install_release(
         source_root=_source_copy(tmp_path),
         state_home=state_home,
@@ -152,6 +220,8 @@ def published_evidence_layout(staged_evidence_layout):
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
     current = state_home / "codex-usage/integration/current.json"
     return state_home, data_home, entrypoint, payload, verified, current.read_bytes()
@@ -187,6 +257,8 @@ def test_publish_evidence_rejects_pool_authority_pending_at_actual_source_read(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
 
@@ -214,6 +286,8 @@ def test_publish_evidence_rechecks_pending_created_during_source_read(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
 
@@ -247,17 +321,9 @@ def test_entrypoint_maps_pool_authority_source_read_parse_errors_to_rc65(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
-    monkeypatch.setattr(
-        integration_entrypoint,
-        "read_current_usage_records",
-        lambda _current_dir: (),
-    )
-    monkeypatch.setattr(
-        integration_entrypoint,
-        "_load_tracker_samples",
-        lambda _history_path, _usages, _now: {},
-    )
     result = integration_entrypoint.execute(
         ("integration-snapshot", "--schema", "2", "--format", "json"),
         environ={
@@ -382,6 +448,8 @@ def test_publisher_commits_before_owner_can_withdraw_the_verified_authority(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
     finally:
         if owner_thread.is_alive():
@@ -433,6 +501,8 @@ def test_publisher_returns_committed_pointer_when_source_lock_release_fails(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
 
     assert integration_evidence.parse_pointer(
@@ -474,6 +544,8 @@ def test_publisher_does_not_release_an_unacquired_source_lock(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
     assert released == []
@@ -569,6 +641,8 @@ def test_publish_pre_current_failure_aggregates_source_lock_and_fd_cleanup_error
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
     flattened = _flatten_errors(exc_info.value)
@@ -657,6 +731,8 @@ def test_publish_pre_current_failure_aggregates_baseexception_cleanup_errors(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
     flattened = _flatten_errors(exc_info.value)
@@ -735,6 +811,8 @@ def test_publish_revalidates_generation_bundle_after_second_attestation(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
     assert verify_calls == 2
@@ -773,6 +851,8 @@ def test_publish_revalidates_generation_bundle_directly_before_current_rename(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
     assert not (state_home / "codex-usage/integration/current.json").exists()
@@ -787,8 +867,18 @@ def _create_complete_generations(
     from codex_usage import integration_evidence, private_io
     from codex_usage.integration_snapshot import serialize_schema2_document
 
-    del data_home
     integration = state_home / "codex-usage/integration"
+    authority_source = integration / "pool-authority-source-v2.json"
+    from codex_usage.source_lock import capture_private_source_file
+
+    _authority_bytes, authority_binding = capture_private_source_file(
+        authority_source,
+        maximum=64 * 1024,
+    )
+    source_inputs = integration_evidence._serialize_source_input_contract(
+        _source_input_contract(),
+        owner_source=authority_binding,
+    )
     generations = integration / "generations"
     generations_fd = os.open(
         generations,
@@ -820,13 +910,13 @@ def _create_complete_generations(
                     active_manifest_sha256=(
                         verified_active_manifest.active_manifest_sha256
                     ),
-                    binding_schema_version=2,
+                    binding_schema_version=3,
                     generation_id=generation_id,
                     payload_filename="account-usage-v2.json",
                     payload_sha256=hashlib.sha256(payload).hexdigest(),
                     payload_size_bytes=len(payload),
                     published_at=published_at,
-                    producer_version="0.6.537",
+                    producer_version="0.6.538",
                     release_id=verified_active_manifest.release_id,
                     source_manifest_sha256=(
                         verified_active_manifest.source_manifest_sha256
@@ -835,6 +925,9 @@ def _create_complete_generations(
                     pool_authority_filename="pool-authority-v2.json",
                     pool_authority_sha256="0" * 64,
                     pool_authority_size_bytes=1,
+                    source_inputs_filename="source-inputs-v2.json",
+                    source_inputs_sha256=hashlib.sha256(source_inputs).hexdigest(),
+                    source_inputs_size_bytes=len(source_inputs),
                 )
                 from codex_usage.integration_pool_authority import (
                     build_pool_authority_projection,
@@ -876,6 +969,12 @@ def _create_complete_generations(
                     generation_fd,
                     "pool-authority-v2.json",
                     pool_authority_bytes,
+                    mode=0o600,
+                )
+                private_io.write_private_bytes_at(
+                    generation_fd,
+                    "source-inputs-v2.json",
+                    source_inputs,
                     mode=0o600,
                 )
                 private_io.write_private_bytes_at(
@@ -1268,7 +1367,7 @@ def _rewrite_complete_generation(
         binding = replace(
             binding,
             active_manifest_sha256="c" * 64,
-            release_id="0.6.537-" + "d" * 16,
+            release_id="0.6.538-" + "d" * 16,
             source_manifest_sha256="e" * 64,
         )
     from codex_usage.integration_pool_authority import (
@@ -1316,12 +1415,16 @@ def test_rollback_swaps_current_and_previous_in_one_pointer_rename(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
     second = integration_evidence.publish_evidence_generation(
         payload_bytes,
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
     real_replace = os.replace
     current_replaces: list[tuple[str, str]] = []
@@ -1365,12 +1468,16 @@ def test_rollback_post_rename_failure_restores_previous_current_bytes(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
     second = integration_evidence.publish_evidence_generation(
         payload_bytes,
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
     assert second.previous_binding_sha256 is not None
     assert second.previous_generation_id is not None
@@ -1553,6 +1660,8 @@ def test_publish_from_256_prunes_before_commit_and_stays_at_256(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
 
     assert count_complete_generation_directories(state_home) == 256
@@ -1587,6 +1696,8 @@ def test_publish_from_257_prunes_before_pointer_and_never_commits_258(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
 
     assert counts_at_commit == [256]
@@ -1631,6 +1742,8 @@ def test_publish_retention_holds_exclusive_locks_through_commit(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
 
     assert observed == ["busy"]
@@ -1713,6 +1826,8 @@ def test_active_release_rotation_keeps_publication_reader_and_gc_live(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified_a,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
     )
     release_b, verified_b = _install_distinct_active_release(
         tmp_path,
@@ -1748,6 +1863,8 @@ def test_active_release_rotation_keeps_publication_reader_and_gc_live(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified_b,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
     )
     assert pointer_b1.previous_generation_id == pointer_a.current_generation_id
     assert (
@@ -1778,6 +1895,8 @@ def test_active_release_rotation_keeps_publication_reader_and_gc_live(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified_b,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
     )
     assert pointer_b2.previous_generation_id == pointer_b1.current_generation_id
     assert (
@@ -1795,6 +1914,8 @@ def test_active_release_rotation_keeps_publication_reader_and_gc_live(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified_b,
+            source_input_contract=_source_input_contract(),
+            source_input_revalidator=_source_input_contract,
         )
     assert integration_evidence.parse_pointer(
         (state_home / "codex-usage/integration/current.json").read_bytes()
@@ -1819,6 +1940,8 @@ def test_rotated_publisher_and_gc_reject_malformed_historical_current(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified_a,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
     )
     _release_b, verified_b = _install_distinct_active_release(
         tmp_path,
@@ -1858,6 +1981,8 @@ def test_rotated_publisher_and_gc_reject_malformed_historical_current(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified_b,
+            source_input_contract=_source_input_contract(),
+            source_input_revalidator=_source_input_contract,
         )
     assert current.read_bytes() == before
 
@@ -1877,6 +2002,8 @@ def test_rollback_rejects_previous_from_prior_active_release(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified_a,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
     )
     _release_b, verified_b = _install_distinct_active_release(
         tmp_path,
@@ -1895,6 +2022,8 @@ def test_rollback_rejects_previous_from_prior_active_release(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified_b,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
     )
     assert pointer_b.previous_generation_id == pointer_a.current_generation_id
     current = state_home / "codex-usage/integration/current.json"
@@ -2065,12 +2194,16 @@ def test_rollback_rejects_invalid_previous_without_pointer_change(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
     pointer = integration_evidence.publish_evidence_generation(
         payload,
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
     current = state_home / "codex-usage/integration/current.json"
     current_bytes = current.read_bytes()
@@ -2209,6 +2342,8 @@ def test_foreign_generation_namespace_entry_blocks_publish(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
     assert not (state_home / "codex-usage/integration/current.json").exists()
@@ -2671,6 +2806,8 @@ def _publish_until_crash(
             state_home=Path(state_home),
             data_home=Path(data_home),
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
     except IntegrationEvidenceError:
         if scenario.endswith("write_before_fsync") or scenario == (
@@ -2728,6 +2865,7 @@ def _recover_and_read_after_crash(
             "account-usage-v2.json",
             "account-usage-v2.binding.json",
             "pool-authority-v2.json",
+            "source-inputs-v2.json",
         }
     integration = state_home / "codex-usage/integration"
     pointer_debris = [
@@ -2781,6 +2919,8 @@ def _recover_and_read_after_crash(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
         assert published.previous_generation_id == old_pointer.current_generation_id
 
@@ -2886,6 +3026,8 @@ def _publish_until_sigkill_after_invalid_current(
             state_home=Path(state_home),
             data_home=Path(data_home),
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
     except BaseException:
         os._exit(92)
@@ -2948,6 +3090,8 @@ def _publish_until_sigkill_after_current_remove_for_rollback(
             state_home=Path(state_home),
             data_home=Path(data_home),
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
     except BaseException:
         os._exit(92)
@@ -3202,6 +3346,8 @@ def test_concurrent_reader_never_accepts_current_with_rebound_generation(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
     assert mutated_generation is not None
@@ -3282,6 +3428,8 @@ def test_publish_creates_immutable_generation_then_one_current_pointer(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
     generation = (
         state_home
@@ -3293,6 +3441,7 @@ def test_publish_creates_immutable_generation_then_one_current_pointer(
         "account-usage-v2.json",
         "account-usage-v2.binding.json",
         "pool-authority-v2.json",
+        "source-inputs-v2.json",
     }
     assert (generation / "account-usage-v2.json").read_bytes() == payload_bytes
     binding_bytes = (generation / "account-usage-v2.binding.json").read_bytes()
@@ -3315,6 +3464,104 @@ def test_publish_creates_immutable_generation_then_one_current_pointer(
     ) == pointer
 
 
+def test_publish_binds_canonical_source_inputs_and_rechecks_before_pointer(
+    staged_evidence_layout, monkeypatch
+):
+    """D297 source inputs are a generation artifact, not an unbound side channel."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, payload, verified = staged_evidence_layout
+    source_root = data_home / "codex-usage"
+    source_root.mkdir(mode=0o700, exist_ok=True)
+    source_root.chmod(0o700)
+    source_inputs = {
+        "current_directory": {
+            "device": 1,
+            "gid": os.getegid(),
+            "inode": 2,
+            "mode": 0o700,
+            "uid": os.geteuid(),
+        },
+        "history": {
+            "consumed_rows": [],
+            "database": None,
+            "shm": None,
+            "wal": None,
+        },
+        "records": [],
+        "source_input_binding_schema_version": 1,
+    }
+    repeated = [source_inputs, {**source_inputs, "records": [{"changed": True}]}]
+
+    with pytest.raises(integration_evidence.IntegrationEvidenceInvalid):
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+            source_input_contract=source_inputs,
+            source_input_revalidator=lambda: repeated.pop(0),
+        )
+
+    integration = state_home / "codex-usage/integration"
+    assert not (integration / "current.json").exists()
+    # A durable orphan generation may remain for audited recovery; it is not live.
+    assert all(
+        path.name != "current.json" for path in integration.iterdir()
+    )
+
+
+def test_publish_records_owner_and_source_input_artifact(staged_evidence_layout):
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, payload, verified = staged_evidence_layout
+    source_root = data_home / "codex-usage"
+    source_root.mkdir(mode=0o700, exist_ok=True)
+    source_root.chmod(0o700)
+    source_inputs = {
+        "current_directory": {
+            "device": 1,
+            "gid": os.getegid(),
+            "inode": 2,
+            "mode": 0o700,
+            "uid": os.geteuid(),
+        },
+        "history": {
+            "consumed_rows": [],
+            "database": None,
+            "shm": None,
+            "wal": None,
+        },
+        "records": [],
+        "source_input_binding_schema_version": 1,
+    }
+    pointer = integration_evidence.publish_evidence_generation(
+        payload,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified,
+        source_input_contract=source_inputs,
+        source_input_revalidator=lambda: source_inputs,
+    )
+    generation = (
+        state_home / "codex-usage/integration/generations" / pointer.current_generation_id
+    )
+    binding = integration_evidence.parse_binding(
+        (generation / "account-usage-v2.binding.json").read_bytes()
+    )
+    source_inputs_bytes = (generation / binding.source_inputs_filename).read_bytes()
+    parsed = integration_evidence._parse_source_input_contract(source_inputs_bytes)
+
+    assert binding.binding_schema_version == 3
+    assert binding.source_inputs_sha256 == hashlib.sha256(source_inputs_bytes).hexdigest()
+    assert parsed["owner_source"]["sha256"] == hashlib.sha256(
+        (
+            state_home
+            / "codex-usage/integration/pool-authority-source-v2.json"
+        ).read_bytes()
+    ).hexdigest()
+
+
 def test_publish_missing_or_partial_authority_source_never_commits_current(
     staged_evidence_layout,
 ):
@@ -3331,6 +3578,8 @@ def test_publish_missing_or_partial_authority_source_never_commits_current(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
     assert not (integration / "current.json").exists()
 
@@ -3345,7 +3594,58 @@ def test_publish_missing_or_partial_authority_source_never_commits_current(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
+    assert not (integration / "current.json").exists()
+
+
+@pytest.mark.parametrize("tracker", (False, True), ids=("limit", "tracker"))
+def test_direct_publish_rejects_canonical_spark_payload_before_current(
+    staged_evidence_layout,
+    tracker,
+):
+    """The common publish seam cannot publish Spark outside the entrypoint."""
+    from codex_usage import integration_evidence
+    from codex_usage.integration_snapshot import IntegrationInvalidSource
+
+    state_home, data_home, _entrypoint, _payload, verified = staged_evidence_layout
+    integration = state_home / "codex-usage/integration"
+
+    with pytest.raises(IntegrationInvalidSource):
+        integration_evidence.publish_evidence_generation(
+            _spark_payload(tracker=tracker),
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+            source_input_contract=_source_input_contract(),
+            source_input_revalidator=_source_input_contract,
+        )
+
+    assert not (integration / "current.json").exists()
+    assert not list((integration / "generations").iterdir())
+
+
+def test_direct_publish_rejects_spark_only_in_final_source_revalidation(
+    staged_evidence_layout,
+):
+    """A late Source-contract Spark claim must leave Current unpublished."""
+    from codex_usage import integration_evidence
+    from codex_usage.integration_snapshot import IntegrationInvalidSource
+
+    state_home, data_home, _entrypoint, payload, verified = staged_evidence_layout
+    integration = state_home / "codex-usage/integration"
+
+    with pytest.raises(IntegrationInvalidSource):
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+            source_input_contract=_source_input_contract(),
+            source_input_revalidator=_source_contract_with_spark_history,
+        )
+
     assert not (integration / "current.json").exists()
 
 
@@ -3369,6 +3669,8 @@ def test_publish_missing_authority_source_does_not_create_source_lock(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
     assert sorted(path.name for path in lock_root.iterdir()) == before
@@ -3491,6 +3793,8 @@ def test_publish_does_not_swap_current_when_second_active_digest_changes(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
     assert (state_home / "codex-usage/integration/current.json").read_bytes() == current_bytes
 
@@ -3526,6 +3830,8 @@ def test_publish_rejects_current_pointer_parent_swap(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
     assert (integration / "current.json").read_bytes() == current_bytes
 
@@ -3559,6 +3865,8 @@ def test_publish_rejects_generations_parent_swap_before_current_commit(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
     assert (integration / "current.json").read_bytes() == current_bytes
@@ -3601,6 +3909,8 @@ def test_publish_rebinds_generations_after_pointer_temp_validation(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
     assert swapped
@@ -3637,6 +3947,8 @@ def test_publish_rejects_generation_directory_swap(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
     assert (state_home / "codex-usage/integration/current.json").read_bytes() == current_bytes
 
@@ -3693,6 +4005,8 @@ def test_publish_generation_no_replace_rejects_raced_empty_target_before_current
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
     assert raced_generation is not None
@@ -3757,6 +4071,8 @@ def test_publish_rejects_generation_race_inside_current_replace(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
     assert mutated_generation is not None
@@ -3814,6 +4130,8 @@ def test_publish_crash_after_current_replace_cannot_persist_invalid_pointer(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
     assert crashed_generation is not None
@@ -3869,6 +4187,8 @@ def test_publish_rollback_does_not_overwrite_current_replaced_after_commit_failu
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
     assert parent_rechecks == 2
@@ -3939,6 +4259,8 @@ def test_publish_rollback_does_not_overwrite_current_created_during_stash_window
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
     assert parent_rechecks == 2
@@ -3978,6 +4300,8 @@ def test_publish_rejects_staged_file_inode_swap(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
     assert (state_home / "codex-usage/integration/current.json").read_bytes() == current_bytes
 
@@ -4032,6 +4356,8 @@ def test_publish_runs_recovery_before_staging(staged_evidence_layout, monkeypatc
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
     assert events[:2] == ["recover", "stage"]
 
@@ -4051,6 +4377,8 @@ def test_publish_rejects_seventeenth_staging_directory(staged_evidence_layout):
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
     assert not (state_home / "codex-usage/integration/current.json").exists()
 
@@ -4065,6 +4393,8 @@ def test_publish_never_creates_v1_cache(staged_evidence_layout):
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
     assert not (state_home / "codex-usage/integration/account-usage-v1.json").exists()
 
@@ -4093,6 +4423,8 @@ def test_publish_pointer_parent_fsync_failure_returns_committed_pointer(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
     assert current.read_bytes() != old_current
     assert integration_evidence.parse_pointer(current.read_bytes()) == pointer
@@ -4135,6 +4467,8 @@ def test_older_concurrent_invocation_cannot_replace_newer_current(
                 state_home=state_home,
                 data_home=data_home,
                 verified_active_manifest=verified,
+            source_input_contract=_source_input_contract(),
+            source_input_revalidator=_source_input_contract,
             )
         except BaseException as exc:
             older_errors.append(type(exc))
@@ -4147,6 +4481,8 @@ def test_older_concurrent_invocation_cannot_replace_newer_current(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
     release_older.set()
     thread.join(timeout=10)
@@ -4172,7 +4508,7 @@ def test_publish_teardown_failures_return_committed_pointer_and_attempt_all_clea
     monkeypatch,
 ):
     """Would fail if one teardown failure stopped cleanup or masked commit."""
-    from codex_usage import integration_evidence
+    from codex_usage import integration_evidence, private_io
 
     state_home, data_home, _entrypoint, payload, verified, old_current = (
         published_evidence_layout
@@ -4213,6 +4549,8 @@ def test_publish_teardown_failures_return_committed_pointer_and_attempt_all_clea
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
     finally:
         if failed_close_fd is not None:
@@ -4223,7 +4561,7 @@ def test_publish_teardown_failures_return_committed_pointer_and_attempt_all_clea
     assert current.read_bytes() != old_current
     assert integration_evidence.parse_pointer(current.read_bytes()) == pointer
     assert len(close_attempts) >= 8
-    assert len(unlock_attempts) == 3
+    assert len(unlock_attempts) == 4
     integration = state_home / "codex-usage/integration"
 
     def documented_lock_name(target: Path) -> str:
@@ -4236,9 +4574,13 @@ def test_publish_teardown_failures_return_committed_pointer_and_attempt_all_clea
         ),
         documented_lock_name(integration / "producer-install"),
         documented_lock_name(integration / "current.json"),
+        ".source-lock-v2",
     }
     observed_unlock_targets = tuple(Path(target) for target in unlock_targets)
-    assert len({target.parent for target in observed_unlock_targets}) == 1
+    assert {target.parent for target in observed_unlock_targets} == {
+        private_io._private_lock_root(),
+        data_home / "codex-usage",
+    }
     assert {target.name for target in observed_unlock_targets} == expected_unlock_names
 
 
@@ -4324,6 +4666,8 @@ def test_publish_postcommit_cleanup_errors_emit_bounded_committed_diagnostic(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
 
     assert current.read_bytes() != old_current
@@ -4442,6 +4786,8 @@ def test_publish_precommit_baseexception_aggregates_cleanup_failures(
                 state_home=state_home,
                 data_home=data_home,
                 verified_active_manifest=verified,
+            source_input_contract=_source_input_contract(),
+            source_input_revalidator=_source_input_contract,
             )
     finally:
         if failed_fd is not None:
@@ -4542,19 +4888,22 @@ def test_binding_requires_exact_nested_fields_and_32kib_limit():
 
     binding = EvidenceBinding(
         active_manifest_sha256="a" * 64,
-        binding_schema_version=2,
+        binding_schema_version=3,
         generation_id="b" * 32,
         payload_filename="account-usage-v2.json",
         payload_sha256="c" * 64,
         payload_size_bytes=64,
         published_at="2026-08-25T10:00:00Z",
-        producer_version="0.6.537",
-        release_id="0.6.537-" + "d" * 16,
+        producer_version="0.6.538",
+        release_id="0.6.538-" + "d" * 16,
         source_manifest_sha256="e" * 64,
         usage_binding_schema_version=2,
         pool_authority_filename="pool-authority-v2.json",
         pool_authority_sha256="f" * 64,
         pool_authority_size_bytes=64,
+        source_inputs_filename="source-inputs-v2.json",
+        source_inputs_sha256="0" * 64,
+        source_inputs_size_bytes=64,
     )
 
     binding_bytes = integration_evidence.serialize_binding(binding)
@@ -4753,6 +5102,8 @@ def test_atomic_publish_keeps_fresh_account_authority_when_peer_is_partial(
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
+    source_input_contract=_source_input_contract(),
+    source_input_revalidator=_source_input_contract,
     )
     bundle, status = integration_evidence.read_current_generation_bundle(
         state_home=state_home,
@@ -4928,7 +5279,7 @@ def test_reader_requires_active_binding_payload_and_pointer_hash_chain(
     assert bundle is not None
     assert bundle.usage == document
     assert bundle.pool_authority["pool_authority_schema_version"] == 2
-    assert bundle.binding.binding_schema_version == 2
+    assert bundle.binding.binding_schema_version == 3
 
 
 @pytest.mark.parametrize(
@@ -4965,7 +5316,7 @@ def test_reader_fails_closed_on_pool_authority_bundle_tampering(
     else:
         authority = parse_pool_authority_projection(authority_path.read_bytes())
         if mutation == "authority_release_mismatch":
-            authority["release_id"] = "0.6.537-" + "d" * 16
+            authority["release_id"] = "0.6.538-" + "d" * 16
         elif mutation == "authority_generation_mismatch":
             authority["generation_id"] = "e" * 32
         elif mutation == "authority_usage_digest_tamper":
@@ -5235,6 +5586,8 @@ def _assert_reader_rejects_late_file_swap(
             state_home=state_home,
             data_home=data_home,
             verified_active_manifest=verified,
+        source_input_contract=_source_input_contract(),
+        source_input_revalidator=_source_input_contract,
         )
 
     def late_swap(generations_fd, pointer):

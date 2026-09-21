@@ -29,7 +29,6 @@ from .integration_attestation import (
     MAX_RELEASE_TREE_ENTRIES,
     ActiveRelease,
     IntegrationAttestationUnavailable,
-    _manifest_from_canonical_bytes,
     _read_manifest,
     _release_tree_sha256,
     _require_manifest_fields,
@@ -39,11 +38,8 @@ from .integration_attestation import (
 from .integration_evidence import (
     bootstrap_evidence_lock_inodes,
     evidence_lock_set,
-    parse_pointer,
     recover_evidence_staging,
-    validate_v2_payload_bytes,
 )
-from .json_utils import loads_strict
 from .private_io import (
     _base_exception_leaves,
     ensure_private_directory,
@@ -53,7 +49,7 @@ from .private_io import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RELEASE_VERSION = "0.6.537"
+RELEASE_VERSION = "0.6.538"
 PRODUCER_DISTRIBUTION = "codex_usage_integration_producer"
 SOURCE_MODULES = (
     "__init__.py",
@@ -70,6 +66,7 @@ SOURCE_MODULES = (
     "models.py",
     "history.py",
     "private_io.py",
+    "source_lock.py",
     "state.py",
     "usage_limits.py",
     "usage_resets.py",
@@ -80,9 +77,9 @@ SOURCE_MANIFEST_FILES = (
 )
 ACTIVE_NAME = "active.json"
 PREVIOUS_NAME = "previous.json"
-DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.537.dist-info"
+DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.538.dist-info"
 DIST_INFO_FILES = frozenset({"METADATA", "WHEEL", "RECORD", "top_level.txt"})
-EXPECTED_WHEEL_NAME = "codex_usage_integration_producer-0.6.537-py3-none-any.whl"
+EXPECTED_WHEEL_NAME = "codex_usage_integration_producer-0.6.538-py3-none-any.whl"
 BUILDER_PREFLIGHT_TIMEOUT_SECONDS = 30
 BUILDER_PREFLIGHT_MAX_OUTPUT_BYTES = 64 * 1024
 BUILDER_VENV_TIMEOUT_SECONDS = 60
@@ -93,31 +90,9 @@ MAX_PYTHON_EXECUTABLE_BYTES = 128 * 1024 * 1024
 MAX_INTEGRATION_MANIFEST_BYTES = 128 * 1024
 MAX_ACTIVE_TRANSACTION_ARTIFACTS = 8
 MAX_INTEGRATION_DIRECTORY_ENTRIES = 64
-MAX_LEGACY_EVIDENCE_GENERATIONS = 257
 _KERNEL_OVERFLOW_UID_PATH = Path("/proc/sys/kernel/overflowuid")
 _SYSTEM_PYTHON_ROOT = Path("/usr/bin")
 _LEGACY_EVIDENCE_CUTOVER_PREFIX = ".evidence-v1-cutover-"
-_LEGACY_EVIDENCE_CUTOVER_RE = re.compile(
-    r"\A\.evidence-v1-cutover-(?P<kind>current|generations)-"
-    r"(?P<token>[0-9a-f]{32})\Z"
-)
-_LEGACY_GENERATION_RE = re.compile(r"\A[0-9a-f]{32}\Z")
-_LEGACY_DIGEST_RE = re.compile(r"\A[0-9a-f]{64}\Z")
-_LEGACY_RELEASE_RE = re.compile(r"\A0\.6\.536-[0-9a-f]{16}\Z")
-_LEGACY_BINDING_FIELDS = frozenset(
-    (
-        "active_manifest_sha256",
-        "binding_schema_version",
-        "generation_id",
-        "payload_filename",
-        "payload_sha256",
-        "payload_size_bytes",
-        "producer_version",
-        "published_at",
-        "release_id",
-        "source_manifest_sha256",
-    )
-)
 _ACTIVE_TRANSACTION_RAW_RE = re.compile(
     r"\A\.active\.json\.publish-new-[1-9][0-9]{0,19}-[0-9a-f]{16}\Z"
 )
@@ -173,7 +148,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codex-usage-integration-producer"
-version = "0.6.537"
+version = "0.6.538"
 requires-python = ">=3.11"
 dependencies = []
 
@@ -262,22 +237,8 @@ class _ActiveTransactionArtifact:
 
 @dataclass(frozen=True)
 class _InstallProvenance:
-    active_payload: bytes | None
     active_identity: _FileIdentity | None
-    previous_payload: bytes | None
-    previous_identity: _FileIdentity | None
-    requires_evidence_v1_cutover: bool
-
-
-@dataclass(frozen=True)
-class _LegacyEvidenceCutover:
-    integration: Path
-    integration_identity: _DirectoryIdentity
-    current_artifact: Path | None
-    current_identity: _FileIdentity | None
-    generations_artifact: Path
-    generations_identity: _DirectoryIdentity
-    fresh_generations_identity: _DirectoryIdentity
+    requires_empty_v2_evidence_namespace: bool
 
 
 class _WheelMemberValidationError(IntegrationInstallError):
@@ -1047,13 +1008,13 @@ def _prepare_install_provenance(
 ) -> _InstallProvenance:
     active_path = integration / ACTIVE_NAME
     if not active_path.exists() and not active_path.is_symlink():
-        return _InstallProvenance(None, None, None, None, False)
+        return _InstallProvenance(None, False)
     active_payload, active_identity = _read_bound_integration_manifest(
         integration=integration,
         integration_identity=integration_identity,
         name=ACTIVE_NAME,
     )
-    requires_evidence_v1_cutover = False
+    requires_empty_v2_evidence_namespace = False
     try:
         _verify_manifest(
             manifest_path=active_path,
@@ -1070,620 +1031,65 @@ def _prepare_install_provenance(
                 data_home=data_home,
                 manifest_payload=active_payload,
             )
-            requires_evidence_v1_cutover = (
-                RELEASE_VERSION == "0.6.537"
-                and previous_release.version == "0.6.536"
+            requires_empty_v2_evidence_namespace = (
+                RELEASE_VERSION == "0.6.538"
+                and previous_release.version == "0.6.537"
             )
         except IntegrationAttestationUnavailable:
             _fail()
     return _InstallProvenance(
-        active_payload,
         active_identity,
-        None,
-        None,
-        requires_evidence_v1_cutover,
+        requires_empty_v2_evidence_namespace,
     )
 
 
-def _validate_legacy_evidence_v1_for_cutover(
+def _require_empty_v2_evidence_namespace(
     *,
     integration: Path,
     integration_identity: _DirectoryIdentity,
-    active_payload: bytes,
-    generations_name: str = "generations",
-    current_name: str | None = "current.json",
-) -> tuple[_DirectoryIdentity, _FileIdentity | None]:
+) -> None:
+    """D297 allows the attested 0.6.537 predecessor only before V2 exists."""
+    generations = integration / "generations"
+    _require_private_dir(
+        generations,
+        None,
+        True,
+        parent_identity=integration_identity,
+    )
     try:
-        generations_match = (
-            None
-            if type(generations_name) is not str
-            else _LEGACY_EVIDENCE_CUTOVER_RE.fullmatch(generations_name)
-        )
-        current_match = (
-            None
-            if type(current_name) is not str
-            else _LEGACY_EVIDENCE_CUTOVER_RE.fullmatch(current_name)
-        )
-        if (
-            generations_name != "generations"
-            and (
-                generations_match is None
-                or generations_match.group("kind") != "generations"
-            )
-        ) or (
-            current_name not in {None, "current.json"}
-            and (current_match is None or current_match.group("kind") != "current")
-        ):
-            _fail()
-        manifest = _require_manifest_fields(
-            _manifest_from_canonical_bytes(active_payload),
-            expected_fields=_CURRENT_SCHEMA2_MANIFEST_FIELDS,
-        )
-        release_id = manifest["release_id"]
-        source_manifest_sha256 = manifest["source_manifest_sha256"]
-        if (
-            type(release_id) is not str
-            or _LEGACY_RELEASE_RE.fullmatch(release_id) is None
-            or type(source_manifest_sha256) is not str
-            or _LEGACY_DIGEST_RE.fullmatch(source_manifest_sha256) is None
-        ):
-            _fail()
-        active_manifest_sha256 = hashlib.sha256(active_payload).hexdigest()
-        generations = integration / generations_name
-        generations_identity = _require_private_dir(
-            generations,
-            None,
-            False,
-        )
-        generation_names: list[str] = []
         with os.scandir(generations) as entries:
-            for entry in entries:
-                if (
-                    _LEGACY_GENERATION_RE.fullmatch(entry.name) is None
-                    or len(generation_names) >= MAX_LEGACY_EVIDENCE_GENERATIONS
-                ):
-                    _fail()
-                generation_names.append(entry.name)
-        binding_digests: dict[str, str] = {}
-        for generation_id in generation_names:
-            generation = generations / generation_id
-            generation_identity = _require_private_dir(
-                generation,
-                None,
-                False,
-            )
-            with os.scandir(generation) as entries:
-                names = {entry.name for entry in entries}
-            if names != {
-                "account-usage-v2.binding.json",
-                "account-usage-v2.json",
-            }:
+            if any(True for _entry in entries):
                 _fail()
-            payload_path = generation / "account-usage-v2.json"
-            binding_path = generation / "account-usage-v2.binding.json"
-            payload_identity = _file_identity(payload_path)
-            binding_identity = _file_identity(binding_path)
-            payload = _read_nofollow(
-                payload_path,
-                expected_parent_identity=generation_identity,
-                expected_file_identity=payload_identity,
-            )
-            binding_bytes = _read_nofollow(
-                binding_path,
-                expected_parent_identity=generation_identity,
-                expected_file_identity=binding_identity,
-            )
-            if not 1 <= len(payload) <= 2 * 1024 * 1024 or not 1 <= len(
-                binding_bytes
-            ) <= 32 * 1024:
-                _fail()
-            document = validate_v2_payload_bytes(payload)
-            binding_value = loads_strict(binding_bytes)
-            if (
-                type(binding_value) is not dict
-                or set(binding_value) != _LEGACY_BINDING_FIELDS
-            ):
-                _fail()
-            binding = cast(dict[str, object], binding_value)
-            canonical_binding = json.dumps(
-                binding,
-                ensure_ascii=True,
-                allow_nan=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ).encode("utf-8")
-            if (
-                canonical_binding != binding_bytes
-                or type(binding["binding_schema_version"]) is not int
-                or binding["binding_schema_version"] != 1
-                or binding["generation_id"] != generation_id
-                or binding["payload_filename"] != "account-usage-v2.json"
-                or binding["producer_version"] != "0.6.536"
-                or binding["release_id"] != release_id
-                or binding["source_manifest_sha256"] != source_manifest_sha256
-                or binding["active_manifest_sha256"] != active_manifest_sha256
-                or binding["payload_sha256"]
-                != hashlib.sha256(payload).hexdigest()
-                or type(binding["payload_size_bytes"]) is not int
-                or binding["payload_size_bytes"] != len(payload)
-                or binding["published_at"] != document["generated_at"]
-            ):
-                _fail()
-            binding_digests[generation_id] = hashlib.sha256(binding_bytes).hexdigest()
-            if _require_private_dir(
-                generation,
-                generation_identity,
-                False,
-            ) != generation_identity:
-                _fail()
-        current_identity: _FileIdentity | None = None
-        current = None if current_name is None else integration / current_name
-        if current is not None and (current.exists() or current.is_symlink()):
-            current_identity = _file_identity(current)
-            current_bytes = _read_nofollow(
-                current,
-                expected_parent_identity=integration_identity,
-                expected_file_identity=current_identity,
-            )
-            if not 1 <= len(current_bytes) <= 4096:
-                _fail()
-            pointer = parse_pointer(current_bytes)
-            references = (
-                (
-                    pointer.current_generation_id,
-                    pointer.current_binding_sha256,
-                ),
-                (
-                    pointer.previous_generation_id,
-                    pointer.previous_binding_sha256,
-                ),
-            )
-            for generation_id, digest in references:
-                if generation_id is None and digest is None:
-                    continue
-                if (
-                    generation_id is None
-                    or digest is None
-                    or binding_digests.get(generation_id) != digest
-                ):
-                    _fail()
-        if _require_private_dir(
-            generations,
-            generations_identity,
-            False,
-        ) != generations_identity:
+        current = integration / "current.json"
+        if current.exists() or current.is_symlink():
             _fail()
-        return generations_identity, current_identity
     except IntegrationInstallError:
         raise
-    except Exception:
+    except OSError:
         _fail()
 
 
-def _legacy_evidence_cutover_artifacts(
+def _reject_legacy_evidence_v1_residues(
     *,
     integration: Path,
     integration_identity: _DirectoryIdentity,
-    parent_fd: int,
-) -> tuple[
-    Path | None,
-    _FileIdentity | None,
-    Path | None,
-    _DirectoryIdentity | None,
-]:
-    token: str | None = None
-    current: Path | None = None
-    current_identity: _FileIdentity | None = None
-    generations: Path | None = None
-    generations_identity: _DirectoryIdentity | None = None
+) -> None:
+    """D297 rejects every V1 cutover residue before any recovery can mutate it."""
+    parent_fd = -1
     try:
+        parent_fd = _open_bound_parent_fd(integration, integration_identity)
         with os.scandir(parent_fd) as entries:
             for entry in entries:
-                if not entry.name.startswith(_LEGACY_EVIDENCE_CUTOVER_PREFIX):
-                    continue
-                match = _LEGACY_EVIDENCE_CUTOVER_RE.fullmatch(entry.name)
-                if match is None or (token is not None and match.group("token") != token):
+                if entry.name.startswith(_LEGACY_EVIDENCE_CUTOVER_PREFIX):
+                    entry.stat(follow_symlinks=False)
                     _fail()
-                token = match.group("token")
-                item = entry.stat(follow_symlinks=False)
-                if item.st_uid != os.getuid() or item.st_dev != integration_identity.device:
-                    _fail()
-                path = integration / entry.name
-                if match.group("kind") == "current":
-                    if (
-                        current is not None
-                        or not stat.S_ISREG(item.st_mode)
-                        or item.st_nlink != 1
-                        or stat.S_IMODE(item.st_mode) != 0o600
-                        or not 1 <= item.st_size <= 4096
-                    ):
-                        _fail()
-                    current = path
-                    current_identity = _FileIdentity(
-                        item.st_dev,
-                        item.st_ino,
-                        stat.S_IMODE(item.st_mode),
-                        item.st_gid,
-                    )
-                else:
-                    if (
-                        generations is not None
-                        or not stat.S_ISDIR(item.st_mode)
-                        or stat.S_IMODE(item.st_mode) != 0o700
-                    ):
-                        _fail()
-                    generations = path
-                    generations_identity = _DirectoryIdentity(
-                        item.st_dev,
-                        item.st_ino,
-                        stat.S_IMODE(item.st_mode),
-                        item.st_gid,
-                    )
+    except IntegrationInstallError:
+        raise
     except (OSError, ValueError):
         _fail()
-    return current, current_identity, generations, generations_identity
-
-
-def _recover_legacy_evidence_v1_cutover(
-    *,
-    integration: Path,
-    integration_identity: _DirectoryIdentity,
-    state_home: Path,
-    data_home: Path,
-) -> None:
-    parent_fd = -1
-    try:
-        parent_fd = _open_bound_parent_fd(integration, integration_identity)
-        (
-            current_artifact,
-            current_artifact_identity,
-            generations_artifact,
-            generations_artifact_identity,
-        ) = _legacy_evidence_cutover_artifacts(
-            integration=integration,
-            integration_identity=integration_identity,
-            parent_fd=parent_fd,
-        )
-        if current_artifact is None and generations_artifact is None:
-            return
-        if RELEASE_VERSION != "0.6.537":
-            _fail()
-        active_payload, active_identity = _read_bound_integration_manifest(
-            integration=integration,
-            integration_identity=integration_identity,
-            name=ACTIVE_NAME,
-        )
-        try:
-            active_release = _verify_previous_schema2_manifest_for_upgrade(
-                manifest_path=integration / ACTIVE_NAME,
-                state_home=state_home,
-                data_home=data_home,
-                manifest_payload=active_payload,
-            )
-        except IntegrationAttestationUnavailable:
-            _fail()
-        if active_release.version != "0.6.536":
-            _fail()
-        try:
-            os.stat("current.json", dir_fd=parent_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            pass
-        else:
-            _fail()
-
-        live_generations = integration / "generations"
-        live_generations_identity: _DirectoryIdentity | None = None
-        try:
-            os.stat("generations", dir_fd=parent_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            pass
-        else:
-            live_generations_identity = _require_private_dir(
-                live_generations,
-                None,
-                False,
-            )
-            if live_generations_identity.device != integration_identity.device:
-                _fail()
-
-        if generations_artifact is None:
-            if current_artifact is None or live_generations_identity is None:
-                _fail()
-            source_generations = live_generations
-            source_generations_identity = live_generations_identity
-        else:
-            if generations_artifact_identity is None:
-                _fail()
-            source_generations = generations_artifact
-            source_generations_identity = generations_artifact_identity
-            if live_generations_identity is not None and any(
-                live_generations.iterdir()
-            ):
-                _fail()
-
-        validated_generations_identity, validated_current_identity = (
-            _validate_legacy_evidence_v1_for_cutover(
-                integration=integration,
-                integration_identity=integration_identity,
-                active_payload=active_payload,
-                generations_name=source_generations.name,
-                current_name=(
-                    None if current_artifact is None else current_artifact.name
-                ),
-            )
-        )
-        if (
-            validated_generations_identity != source_generations_identity
-            or validated_current_identity != current_artifact_identity
-        ):
-            _fail()
-        repeated_payload, repeated_active_identity = _read_bound_integration_manifest(
-            integration=integration,
-            integration_identity=integration_identity,
-            name=ACTIVE_NAME,
-        )
-        if repeated_payload != active_payload or repeated_active_identity != active_identity:
-            _fail()
-        try:
-            repeated_release = _verify_previous_schema2_manifest_for_upgrade(
-                manifest_path=integration / ACTIVE_NAME,
-                state_home=state_home,
-                data_home=data_home,
-                manifest_payload=repeated_payload,
-            )
-        except IntegrationAttestationUnavailable:
-            _fail()
-        if repeated_release != active_release:
-            _fail()
-        if (
-            _require_private_dir(
-                source_generations,
-                source_generations_identity,
-                False,
-            )
-            != source_generations_identity
-            or (
-                current_artifact is not None
-                and current_artifact_identity is not None
-                and _file_identity(current_artifact) != current_artifact_identity
-            )
-            or (
-                live_generations_identity is not None
-                and (
-                    _require_private_dir(
-                        live_generations,
-                        live_generations_identity,
-                        False,
-                    )
-                    != live_generations_identity
-                    or (
-                        generations_artifact is not None
-                        and any(live_generations.iterdir())
-                    )
-                )
-            )
-        ):
-            _fail()
-
-        if generations_artifact is not None:
-            if live_generations_identity is not None:
-                os.rmdir("generations", dir_fd=parent_fd)
-            _rename_noreplace(
-                generations_artifact.name,
-                "generations",
-                parent_fd,
-            )
-        if current_artifact is not None:
-            _rename_noreplace(
-                current_artifact.name,
-                "current.json",
-                parent_fd,
-            )
-        os.fsync(parent_fd)
-        restored_generations_identity, restored_current_identity = (
-            _validate_legacy_evidence_v1_for_cutover(
-                integration=integration,
-                integration_identity=integration_identity,
-                active_payload=active_payload,
-            )
-        )
-        final_payload, final_active_identity = _read_bound_integration_manifest(
-            integration=integration,
-            integration_identity=integration_identity,
-            name=ACTIVE_NAME,
-        )
-        if (
-            restored_generations_identity != source_generations_identity
-            or restored_current_identity != current_artifact_identity
-            or final_payload != active_payload
-            or final_active_identity != active_identity
-        ):
-            _fail()
-        try:
-            final_release = _verify_previous_schema2_manifest_for_upgrade(
-                manifest_path=integration / ACTIVE_NAME,
-                state_home=state_home,
-                data_home=data_home,
-                manifest_payload=final_payload,
-            )
-        except IntegrationAttestationUnavailable:
-            _fail()
-        if final_release != active_release:
-            _fail()
     finally:
         if parent_fd >= 0:
             os.close(parent_fd)
-
-
-def _begin_legacy_evidence_v1_cutover(
-    *,
-    integration: Path,
-    integration_identity: _DirectoryIdentity,
-    active_payload: bytes,
-) -> _LegacyEvidenceCutover:
-    generations_identity, current_identity = _validate_legacy_evidence_v1_for_cutover(
-        integration=integration,
-        integration_identity=integration_identity,
-        active_payload=active_payload,
-    )
-    token = secrets.token_hex(16)
-    current = integration / "current.json"
-    generations = integration / "generations"
-    current_artifact = (
-        integration / f"{_LEGACY_EVIDENCE_CUTOVER_PREFIX}current-{token}"
-        if current_identity is not None
-        else None
-    )
-    generations_artifact = (
-        integration / f"{_LEGACY_EVIDENCE_CUTOVER_PREFIX}generations-{token}"
-    )
-    parent_fd = -1
-    current_renamed = False
-    generations_renamed = False
-    fresh_generations_identity: _DirectoryIdentity | None = None
-    try:
-        parent_fd = _open_bound_parent_fd(integration, integration_identity)
-        if current_artifact is not None and current_identity is not None:
-            _rename_noreplace(current.name, current_artifact.name, parent_fd)
-            current_renamed = True
-            if _file_identity(current_artifact) != current_identity:
-                _fail()
-        _rename_noreplace(
-            generations.name,
-            generations_artifact.name,
-            parent_fd,
-        )
-        generations_renamed = True
-        if (
-            _require_private_dir(
-                generations_artifact,
-                generations_identity,
-                False,
-            )
-            != generations_identity
-        ):
-            _fail()
-        fresh_generations_identity = _create_private_directory(
-            generations,
-            integration_identity,
-        )
-        os.fsync(parent_fd)
-        return _LegacyEvidenceCutover(
-            integration=integration,
-            integration_identity=integration_identity,
-            current_artifact=current_artifact,
-            current_identity=current_identity,
-            generations_artifact=generations_artifact,
-            generations_identity=generations_identity,
-            fresh_generations_identity=fresh_generations_identity,
-        )
-    except Exception as cutover_error:
-        if not (
-            current_renamed
-            or generations_renamed
-            or fresh_generations_identity is not None
-        ):
-            raise
-        recovery_ok = True
-        try:
-            if fresh_generations_identity is not None:
-                os.rmdir(generations.name, dir_fd=parent_fd)
-            if generations_renamed:
-                _rename_noreplace(
-                    generations_artifact.name,
-                    generations.name,
-                    parent_fd,
-                )
-            if current_renamed and current_artifact is not None:
-                _rename_noreplace(
-                    current_artifact.name,
-                    current.name,
-                    parent_fd,
-                )
-            os.fsync(parent_fd)
-        except Exception:
-            recovery_ok = False
-        if not recovery_ok:
-            raise IntegrationCleanupError() from cutover_error
-        raise
-    finally:
-        if parent_fd >= 0:
-            os.close(parent_fd)
-
-
-def _rollback_legacy_evidence_v1_cutover(
-    cutover: _LegacyEvidenceCutover,
-) -> bool:
-    parent_fd = -1
-    try:
-        parent_fd = _open_bound_parent_fd(
-            cutover.integration,
-            cutover.integration_identity,
-        )
-        generations = cutover.integration / "generations"
-        if (
-            _require_private_dir(
-                generations,
-                cutover.fresh_generations_identity,
-                False,
-            )
-            != cutover.fresh_generations_identity
-            or any(generations.iterdir())
-        ):
-            return False
-        os.rmdir(generations.name, dir_fd=parent_fd)
-        _rename_noreplace(
-            cutover.generations_artifact.name,
-            generations.name,
-            parent_fd,
-        )
-        if cutover.current_artifact is not None and cutover.current_identity is not None:
-            _rename_noreplace(
-                cutover.current_artifact.name,
-                "current.json",
-                parent_fd,
-            )
-        os.fsync(parent_fd)
-        return (
-            _require_private_dir(
-                generations,
-                cutover.generations_identity,
-                False,
-            )
-            == cutover.generations_identity
-            and (
-                cutover.current_identity is None
-                or _file_identity(cutover.integration / "current.json")
-                == cutover.current_identity
-            )
-        )
-    except BaseException:
-        return False
-    finally:
-        if parent_fd >= 0:
-            os.close(parent_fd)
-
-
-def _commit_legacy_evidence_v1_cutover(
-    cutover: _LegacyEvidenceCutover,
-) -> bool:
-    if not _cleanup_owned_directory(
-        cutover.generations_artifact,
-        cutover.generations_identity,
-        cutover.integration_identity,
-    ):
-        return False
-    if (
-        cutover.current_artifact is not None
-        and cutover.current_identity is not None
-        and not _cleanup_owned_file(
-            cutover.current_artifact,
-            cutover.current_identity,
-            cutover.integration_identity,
-        )
-    ):
-        return False
-    return True
 
 
 def _provisional_from_file_identity(identity: _FileIdentity) -> _ProvisionalIdentity:
@@ -1900,22 +1306,11 @@ def _recover_active_transactions(
     integration: Path,
     integration_identity: _DirectoryIdentity,
     state_home: Path,
-    data_home: Path,
-    recover_legacy_cutover: bool = False,
 ) -> None:
     parent_fd = -1
     try:
-        if recover_legacy_cutover:
-            _recover_legacy_evidence_v1_cutover(
-                integration=integration,
-                integration_identity=integration_identity,
-                state_home=state_home,
-                data_home=data_home,
-            )
-            generations = integration / "generations"
-            if generations.exists() or generations.is_symlink():
-                recover_evidence_staging(state_home=state_home)
-        else:
+        generations = integration / "generations"
+        if generations.exists() or generations.is_symlink():
             recover_evidence_staging(state_home=state_home)
         parent_fd = _open_bound_parent_fd(integration, integration_identity)
         artifacts = _active_transaction_artifacts(
@@ -4087,7 +3482,10 @@ def _install_release(
     temporary_identity = _require_private_dir(temporary_root, None, False)
     pyproject = _read_nofollow(source_root / "pyproject.toml").decode("utf-8")
     init_text = _read_nofollow(source_root / "src/codex_usage/__init__.py").decode("utf-8")
-    if 'version = "0.6.537"' not in pyproject or '__version__ = "0.6.537"' not in init_text:
+    if (
+        f'version = "{RELEASE_VERSION}"' not in pyproject
+        or f'__version__ = "{RELEASE_VERSION}"' not in init_text
+    ):
         _fail()
     source_manifest = _rehash_source_manifest(source_root)
     source_manifest_digest = _source_digest(source_manifest)
@@ -4120,12 +3518,25 @@ def _install_release(
             create=False,
         ):
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
-            _recover_active_transactions(
+            _reject_legacy_evidence_v1_residues(
+                integration=integration,
+                integration_identity=integration_identity,
+            )
+            provenance = _prepare_install_provenance(
                 integration=integration,
                 integration_identity=integration_identity,
                 state_home=state_home,
                 data_home=data_home,
-                recover_legacy_cutover=True,
+            )
+            if provenance.requires_empty_v2_evidence_namespace:
+                _require_empty_v2_evidence_namespace(
+                    integration=integration,
+                    integration_identity=integration_identity,
+                )
+            _recover_active_transactions(
+                integration=integration,
+                integration_identity=integration_identity,
+                state_home=state_home,
             )
             _require_private_dir(
                 integration / "generations",
@@ -4144,12 +3555,11 @@ def _install_release(
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
             _require_private_dir(temporary_root, temporary_identity, False)
             _require_private_dir(releases, releases_identity, False)
-            provenance = _prepare_install_provenance(
-                integration=integration,
-                integration_identity=integration_identity,
-                state_home=state_home,
-                data_home=data_home,
-            )
+            if provenance.requires_empty_v2_evidence_namespace:
+                _require_empty_v2_evidence_namespace(
+                    integration=integration,
+                    integration_identity=integration_identity,
+                )
             final_release_dir = releases / release_id
             if _rehash_source_manifest(source_root) != source_manifest:
                 _fail()
@@ -4336,44 +3746,26 @@ def _install_release(
             )
             if repeated_provenance != provenance:
                 _fail()
+            if provenance.requires_empty_v2_evidence_namespace:
+                _require_empty_v2_evidence_namespace(
+                    integration=integration,
+                    integration_identity=integration_identity,
+                )
             active_identity = (
                 None
                 if provenance.active_identity is None
                 else _provisional_from_file_identity(provenance.active_identity)
             )
-            active_text = (
-                None
-                if provenance.active_payload is None
-                or provenance.previous_payload is not None
-                else provenance.active_payload.decode("utf-8")
-            )
+            active_text = None
             published_text = _manifest_text(candidate)
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
-            legacy_evidence_cutover: _LegacyEvidenceCutover | None = None
-            if provenance.requires_evidence_v1_cutover:
-                if provenance.active_payload is None:
-                    _fail()
-                legacy_evidence_cutover = _begin_legacy_evidence_v1_cutover(
-                    integration=integration,
-                    integration_identity=integration_identity,
-                    active_payload=provenance.active_payload,
-                )
-            try:
-                publish = _begin_active_publish(
-                    active_path=active_path,
-                    published_text=published_text,
-                    prior_identity=active_identity,
-                    integration_identity=integration_identity,
-                    transaction_kind="install",
-                )
-            except BaseException as publish_error:
-                if legacy_evidence_cutover is not None and not (
-                    _rollback_legacy_evidence_v1_cutover(
-                        legacy_evidence_cutover
-                    )
-                ):
-                    raise IntegrationCleanupError() from publish_error
-                raise
+            publish = _begin_active_publish(
+                active_path=active_path,
+                published_text=published_text,
+                prior_identity=active_identity,
+                integration_identity=integration_identity,
+                transaction_kind="install",
+            )
             try:
                 _validate_active_publish(
                     publish=publish,
@@ -4407,23 +3799,10 @@ def _install_release(
                     )
                 except BaseException as restore_error:
                     raise IntegrationCleanupError() from restore_error
-                evidence_restored = (
-                    legacy_evidence_cutover is None
-                    or _rollback_legacy_evidence_v1_cutover(
-                        legacy_evidence_cutover
-                    )
-                )
-                if not restored or not evidence_restored:
+                if not restored:
                     raise IntegrationCleanupError() from publish_error
                 raise publish_error
             _commit_active_publish(publish, integration_identity)
-            if (
-                legacy_evidence_cutover is not None
-                and not _commit_legacy_evidence_v1_cutover(
-                    legacy_evidence_cutover
-                )
-            ):
-                raise IntegrationCleanupError()
             return verified
     except IntegrationInstallError:
         raise
@@ -4535,6 +3914,10 @@ def install_release(
 
 def rollback_active_release(*, state_home: Path, data_home: Path) -> ActiveRelease:
     try:
+        # D297 is a one-way consumer/producer cutover. Transaction-local
+        # restoration remains in install_release; public active rollback does not.
+        if RELEASE_VERSION == "0.6.538":
+            _fail()
         state_home = _absolute(state_home)
         data_home = _absolute(data_home)
         _require_private_dir(state_home, None, False)
@@ -4553,7 +3936,6 @@ def rollback_active_release(*, state_home: Path, data_home: Path) -> ActiveRelea
                 integration=integration,
                 integration_identity=integration_identity,
                 state_home=state_home,
-                data_home=data_home,
             )
             previous = integration / PREVIOUS_NAME
             active = integration / ACTIVE_NAME

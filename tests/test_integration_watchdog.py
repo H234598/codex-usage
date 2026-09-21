@@ -405,7 +405,7 @@ def _verified_manifest(tmp_path: Path) -> VerifiedActiveManifest:
     manifest_bytes = b"{}\n"
     return VerifiedActiveManifest(
         active_release=ActiveRelease(
-            version="0.6.537",
+            version="0.6.538",
             release_dir=release_dir,
             launcher_path=launcher,
             entrypoint_path=entrypoint,
@@ -415,7 +415,7 @@ def _verified_manifest(tmp_path: Path) -> VerifiedActiveManifest:
             launcher_sha256="4" * 64,
             release_tree_sha256="5" * 64,
         ),
-        release_id="0.6.537-" + "6" * 16,
+        release_id="0.6.538-" + "6" * 16,
         source_manifest_sha256="6" * 64,
         active_manifest_bytes=manifest_bytes,
         active_manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
@@ -467,7 +467,7 @@ def _write_trusted_runtime_core_layout(
     trusted_interpreter.chmod(0o700)
     trusted_package = trusted_site / "codex_usage"
     trusted_package.mkdir(mode=0o700, parents=True)
-    trusted_dist = trusted_site / "codex_usage-0.6.537.dist-info"
+    trusted_dist = trusted_site / "codex_usage-0.6.538.dist-info"
     trusted_dist.mkdir(mode=0o700)
     for module_name in TRUSTED_PRODUCER_CORE_MODULES:
         target = trusted_package / module_name
@@ -475,7 +475,7 @@ def _write_trusted_runtime_core_layout(
         target.chmod(0o644)
     trusted_metadata = trusted_dist / "METADATA"
     trusted_metadata.write_text(
-        "Metadata-Version: 2.4\nName: codex-usage\nVersion: 0.6.537\n",
+        "Metadata-Version: 2.4\nName: codex-usage\nVersion: 0.6.538\n",
         encoding="utf-8",
     )
     trusted_metadata.chmod(0o644)
@@ -491,21 +491,21 @@ def _write_trusted_runtime_core_layout(
     trusted_rows.extend(
         [
             (
-                f"codex_usage-0.6.537.dist-info/METADATA,"
+                f"codex_usage-0.6.538.dist-info/METADATA,"
                 f"{_record_digest(trusted_metadata.read_bytes())},"
                 f"{trusted_metadata.stat().st_size}"
             ),
-            "codex_usage-0.6.537.dist-info/RECORD,,",
+            "codex_usage-0.6.538.dist-info/RECORD,,",
         ]
     )
     _write_record(trusted_record, trusted_rows)
     trusted_record.chmod(0o644)
 
-    release_dir = tmp_path / "state/codex-usage/integration/releases/0.6.537-6666666666666666"
+    release_dir = tmp_path / "state/codex-usage/integration/releases/0.6.538-6666666666666666"
     active_site = release_dir / "venv/lib/python3.14/site-packages"
     active_package = active_site / "codex_usage"
     active_package.mkdir(mode=0o700, parents=True)
-    active_dist = active_site / "codex_usage_integration_producer-0.6.537.dist-info"
+    active_dist = active_site / "codex_usage_integration_producer-0.6.538.dist-info"
     active_dist.mkdir(mode=0o700)
     for module_name in PRODUCER_RELEASE_MODULES:
         target = active_package / module_name
@@ -516,7 +516,7 @@ def _write_trusted_runtime_core_layout(
             "METADATA",
             b"Metadata-Version: 2.4\n"
             b"Name: codex-usage-integration-producer\n"
-            b"Version: 0.6.537\n",
+            b"Version: 0.6.538\n",
         ),
         ("WHEEL", b"Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\n"),
         ("top_level.txt", b"codex_usage\n"),
@@ -536,14 +536,14 @@ def _write_trusted_runtime_core_layout(
     active_rows.extend(
         [
             (
-                f"codex_usage_integration_producer-0.6.537.dist-info/{name},"
+                f"codex_usage_integration_producer-0.6.538.dist-info/{name},"
                 f"{_record_digest((active_dist / name).read_bytes())},"
                 f"{(active_dist / name).stat().st_size}"
             )
             for name in ("METADATA", "WHEEL", "top_level.txt")
         ]
     )
-    active_rows.append("codex_usage_integration_producer-0.6.537.dist-info/RECORD,,")
+    active_rows.append("codex_usage_integration_producer-0.6.538.dist-info/RECORD,,")
     _write_record(active_record, active_rows)
     active_record.chmod(0o600)
     launcher = release_dir / "venv/bin/codex-usage"
@@ -553,7 +553,7 @@ def _write_trusted_runtime_core_layout(
     manifest_bytes = b"{}\n"
     verified = VerifiedActiveManifest(
         active_release=ActiveRelease(
-            version="0.6.537",
+            version="0.6.538",
             release_dir=release_dir,
             launcher_path=launcher,
             entrypoint_path=active_package / "integration_entrypoint.py",
@@ -565,7 +565,7 @@ def _write_trusted_runtime_core_layout(
             launcher_sha256=hashlib.sha256(launcher.read_bytes()).hexdigest(),
             release_tree_sha256="5" * 64,
         ),
-        release_id="0.6.537-" + "6" * 16,
+        release_id="0.6.538-" + "6" * 16,
         source_manifest_sha256="6" * 64,
         active_manifest_bytes=manifest_bytes,
         active_manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
@@ -886,7 +886,7 @@ def test_execute_rejects_world_writable_runtime_dist_info_before_publisher(
         tmp_path
     )
     _patch_runtime_module_origins(monkeypatch, trusted_site)
-    trusted_site.joinpath("codex_usage-0.6.537.dist-info").chmod(0o777)
+    trusted_site.joinpath("codex_usage-0.6.538.dist-info").chmod(0o777)
 
     published: list[object] = []
     assert integration_watchdog.execute(

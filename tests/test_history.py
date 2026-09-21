@@ -117,6 +117,26 @@ def test_usage_sample_rejects_string_subclass_hooks():
         )
 
 
+def test_history_store_detects_selected_pool_evidence(tmp_path):
+    path = tmp_path / "history.sqlite3"
+    captured_at = datetime(2026, 9, 21, tzinfo=UTC)
+    with HistoryStore(path) as store:
+        store.record_many(
+            (
+                UsageSample(
+                    account_id="alpha",
+                    pool="gpt-5.3-codex-spark",
+                    window_seconds=18_000,
+                    captured_at=captured_at,
+                    used_percent=1.0,
+                    source="test",
+                ),
+            )
+        )
+        assert store.has_pool_evidence("gpt-5.3-codex-spark") is True
+        assert store.has_pool_evidence("main") is False
+
+
 def test_history_timestamp_conversion_fails_closed_for_datetime_hooks():
     class BrokenDatetime(datetime):
         calls = 0
@@ -927,6 +947,7 @@ def test_history_sidecar_requires_nofollow_for_symlink_safety(tmp_path, monkeypa
 def test_history_sidecar_retries_interrupted_chmod(tmp_path, monkeypatch):
     target = tmp_path / "history.sqlite3-wal"
     target.write_bytes(b"sidecar")
+    target.chmod(0o644)
     calls = 0
     original_fchmod = history_module.os.fchmod
 
@@ -1928,6 +1949,11 @@ def test_history_connect_classifies_open_errors(
         "private_path_lock",
         lambda *_args, **_kwargs: nullcontext(),
     )
+    monkeypatch.setattr(
+        history_module,
+        "source_lock",
+        lambda *_args, **_kwargs: nullcontext(),
+    )
     monkeypatch.setattr(HistoryStore, "_prepare_path", lambda _self: (path, None))
 
     def fail_open(*_args, **_kwargs):
@@ -1945,6 +1971,11 @@ def test_history_connect_rejects_nonregular_descriptor(tmp_path, monkeypatch):
     monkeypatch.setattr(
         history_module,
         "private_path_lock",
+        lambda *_args, **_kwargs: nullcontext(),
+    )
+    monkeypatch.setattr(
+        history_module,
+        "source_lock",
         lambda *_args, **_kwargs: nullcontext(),
     )
     monkeypatch.setattr(HistoryStore, "_prepare_path", lambda _self: (path, None))

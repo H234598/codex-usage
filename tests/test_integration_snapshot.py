@@ -1148,6 +1148,35 @@ def test_read_current_usage_records_rejects_hardlinked_source_and_missing_curren
     assert not _cache_path(tmp_path).exists()
 
 
+@pytest.mark.parametrize("status", (AccountStatus.ERROR, AccountStatus.BLOCKED))
+def test_current_source_binding_marks_spark_even_when_account_is_unready(
+    tmp_path, status
+):
+    """D297 must fail before schema suppression can hide retired Spark input."""
+    from codex_usage.integration_snapshot import read_current_usage_records_with_binding
+    from codex_usage.usage_limits import SPARK_MODEL
+
+    current = tmp_path / "data" / "codex-usage" / "current"
+    path = _write_current_fixture(
+        current,
+        replace(
+            _usage("alpha", status=status),
+        ),
+    )
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    persisted["models"] = {SPARK_MODEL: None}
+    write_private_text(
+        path,
+        json.dumps(persisted, sort_keys=True),
+        label="synthetic Spark source",
+    )
+
+    snapshot = read_current_usage_records_with_binding(current)
+
+    assert snapshot.has_spark_source_evidence is True
+    assert snapshot.records[0].has_spark_source_evidence is True
+
+
 def test_read_current_usage_records_stops_collecting_after_account_cap(tmp_path, monkeypatch):
     from codex_usage import integration_snapshot
     from codex_usage.integration_snapshot import (
@@ -2102,3 +2131,100 @@ def test_snapshot_serializer_rejects_oversized_payload(monkeypatch):
                 "schema_version": 2,
             }
         )
+
+
+def test_current_snapshot_binds_record_and_generation_sidecar(tmp_path):
+    from codex_usage.integration_snapshot import read_current_usage_records_with_binding
+    from codex_usage.models import AccountUsage
+    from codex_usage.state import _increment_state_generation, save_current_usage
+
+    root = tmp_path / "codex-usage"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    _increment_state_generation("alpha", root)
+    current = root / "current"
+    save_current_usage(
+        AccountUsage(
+            account_id="alpha",
+            label="Alpha",
+            captured_at=GENERATED,
+            backend_configured="direct",
+            backend_used="direct",
+            state_generation=1,
+        ),
+        current,
+    )
+
+    snapshot = read_current_usage_records_with_binding(current)
+
+    assert tuple(usage.account_id for usage in snapshot.usages) == ("alpha",)
+    assert snapshot.to_contract() == {
+        "current_directory": snapshot.current_directory.to_contract(),
+        "records": [
+            {
+                "account_id": "alpha",
+                "current_file": snapshot.records[0].current_file.to_contract(),
+                "state_generation": 1,
+                "state_generation_file": snapshot.records[0].state_generation_file.to_contract(),
+            }
+        ],
+        "source_input_binding_schema_version": 1,
+    }
+
+
+def test_bound_current_snapshot_rejects_same_uid_b_to_a_restore(
+    tmp_path,
+    monkeypatch,
+):
+    """A same-UID B->A restore changes bound ctime and fails closed."""
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        read_current_usage_records_with_binding,
+    )
+
+    current = tmp_path / "data" / "codex-usage" / "current"
+    initial = _write_current_fixture(current, _usage("alpha"))
+    initial_bytes = initial.read_bytes()
+    initial_inode = initial.lstat().st_ino
+    pointer = tmp_path / "state" / "codex-usage" / "integration" / "current.json"
+    pointer.parent.mkdir(mode=0o700, parents=True)
+    pointer.parent.chmod(0o700)
+    pointer_before = b"independent-evidence-pointer"
+    pointer.write_bytes(pointer_before)
+    pointer.chmod(0o600)
+    alternate_dir = tmp_path / "alternate"
+    alternate = _write_current_fixture(
+        alternate_dir,
+        _usage("alpha", captured_at=CAPTURED_ALPHA + timedelta(minutes=1)),
+    )
+    held_initial = alternate_dir / "held-initial.json"
+    held_alternate = alternate_dir / "held-alternate.json"
+    original_reader = snapshot_module.load_current_usage
+    reader_calls = 0
+
+    def swap_b_then_restore_a(account_id: str, current_dir: Path):
+        nonlocal reader_calls
+        reader_calls += 1
+        initial.rename(held_initial)
+        alternate.rename(initial)
+        try:
+            return original_reader(account_id, current_dir)
+        finally:
+            initial.rename(held_alternate)
+            held_initial.rename(initial)
+            held_alternate.rename(alternate)
+
+    monkeypatch.setattr(
+        snapshot_module,
+        "load_current_usage",
+        swap_b_then_restore_a,
+        raising=False,
+    )
+
+    with pytest.raises(IntegrationInvalidSource):
+        read_current_usage_records_with_binding(current)
+
+    assert reader_calls == 1
+    assert initial.read_bytes() == initial_bytes
+    assert initial.lstat().st_ino == initial_inode
+    assert pointer.read_bytes() == pointer_before

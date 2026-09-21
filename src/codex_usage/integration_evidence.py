@@ -46,21 +46,55 @@ from .private_io import (
     IntegrationEvidenceUnavailable,
     private_path_lock,
 )
+from .source_lock import SourceFileBinding, capture_private_source_file, source_lock
+from .usage_limits import SPARK_MODEL
 
 _LOCK_MAX_BYTES = 4096
 _EVIDENCE_LOCK_STATE = threading.local()
 _BINDING_MAX_BYTES = 32 * 1024
 _POINTER_MAX_BYTES = 4096
 _PAYLOAD_MAX_BYTES = 2 * 1024 * 1024
+_SOURCE_INPUT_FILENAME = "source-inputs-v2.json"
+_SOURCE_INPUT_MAX_BYTES = 512 * 1024
 _BINDING_FIELDS = frozenset(
     (
         "binding_schema_version",
         "pool_authority_filename",
         "pool_authority_sha256",
         "pool_authority_size_bytes",
+        "source_inputs_filename",
+        "source_inputs_sha256",
+        "source_inputs_size_bytes",
         "usage_binding",
     )
 )
+_SOURCE_INPUT_REQUEST_FIELDS = frozenset(
+    ("current_directory", "history", "records", "source_input_binding_schema_version")
+)
+_SOURCE_INPUT_FIELDS = _SOURCE_INPUT_REQUEST_FIELDS | frozenset(("owner_source",))
+_SOURCE_DIRECTORY_FIELDS = frozenset(("device", "gid", "inode", "mode", "uid"))
+_SOURCE_FILE_FIELDS = frozenset(
+    (
+        "ctime_ns",
+        "device",
+        "gid",
+        "inode",
+        "mode",
+        "mtime_ns",
+        "sha256",
+        "size_bytes",
+        "uid",
+    )
+)
+_SOURCE_RECORD_FIELDS = frozenset(
+    ("account_id", "current_file", "state_generation", "state_generation_file")
+)
+_SOURCE_HISTORY_FIELDS = frozenset(("consumed_rows", "database", "shm", "wal"))
+_SOURCE_HISTORY_ROW_FIELDS = frozenset(
+    ("account_id", "pool", "rows_sha256", "sample_count", "window_seconds")
+)
+_SOURCE_ACCOUNT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+_SOURCE_POOL_RE = re.compile(r"[a-z0-9][a-z0-9_.-]{0,127}")
 _USAGE_BINDING_FIELDS = frozenset(
     (
         "active_manifest_sha256",
@@ -88,10 +122,10 @@ _ALLOWED_WINDOW_SECONDS = frozenset((18_000, 604_800, 2_592_000))
 ALLOWED_WINDOW_SECONDS = _ALLOWED_WINDOW_SECONDS
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 _GENERATION_ID_RE = re.compile(r"[0-9a-f]{32}")
-_RELEASE_ID_RE = re.compile(r"0\.6\.537-[0-9a-f]{16}")
+_RELEASE_ID_RE = re.compile(r"0\.6\.538-[0-9a-f]{16}")
 _STAGING_RE = re.compile(r"\.tmp-([0-9a-f]{32})")
 _STAGING_FILE_RE = re.compile(
-    r"\.tmp-(?:account-usage-v2(?:\.binding)?|pool-authority-v2)\.json-[0-9a-f]{32}"
+    r"\.tmp-(?:account-usage-v2(?:\.binding)?|pool-authority-v2|source-inputs-v2)\.json-[0-9a-f]{32}"
 )
 _POINTER_STAGING_PREFIX = ".tmp-current.json-"
 _POINTER_STAGING_RE = re.compile(r"\.tmp-current\.json-[0-9a-f]{32}")
@@ -152,6 +186,9 @@ class EvidenceBinding:
     pool_authority_filename: str
     pool_authority_sha256: str
     pool_authority_size_bytes: int
+    source_inputs_filename: str
+    source_inputs_sha256: str
+    source_inputs_size_bytes: int
 
 
 @dataclass(frozen=True)
@@ -193,6 +230,7 @@ class _ValidatedEvidenceGeneration:
     generation_identity: FileIdentity
     binding_identity: FileIdentity
     pool_authority_identity: FileIdentity
+    source_inputs_identity: FileIdentity
     payload_identity: FileIdentity | None
 
 
@@ -203,6 +241,7 @@ class _CompleteEvidenceGeneration:
     generation_identity: FileIdentity
     binding_identity: FileIdentity
     pool_authority_identity: FileIdentity
+    source_inputs_identity: FileIdentity
     payload_identity: FileIdentity
 
 
@@ -423,6 +462,139 @@ def _require_generation_id(value: object) -> str:
     return value
 
 
+def _require_nonnegative_int(value: object) -> int:
+    if type(value) is not int or value < 0:
+        _invalid_contract()
+    return value
+
+
+def _canonical_source_directory(value: object) -> dict[str, int]:
+    item = _require_exact_object(value, fields=_SOURCE_DIRECTORY_FIELDS)
+    result = {name: _require_nonnegative_int(item[name]) for name in _SOURCE_DIRECTORY_FIELDS}
+    if result["mode"] != 0o700:
+        _invalid_contract()
+    return result
+
+
+def _canonical_source_file(value: object) -> dict[str, int | str]:
+    item = _require_exact_object(value, fields=_SOURCE_FILE_FIELDS)
+    result: dict[str, int | str] = {}
+    for name in _SOURCE_FILE_FIELDS - frozenset(("sha256",)):
+        result[name] = _require_nonnegative_int(item[name])
+    result["sha256"] = _require_digest(item["sha256"])
+    if result["mode"] != 0o600 or result["size_bytes"] > _SOURCE_INPUT_MAX_BYTES:
+        _invalid_contract()
+    return result
+
+
+def _canonical_source_history_row(value: object) -> dict[str, object]:
+    item = _require_exact_object(value, fields=_SOURCE_HISTORY_ROW_FIELDS)
+    account_id = item["account_id"]
+    pool = item["pool"]
+    if (
+        type(account_id) is not str
+        or _SOURCE_ACCOUNT_ID_RE.fullmatch(account_id) is None
+        or type(pool) is not str
+        or _SOURCE_POOL_RE.fullmatch(pool) is None
+    ):
+        _invalid_contract()
+    return {
+        "account_id": account_id,
+        "pool": pool,
+        "rows_sha256": _require_digest(item["rows_sha256"]),
+        "sample_count": _require_nonnegative_int(item["sample_count"]),
+        "window_seconds": _require_nonnegative_int(item["window_seconds"]),
+    }
+
+
+def _canonical_source_input_request(value: object) -> dict[str, object]:
+    item = _require_exact_object(value, fields=_SOURCE_INPUT_REQUEST_FIELDS)
+    if item["source_input_binding_schema_version"] != 1:
+        _invalid_contract()
+    records = item["records"]
+    if type(records) is not list or len(records) > 100:
+        _invalid_contract()
+    canonical_records: list[dict[str, object]] = []
+    for record in records:
+        entry = _require_exact_object(record, fields=_SOURCE_RECORD_FIELDS)
+        account_id = entry["account_id"]
+        if type(account_id) is not str or _SOURCE_ACCOUNT_ID_RE.fullmatch(account_id) is None:
+            _invalid_contract()
+        sidecar = entry["state_generation_file"]
+        canonical_records.append(
+            {
+                "account_id": account_id,
+                "current_file": _canonical_source_file(entry["current_file"]),
+                "state_generation": _require_nonnegative_int(entry["state_generation"]),
+                "state_generation_file": (
+                    None if sidecar is None else _canonical_source_file(sidecar)
+                ),
+            }
+        )
+    if canonical_records != sorted(canonical_records, key=lambda entry: entry["account_id"]):
+        _invalid_contract()
+    if len({entry["account_id"] for entry in canonical_records}) != len(canonical_records):
+        _invalid_contract()
+    history = _require_exact_object(item["history"], fields=_SOURCE_HISTORY_FIELDS)
+    consumed_rows = history["consumed_rows"]
+    if type(consumed_rows) is not list or len(consumed_rows) > 3200:
+        _invalid_contract()
+    canonical_rows = [_canonical_source_history_row(row) for row in consumed_rows]
+    if canonical_rows != sorted(
+        canonical_rows,
+        key=lambda row: (row["account_id"], row["pool"], row["window_seconds"]),
+    ):
+        _invalid_contract()
+    for name in ("database", "wal", "shm"):
+        if history[name] is not None and not isinstance(history[name], dict):
+            _invalid_contract()
+    return {
+        "current_directory": _canonical_source_directory(item["current_directory"]),
+        "history": {
+            "consumed_rows": canonical_rows,
+            "database": (
+                None
+                if history["database"] is None
+                else _canonical_source_file(history["database"])
+            ),
+            "shm": None if history["shm"] is None else _canonical_source_file(history["shm"]),
+            "wal": None if history["wal"] is None else _canonical_source_file(history["wal"]),
+        },
+        "records": canonical_records,
+        "source_input_binding_schema_version": 1,
+    }
+
+
+def _serialize_source_input_contract(
+    value: object,
+    *,
+    owner_source: SourceFileBinding,
+) -> bytes:
+    if type(owner_source) is not SourceFileBinding:
+        _invalid_contract()
+    canonical = _canonical_source_input_request(value)
+    canonical["owner_source"] = _canonical_source_file(owner_source.to_contract())
+    payload = _serialize_contract(canonical)
+    if not 1 <= len(payload) <= _SOURCE_INPUT_MAX_BYTES:
+        _invalid_contract()
+    return payload
+
+
+def _parse_source_input_contract(payload: bytes) -> dict[str, object]:
+    if type(payload) is not bytes or not 1 <= len(payload) <= _SOURCE_INPUT_MAX_BYTES:
+        _invalid_contract()
+    try:
+        item = _require_exact_object(loads_strict(payload), fields=_SOURCE_INPUT_FIELDS)
+        request = {name: item[name] for name in _SOURCE_INPUT_REQUEST_FIELDS}
+        canonical = _canonical_source_input_request(request)
+        canonical["owner_source"] = _canonical_source_file(item["owner_source"])
+        if _serialize_contract(canonical) != payload:
+            _invalid_contract()
+        return canonical
+    except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
+        _invalid_contract()
+
+
 def _canonical_usage_binding(binding: EvidenceBinding) -> dict[str, object]:
     if type(binding) is not EvidenceBinding:
         _invalid_contract()
@@ -438,7 +610,7 @@ def _canonical_usage_binding(binding: EvidenceBinding) -> dict[str, object]:
         or not 1 <= binding.payload_size_bytes <= _PAYLOAD_MAX_BYTES
     ):
         _invalid_contract()
-    if binding.producer_version != "0.6.537":
+    if binding.producer_version != "0.6.538":
         _invalid_contract()
     if type(binding.release_id) is not str or _RELEASE_ID_RE.fullmatch(binding.release_id) is None:
         _invalid_contract()
@@ -449,7 +621,7 @@ def _canonical_usage_binding(binding: EvidenceBinding) -> dict[str, object]:
         "payload_sha256": _require_digest(binding.payload_sha256),
         "payload_size_bytes": binding.payload_size_bytes,
         "published_at": _canonical_timestamp(binding.published_at),
-        "producer_version": "0.6.537",
+        "producer_version": "0.6.538",
         "release_id": binding.release_id,
         "source_manifest_sha256": _require_digest(binding.source_manifest_sha256),
         "usage_binding_schema_version": 2,
@@ -466,7 +638,7 @@ def serialize_usage_binding(binding: EvidenceBinding) -> bytes:
 def _canonical_binding(binding: EvidenceBinding) -> dict[str, object]:
     if type(binding) is not EvidenceBinding:
         _invalid_contract()
-    if type(binding.binding_schema_version) is not int or binding.binding_schema_version != 2:
+    if type(binding.binding_schema_version) is not int or binding.binding_schema_version != 3:
         _invalid_contract()
     if binding.pool_authority_filename != POOL_AUTHORITY_FILENAME:
         _invalid_contract()
@@ -475,11 +647,21 @@ def _canonical_binding(binding: EvidenceBinding) -> dict[str, object]:
         or not 1 <= binding.pool_authority_size_bytes <= POOL_AUTHORITY_MAX_BYTES
     ):
         _invalid_contract()
+    if binding.source_inputs_filename != _SOURCE_INPUT_FILENAME:
+        _invalid_contract()
+    if (
+        type(binding.source_inputs_size_bytes) is not int
+        or not 1 <= binding.source_inputs_size_bytes <= _SOURCE_INPUT_MAX_BYTES
+    ):
+        _invalid_contract()
     return {
-        "binding_schema_version": 2,
+        "binding_schema_version": 3,
         "pool_authority_filename": POOL_AUTHORITY_FILENAME,
         "pool_authority_sha256": _require_digest(binding.pool_authority_sha256),
         "pool_authority_size_bytes": binding.pool_authority_size_bytes,
+        "source_inputs_filename": _SOURCE_INPUT_FILENAME,
+        "source_inputs_sha256": _require_digest(binding.source_inputs_sha256),
+        "source_inputs_size_bytes": binding.source_inputs_size_bytes,
         "usage_binding": _canonical_usage_binding(binding),
     }
 
@@ -551,6 +733,9 @@ def parse_binding(payload: bytes) -> EvidenceBinding:
             pool_authority_filename=value["pool_authority_filename"],
             pool_authority_sha256=_require_digest(value["pool_authority_sha256"]),
             pool_authority_size_bytes=value["pool_authority_size_bytes"],
+            source_inputs_filename=value["source_inputs_filename"],
+            source_inputs_sha256=_require_digest(value["source_inputs_sha256"]),
+            source_inputs_size_bytes=value["source_inputs_size_bytes"],
         )
         canonical = serialize_binding(binding)
     except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
@@ -764,6 +949,38 @@ def validate_v2_payload_bytes(payload: bytes) -> dict[str, object]:
             if evidence["limit_window_seconds"] not in _ALLOWED_WINDOW_SECONDS:
                 raise IntegrationInvalidSource()
     return document
+
+
+def _reject_spark_v2_document(document: dict[str, object]) -> None:
+    """Reject Spark at the common V2 publish seam, not only its entrypoint."""
+    accounts = document.get("accounts")
+    if type(accounts) is not list:
+        raise IntegrationInvalidSource()
+    for account in accounts:
+        if type(account) is not dict:
+            raise IntegrationInvalidSource()
+        for field in ("limits", "tracker_evidence"):
+            values = account.get(field)
+            if type(values) is not list:
+                raise IntegrationInvalidSource()
+            for value in values:
+                if (
+                    type(value) is not dict
+                    or type(value.get("pool")) is not str
+                ):
+                    raise IntegrationInvalidSource()
+                if value["pool"].casefold() == SPARK_MODEL:
+                    raise IntegrationInvalidSource()
+
+
+def _canonical_non_spark_source_input_request(value: object) -> dict[str, object]:
+    """Canonicalize and reject any Spark tracker source claim for V2."""
+    canonical = _canonical_source_input_request(value)
+    history = cast(dict[str, object], canonical["history"])
+    rows = cast(list[dict[str, object]], history["consumed_rows"])
+    if any(row["pool"].casefold() == SPARK_MODEL for row in rows):
+        raise IntegrationInvalidSource()
+    return canonical
 
 
 def _evidence_lock_name(target: Path) -> str:
@@ -1360,7 +1577,7 @@ def _require_verified_manifest(value: object) -> VerifiedActiveManifest:
         raise IntegrationEvidenceInvalid()
     verified = cast(VerifiedActiveManifest, value)
     if (
-        verified.active_release.version != "0.6.537"
+        verified.active_release.version != "0.6.538"
         or _RELEASE_ID_RE.fullmatch(verified.release_id) is None
         or verified.active_manifest_sha256
         != hashlib.sha256(verified.active_manifest_bytes).hexdigest()
@@ -1599,6 +1816,13 @@ def _validate_pointer_binding(
             )
         )
         pool_authority = parse_pool_authority_projection(pool_authority_bytes)
+        source_inputs_bytes, source_inputs_identity = _read_verified_evidence_file(
+            generation_fd,
+            binding.source_inputs_filename,
+            maximum=_SOURCE_INPUT_MAX_BYTES,
+            hook=lambda *_: None,
+        )
+        _parse_source_input_contract(source_inputs_bytes)
         if (
             len(pool_authority_bytes) != binding.pool_authority_size_bytes
             or hashlib.sha256(pool_authority_bytes).hexdigest()
@@ -1610,6 +1834,9 @@ def _validate_pointer_binding(
             or pool_authority["usage_payload_sha256"] != binding.payload_sha256
             or pool_authority["usage_binding_sha256"]
             != hashlib.sha256(serialize_usage_binding(binding)).hexdigest()
+            or len(source_inputs_bytes) != binding.source_inputs_size_bytes
+            or hashlib.sha256(source_inputs_bytes).hexdigest()
+            != binding.source_inputs_sha256
         ):
             raise IntegrationEvidenceInvalid()
         if document is not None:
@@ -1644,6 +1871,7 @@ def _validate_pointer_binding(
             generation_identity=generation_identity,
             binding_identity=binding_identity,
             pool_authority_identity=pool_authority_identity,
+            source_inputs_identity=source_inputs_identity,
             payload_identity=payload_identity,
         )
     except IntegrationEvidenceError:
@@ -2587,6 +2815,7 @@ def _remove_safe_staging_directory(generations_fd: int, name: str) -> None:
                 "account-usage-v2.json",
                 "account-usage-v2.binding.json",
                 POOL_AUTHORITY_FILENAME,
+                _SOURCE_INPUT_FILENAME,
             } and _STAGING_FILE_RE.fullmatch(entry.name) is None:
                 raise IntegrationEvidenceInvalid()
             item = entry.stat(follow_symlinks=False)
@@ -3398,12 +3627,13 @@ def _inspect_complete_generation(
         with os.scandir(generation_fd) as entries:
             for entry in entries:
                 names.add(entry.name)
-                if len(names) > 3:
+                if len(names) > 4:
                     raise IntegrationEvidenceInvalid()
         if names != {
             "account-usage-v2.json",
             "account-usage-v2.binding.json",
             POOL_AUTHORITY_FILENAME,
+            _SOURCE_INPUT_FILENAME,
         }:
             raise IntegrationEvidenceInvalid()
         binding_bytes, binding_identity = _read_verified_evidence_file(
@@ -3422,6 +3652,13 @@ def _inspect_complete_generation(
             )
         )
         pool_authority = parse_pool_authority_projection(pool_authority_bytes)
+        source_inputs, source_inputs_identity = _read_verified_evidence_file(
+            generation_fd,
+            binding.source_inputs_filename,
+            maximum=_SOURCE_INPUT_MAX_BYTES,
+            hook=lambda *_: None,
+        )
+        _parse_source_input_contract(source_inputs)
         payload, payload_identity = _read_verified_evidence_file(
             generation_fd,
             binding.payload_filename,
@@ -3452,6 +3689,9 @@ def _inspect_complete_generation(
             or pool_authority["usage_payload_sha256"] != binding.payload_sha256
             or pool_authority["usage_binding_sha256"]
             != hashlib.sha256(serialize_usage_binding(binding)).hexdigest()
+            or len(source_inputs) != binding.source_inputs_size_bytes
+            or hashlib.sha256(source_inputs).hexdigest()
+            != binding.source_inputs_sha256
             or usage_account_ids != authority_account_ids
             or _fd_identity(generation_fd) != generation_identity
             or _named_identity(generations_fd, generation_id, directory=True)
@@ -3466,6 +3706,7 @@ def _inspect_complete_generation(
             generation_identity=generation_identity,
             binding_identity=binding_identity,
             pool_authority_identity=pool_authority_identity,
+            source_inputs_identity=source_inputs_identity,
             payload_identity=payload_identity,
         )
     finally:
@@ -3662,6 +3903,8 @@ def publish_evidence_generation(
     state_home: Path,
     data_home: Path,
     verified_active_manifest: VerifiedActiveManifest,
+    source_input_contract: dict[str, object],
+    source_input_revalidator: Callable[[], dict[str, object]],
 ) -> EvidencePointer:
     verified = _require_verified_manifest(verified_active_manifest)
     if (
@@ -3669,21 +3912,26 @@ def publish_evidence_generation(
         or type(data_home) is not type(Path())
         or not state_home.is_absolute()
         or not data_home.is_absolute()
+        or type(source_input_contract) is not dict
+        or not callable(source_input_revalidator)
     ):
         raise IntegrationEvidenceInvalid()
-    with evidence_lock_set(
-        state_home=state_home,
-        release_mode="exclusive",
-        current_mode="exclusive",
-        timeout_seconds=0,
-        create=False,
-    ):
-        return _publish_evidence_generation_locked(
-            payload,
+    with source_lock(data_home / "codex-usage", timeout_seconds=0):
+        with evidence_lock_set(
             state_home=state_home,
-            data_home=data_home,
-            verified_active_manifest=verified,
-        )
+            release_mode="exclusive",
+            current_mode="exclusive",
+            timeout_seconds=0,
+            create=False,
+        ):
+            return _publish_evidence_generation_locked(
+                payload,
+                state_home=state_home,
+                data_home=data_home,
+                verified_active_manifest=verified,
+                source_input_contract=source_input_contract,
+                source_input_revalidator=source_input_revalidator,
+            )
 
 
 def _publish_evidence_generation_locked(
@@ -3692,6 +3940,8 @@ def _publish_evidence_generation_locked(
     state_home: Path,
     data_home: Path,
     verified_active_manifest: VerifiedActiveManifest,
+    source_input_contract: dict[str, object],
+    source_input_revalidator: Callable[[], dict[str, object]],
 ) -> EvidencePointer:
     verified = _require_verified_manifest(verified_active_manifest)
     if (
@@ -3699,9 +3949,15 @@ def _publish_evidence_generation_locked(
         or type(data_home) is not type(Path())
         or not state_home.is_absolute()
         or not data_home.is_absolute()
+        or type(source_input_contract) is not dict
+        or not callable(source_input_revalidator)
     ):
         raise IntegrationEvidenceInvalid()
     document = validate_v2_payload_bytes(payload)
+    _reject_spark_v2_document(document)
+    source_input_request = _serialize_contract(
+        _canonical_non_spark_source_input_request(source_input_contract)
+    )
     published_at = cast(str, document["generated_at"])
     published_instant = datetime.fromisoformat(
         published_at.replace("Z", "+00:00")
@@ -3742,20 +3998,29 @@ def _publish_evidence_generation_locked(
         source_lock.__enter__()
         source_lock_acquired = True
         try:
-            authority_source_bytes, _authority_source_identity = (
-                _read_verified_evidence_file(
-                    integration_fd,
-                    POOL_AUTHORITY_SOURCE_FILENAME,
-                    maximum=POOL_AUTHORITY_SOURCE_MAX_BYTES,
-                    hook=_before_publish_pool_authority_source_recheck,
-                )
+            authority_source_bytes, authority_source_binding = capture_private_source_file(
+                source_lock_path,
+                maximum=POOL_AUTHORITY_SOURCE_MAX_BYTES,
+            )
+            _before_publish_pool_authority_source_recheck(
+                integration_fd,
+                POOL_AUTHORITY_SOURCE_FILENAME,
+                -1,
             )
         except IntegrationEvidenceUnavailable as exc:
+            raise IntegrationInvalidSource() from exc
+        except OSError as exc:
+            raise IntegrationInvalidSource() from exc
+        except ValueError as exc:
             raise IntegrationInvalidSource() from exc
         try:
             authority_source = parse_pool_authority_source(authority_source_bytes)
         except PoolAuthorityInvalid as exc:
             raise IntegrationInvalidSource() from exc
+        source_inputs_bytes = _serialize_source_input_contract(
+            source_input_contract,
+            owner_source=authority_source_binding,
+        )
 
         namespace = _recover_evidence_staging_from_fds(
             integration_fd=integration_fd,
@@ -3854,19 +4119,22 @@ def _publish_evidence_generation_locked(
         staged_identity = _fd_identity(generation_fd)
         binding = EvidenceBinding(
             active_manifest_sha256=verified.active_manifest_sha256,
-            binding_schema_version=2,
+            binding_schema_version=3,
             generation_id=generation_id,
             payload_filename="account-usage-v2.json",
             payload_sha256=payload_digest,
             payload_size_bytes=len(payload),
             published_at=published_at,
-            producer_version="0.6.537",
+            producer_version="0.6.538",
             release_id=verified.release_id,
             source_manifest_sha256=verified.source_manifest_sha256,
             usage_binding_schema_version=2,
             pool_authority_filename=POOL_AUTHORITY_FILENAME,
             pool_authority_sha256="0" * 64,
             pool_authority_size_bytes=1,
+            source_inputs_filename=_SOURCE_INPUT_FILENAME,
+            source_inputs_sha256="0" * 64,
+            source_inputs_size_bytes=1,
         )
         usage_binding_digest = hashlib.sha256(
             serialize_usage_binding(binding)
@@ -3883,7 +4151,7 @@ def _publish_evidence_generation_locked(
         pool_authority_bytes = serialize_pool_authority_projection(pool_authority)
         binding = EvidenceBinding(
             active_manifest_sha256=binding.active_manifest_sha256,
-            binding_schema_version=2,
+            binding_schema_version=3,
             generation_id=binding.generation_id,
             payload_filename=binding.payload_filename,
             payload_sha256=binding.payload_sha256,
@@ -3896,6 +4164,9 @@ def _publish_evidence_generation_locked(
             pool_authority_filename=POOL_AUTHORITY_FILENAME,
             pool_authority_sha256=hashlib.sha256(pool_authority_bytes).hexdigest(),
             pool_authority_size_bytes=len(pool_authority_bytes),
+            source_inputs_filename=_SOURCE_INPUT_FILENAME,
+            source_inputs_sha256=hashlib.sha256(source_inputs_bytes).hexdigest(),
+            source_inputs_size_bytes=len(source_inputs_bytes),
         )
         binding_bytes = serialize_binding(binding)
         if parse_binding(binding_bytes) != binding:
@@ -3913,6 +4184,13 @@ def _publish_evidence_generation_locked(
             pool_authority_bytes,
             maximum=POOL_AUTHORITY_MAX_BYTES,
             hook=_before_publish_pool_authority_recheck,
+        )
+        _write_staged_file(
+            generation_fd,
+            _SOURCE_INPUT_FILENAME,
+            source_inputs_bytes,
+            maximum=_SOURCE_INPUT_MAX_BYTES,
+            hook=lambda *_: None,
         )
         _write_staged_file(
             generation_fd,
@@ -4021,6 +4299,21 @@ def _publish_evidence_generation_locked(
                     binding_sha256=binding_digest,
                     verified=verified,
                 )
+                repeated_request = _serialize_contract(
+                    _canonical_non_spark_source_input_request(
+                        source_input_revalidator()
+                    )
+                )
+                repeated_owner_bytes, repeated_owner_binding = capture_private_source_file(
+                    source_lock_path,
+                    maximum=POOL_AUTHORITY_SOURCE_MAX_BYTES,
+                )
+                if (
+                    repeated_request != source_input_request
+                    or repeated_owner_bytes != authority_source_bytes
+                    or repeated_owner_binding != authority_source_binding
+                ):
+                    raise IntegrationEvidenceInvalid()
             finally:
                 _close_fds(fresh_generations_fd)
 

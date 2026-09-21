@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import math
+import multiprocessing
 import os
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
@@ -14,7 +15,9 @@ import pytest
 
 import codex_usage.state as state_module
 from codex_usage.account_lock import account_lock
+from codex_usage.config import default_state_dir
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePool
+from codex_usage.source_lock import source_lock
 from codex_usage.state import (
     _allow_missing_window_restore,
     _authoritative_empty_limits,
@@ -50,6 +53,73 @@ def _write_trusted_snapshot(path, payload):
     payload.setdefault("backend_used", "direct")
     path.write_text(json.dumps(payload), encoding="utf-8")
     path.chmod(0o600)
+
+
+def _save_current_after_source_lock_in_process(
+    data_home: str,
+    source_held: object,
+    remover_account_held: object,
+    results: object,
+) -> None:
+    """Run the real Current writer while it owns Source before Account."""
+    os.environ["XDG_DATA_HOME"] = data_home
+    from codex_usage import state
+    from codex_usage.account_lock import account_lock
+    from codex_usage.models import AccountUsage
+
+    @contextmanager
+    def account_after_source(account_id: str):
+        source_held.set()
+        remover_account_held.wait(0.5)
+        with account_lock(account_id, timeout_seconds=2):
+            yield
+
+    state.account_state_lock = account_after_source
+    try:
+        path = state.save_current_usage(
+            AccountUsage(
+                account_id="interleaving",
+                label="Interleaving",
+                captured_at=datetime(2026, 9, 21, tzinfo=UTC),
+                backend_configured="direct",
+                backend_used="direct",
+            )
+        )
+        results.put(("writer", "ok", path.read_bytes()))
+    except BaseException as exc:
+        results.put(("writer", "error", type(exc).__name__, str(exc)))
+
+
+def _remove_account_state_in_process(
+    data_home: str,
+    remover_account_held: object,
+    results: object,
+) -> None:
+    """Run the real remover with a bounded real Source lock for this test."""
+    os.environ["XDG_DATA_HOME"] = data_home
+    from codex_usage import state
+    from codex_usage.source_lock import source_lock
+
+    @contextmanager
+    def bounded_source_lock(root: Path, *, create_root: bool = False):
+        with source_lock(root, timeout_seconds=1, create_root=create_root) as binding:
+            yield binding
+
+    original_account_state_lock = state.account_state_lock
+
+    @contextmanager
+    def observe_account_lock(account_id: str):
+        with original_account_state_lock(account_id):
+            remover_account_held.set()
+            yield
+
+    state.source_lock = bounded_source_lock
+    state.account_state_lock = observe_account_lock
+    try:
+        state.remove_account_state("interleaving")
+        results.put(("remover", "ok"))
+    except BaseException as exc:
+        results.put(("remover", "error", type(exc).__name__, str(exc)))
 
 
 def test_naive_state_times_use_dst_aware_local_zone(monkeypatch):
@@ -2468,6 +2538,66 @@ def test_remove_account_state_deletes_current_snapshot_and_debug(tmp_path, monke
     assert not (debug_dir / "privat-last-ingest.json").exists()
 
 
+def test_current_writer_and_remover_share_one_source_then_account_order(
+    tmp_path,
+    monkeypatch,
+):
+    """Would time out cyclically if removal acquired Account before Source.
+
+    The two child processes use the real state APIs, account flock and
+    Source flock. Their test-only barriers make the old inverse order visible:
+    the writer owns Source when the remover owns Account. A correct remover
+    waits at Source before Account, then observes the writer's completed state
+    and serially removes it without changing the independent evidence pointer.
+    """
+    data_home = tmp_path / "data"
+    data_home.mkdir(mode=0o700)
+    data_home.chmod(0o700)
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    integration = data_home / "codex-usage" / "integration"
+    integration.mkdir(parents=True, mode=0o700)
+    integration.chmod(0o700)
+    pointer = integration / "current.json"
+    pointer_before = b"independent-evidence-pointer"
+    pointer.write_bytes(pointer_before)
+    pointer.chmod(0o600)
+
+    context = multiprocessing.get_context("fork")
+    source_held = context.Event()
+    remover_account_held = context.Event()
+    results = context.Queue()
+    writer = context.Process(
+        target=_save_current_after_source_lock_in_process,
+        args=(str(data_home), source_held, remover_account_held, results),
+    )
+    remover = context.Process(
+        target=_remove_account_state_in_process,
+        args=(str(data_home), remover_account_held, results),
+    )
+    try:
+        writer.start()
+        assert source_held.wait(5), "writer did not reach the source-before-account seam"
+        remover.start()
+        writer.join(10)
+        remover.join(10)
+        assert not writer.is_alive(), "writer did not complete"
+        assert not remover.is_alive(), "remover did not complete"
+        assert writer.exitcode == 0
+        assert remover.exitcode == 0
+        outcomes = sorted((results.get(timeout=2), results.get(timeout=2)))
+    finally:
+        for process in (writer, remover):
+            if process.is_alive():
+                process.terminate()
+                process.join(5)
+
+    assert outcomes[0][:2] == ("remover", "ok")
+    assert outcomes[1][:2] == ("writer", "ok")
+    assert not (data_home / "codex-usage" / "current" / "interleaving.json").exists()
+    assert load_state_generation("interleaving") == 1
+    assert pointer.read_bytes() == pointer_before
+
+
 def test_remove_account_state_rejects_hardlinked_current_file(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     usage = AccountUsage(
@@ -2571,7 +2701,12 @@ def test_remove_account_state_reuses_held_account_lock(tmp_path, monkeypatch):
     assert load_current_usage("privat") is not None
 
     with account_lock("privat"):
-        remove_account_state("privat", lock_held=True)
+        with pytest.raises(ValueError, match="nested inside held source lock"):
+            remove_account_state("privat", lock_held=True)
+
+    with source_lock(default_state_dir(), create_root=True):
+        with account_lock("privat"):
+            remove_account_state("privat", lock_held=True)
 
     assert load_current_usage("privat") is None
 
@@ -2590,15 +2725,16 @@ def test_remove_account_state_deferred_transaction_can_rollback(
     state_path = tmp_path / "data" / "codex-usage" / "current" / "privat.json"
     before = state_path.read_bytes()
 
-    with account_lock("privat"):
-        transaction = remove_account_state(
-            "privat",
-            lock_held=True,
-            defer_commit=True,
-        )
-        assert transaction is not None
-        assert not state_path.exists()
-        transaction.rollback()
+    with source_lock(default_state_dir(), create_root=True):
+        with account_lock("privat"):
+            transaction = remove_account_state(
+                "privat",
+                lock_held=True,
+                defer_commit=True,
+            )
+            assert transaction is not None
+            assert not state_path.exists()
+            transaction.rollback()
 
     assert state_path.read_bytes() == before
 
@@ -2614,27 +2750,28 @@ def test_state_rollback_preserves_backup_when_restore_fails(tmp_path, monkeypatc
     save_current_usage(usage)
     save_usage_snapshot(usage)
 
-    with account_lock("privat"):
-        transaction = remove_account_state(
-            "privat",
-            lock_held=True,
-            defer_commit=True,
-        )
-        assert transaction is not None
-        failed_path, failed_backup = transaction.moved[0]
-        restored_path, _ = transaction.moved[1]
-        transaction_dir = transaction.transaction_dir
-        original_rename = Path.rename
+    with source_lock(default_state_dir(), create_root=True):
+        with account_lock("privat"):
+            transaction = remove_account_state(
+                "privat",
+                lock_held=True,
+                defer_commit=True,
+            )
+            assert transaction is not None
+            failed_path, failed_backup = transaction.moved[0]
+            restored_path, _ = transaction.moved[1]
+            transaction_dir = transaction.transaction_dir
+            original_rename = Path.rename
 
-        def fail_one_restore(path, target):
-            if path == failed_backup:
-                raise OSError("backup restore failed")
-            return original_rename(path, target)
+            def fail_one_restore(path, target):
+                if path == failed_backup:
+                    raise OSError("backup restore failed")
+                return original_rename(path, target)
 
-        monkeypatch.setattr(Path, "rename", fail_one_restore)
+            monkeypatch.setattr(Path, "rename", fail_one_restore)
 
-        with pytest.raises(BaseExceptionGroup, match="state deletion rollback failed"):
-            transaction.rollback()
+            with pytest.raises(BaseExceptionGroup, match="state deletion rollback failed"):
+                transaction.rollback()
 
     assert transaction_dir is not None
     assert transaction_dir.is_dir()
@@ -2692,14 +2829,15 @@ def test_remove_account_state_deferred_transaction_can_commit(tmp_path, monkeypa
         )
     )
 
-    with account_lock("privat"):
-        transaction = remove_account_state(
-            "privat",
-            lock_held=True,
-            defer_commit=True,
-        )
-        assert transaction is not None
-        transaction.commit()
+    with source_lock(default_state_dir(), create_root=True):
+        with account_lock("privat"):
+            transaction = remove_account_state(
+                "privat",
+                lock_held=True,
+                defer_commit=True,
+            )
+            assert transaction is not None
+            transaction.commit()
 
     assert load_current_usage("privat") is None
 
@@ -5769,7 +5907,9 @@ def test_remove_account_state_commits_unheld_transaction(monkeypatch):
     monkeypatch.setattr(
         state_module,
         "_remove_account_state_unlocked",
-        lambda _account, *, defer_commit: transaction,
+        lambda _account, *, defer_commit, source_lock_held: (
+            transaction if source_lock_held and not defer_commit else None
+        ),
     )
 
     assert remove_account_state("account") is None

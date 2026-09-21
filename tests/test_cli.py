@@ -6035,8 +6035,14 @@ def test_cli_remaining_branch_edges(monkeypatch, tmp_path):
 
 
 def test_account_delete_enters_nested_account_lock_normally(monkeypatch, tmp_path, capsys):
+    entered: list[str] = []
+
     class Context:
+        def __init__(self, label: str):
+            self.label = label
+
         def __enter__(self):
+            entered.append(self.label)
             return self
 
         def __exit__(self, *_args):
@@ -6046,8 +6052,13 @@ def test_account_delete_enters_nested_account_lock_normally(monkeypatch, tmp_pat
     config = SimpleNamespace(accounts=(account,))
     monkeypatch.setattr(cli_module, "load_config", lambda _path: config)
     monkeypatch.setattr(cli_module, "resolve_account", lambda *_args: account)
-    monkeypatch.setattr(cli_module, "account_lock", lambda *_args: Context())
-    monkeypatch.setattr(cli_module, "profile_job_creation_lock", lambda: Context())
+    monkeypatch.setattr(
+        cli_module,
+        "account_lock",
+        lambda account_id, *_args, **_kwargs: Context(f"account:{account_id}"),
+    )
+    monkeypatch.setattr(cli_module, "source_lock", lambda *_args, **_kwargs: Context("source"))
+    monkeypatch.setattr(cli_module, "profile_job_creation_lock", lambda: Context("profile"))
     monkeypatch.setattr(cli_module, "_cancel_account_profile_jobs", lambda _account: None)
     monkeypatch.setattr(cli_module, "_managed_service_sync_required", lambda _path: False)
     monkeypatch.setattr(cli_module, "_sync_managed_service", lambda *_args, **_kwargs: None)
@@ -6065,9 +6076,10 @@ def test_account_delete_enters_nested_account_lock_normally(monkeypatch, tmp_pat
                 force_delete_profile=False,
                 format="table",
             )
-        )
-        == 0
     )
+    == 0
+    )
+    assert entered[:4] == ["account:__all_accounts__", "profile", "source", "account:a"]
     assert "Account geloescht" in capsys.readouterr().out
 
 

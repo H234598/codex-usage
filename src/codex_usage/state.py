@@ -30,6 +30,11 @@ from .private_io import (
     read_private_text,
     write_private_text,
 )
+from .source_lock import (
+    _source_lock_is_held,
+    source_lock,
+    source_root_for_state_directory,
+)
 from .usage_limits import MAX_WINDOW_SECONDS
 from .usage_resets import UsageResetState, parse_usage_resets
 
@@ -243,8 +248,12 @@ def save_usage_snapshot(usage: AccountUsage, snapshot_dir: Path | None = None) -
     _validate_snapshot_account_id(usage.account_id)
     directory = _state_directory(snapshot_dir, default_snapshot_dir())
     assert_no_symlink_ancestors(directory, label="snapshot directory")
-    with account_state_lock(usage.account_id):
-        return _save_usage(usage, directory, preserve_existing_values=True)
+    with source_lock(
+        source_root_for_state_directory(directory),
+        create_root=True,
+    ):
+        with account_state_lock(usage.account_id):
+            return _save_usage(usage, directory, preserve_existing_values=True)
 
 
 def save_current_usage(usage: AccountUsage, current_dir: Path | None = None) -> Path:
@@ -253,8 +262,12 @@ def save_current_usage(usage: AccountUsage, current_dir: Path | None = None) -> 
     _validate_snapshot_account_id(usage.account_id)
     directory = _state_directory(current_dir, default_current_dir())
     assert_no_symlink_ancestors(directory, label="snapshot directory")
-    with account_state_lock(usage.account_id):
-        return _save_usage(usage, directory)
+    with source_lock(
+        source_root_for_state_directory(directory),
+        create_root=True,
+    ):
+        with account_state_lock(usage.account_id):
+            return _save_usage(usage, directory)
 
 
 def _save_usage(
@@ -418,12 +431,24 @@ def remove_account_state(
     _validate_snapshot_account_id(account_id)
     if defer_commit and not lock_held:
         raise ValueError("deferred state deletion requires held account lock")
+    state_root = default_state_dir()
     if lock_held:
-        return _remove_account_state_unlocked(account_id, defer_commit=defer_commit)
-    with account_state_lock(account_id):
-        transaction = _remove_account_state_unlocked(account_id, defer_commit=False)
-        if transaction is not None:
-            transaction.commit()
+        if not _source_lock_is_held(state_root):
+            raise ValueError("held account lock must be nested inside held source lock")
+        return _remove_account_state_unlocked(
+            account_id,
+            defer_commit=defer_commit,
+            source_lock_held=True,
+        )
+    with source_lock(state_root, create_root=True):
+        with account_state_lock(account_id):
+            transaction = _remove_account_state_unlocked(
+                account_id,
+                defer_commit=False,
+                source_lock_held=True,
+            )
+            if transaction is not None:
+                transaction.commit()
     return None
 
 
@@ -431,7 +456,10 @@ def _remove_account_state_unlocked(
     account_id: str,
     *,
     defer_commit: bool = False,
+    source_lock_held: bool = False,
 ) -> _StateDeleteTransaction | None:
+    if type(source_lock_held) is not bool:
+        raise ValueError("source_lock_held must be boolean")
     state_root = default_state_dir()
     targets = (
         (default_snapshot_dir(), f"{account_id}.json", "snapshot path"),
@@ -450,6 +478,8 @@ def _remove_account_state_unlocked(
     transaction: _StateDeleteTransaction | None = None
     try:
         ensure_private_directory(state_root, label="state directory")
+        if not source_lock_held:
+            locks.enter_context(source_lock(state_root, create_root=True))
         transaction_dir = Path(
             tempfile.mkdtemp(prefix=f".{account_id}.state-delete-", dir=state_root)
         )

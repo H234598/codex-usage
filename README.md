@@ -2,7 +2,7 @@
 
 `codex-usage` ist ein lokales Multi-Account-Werkzeug für aktuelle ChatGPT-Codex-Nutzungs- und Limitstände. Es bietet eine Python-CLI, persistente, voneinander getrennte Accountprofile, einen Cinnamon-Applet und einen optionalen `systemd --user`-Dienst. Die erfassten Werte stammen je Account aus dem konfigurierten Abrufweg; sie sind keine Zusage zu einem bestimmten Tarif, Limit oder Resetzeitpunkt.
 
-Die Dokumentation beschreibt den geprüften Quellstand `0.6.537`. Die vollständige Navigation steht in [docs/README.md](docs/README.md); der Implementierungsstatus steht in [ROADMAP.md](ROADMAP.md).
+Die Dokumentation beschreibt den attestierten D297-Nachfolger `0.6.538`. Die vollständige Navigation steht in [docs/README.md](docs/README.md); der Implementierungsstatus steht in [ROADMAP.md](ROADMAP.md).
 
 ## Schnellstart
 
@@ -34,7 +34,7 @@ Details zu Profileinrichtung, Authentifizierung, Browserverwaltung und Migration
 
 ## Limits, Zeitfenster, Credits und Resets
 
-Das Datenmodell erkennt diese kanonischen Fensteridentitäten: fünf Stunden (`18000` Sekunden), Woche (`604800` Sekunden) und 30 Tage (`2592000` Sekunden). Die kompakten Hauptfelder eines Account-Snapshots sind `five_hour` und `weekly`; zusätzliche Modellpools und Credits bleiben providerabhängig. Ein eigener Spark-Pool wird nur verarbeitet, wenn der Anbieter ihn als Nutzungsquelle liefert.
+Das Datenmodell erkennt diese kanonischen Fensteridentitäten: fünf Stunden (`18000` Sekunden), Woche (`604800` Sekunden) und 30 Tage (`2592000` Sekunden). Die kompakten Hauptfelder eines Account-Snapshots sind `five_hour` und `weekly`; zusätzliche Modellpools und Credits bleiben providerabhängig. Die attestierte D297-V2-Producerlinie lehnt jede Spark-Pool- oder Modellquellenevidenz transparent fail-closed ab: Spark ist abgeschafft und kein Fallback.
 
 Credits sind optional. Ein absoluter Credit-Saldo ohne Nenner wird nicht in einen Prozentsatz umgerechnet; widersprüchliche oder ungültige Creditdaten werden nicht als gültiger Stand ausgegeben. Reset-Zähler können als bekannter, unbekannter oder nullwertiger Stand dargestellt werden. Eine Reset-Einlösung ist nicht implementiert und wird nicht automatisch ausgeführt.
 

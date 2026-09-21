@@ -6,7 +6,7 @@ import os
 import re
 import stat
 from collections.abc import Iterable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from itertools import islice
 from pathlib import Path
@@ -18,6 +18,7 @@ from .consumption import (
     calculate_tracker_evidence,
 )
 from .history import CREDIT_HISTORY_WINDOW_SECONDS, MAX_HISTORY_SAMPLES
+from .json_utils import loads_strict
 from .models import (
     AccountStatus,
     AccountUsage,
@@ -26,7 +27,14 @@ from .models import (
     credit_window_remaining_percent,
 )
 from .private_io import assert_no_symlink_ancestors
+from .source_lock import (
+    SourceFileBinding,
+    SourceRootIdentity,
+    capture_private_source_directory,
+    capture_private_source_file,
+)
 from .state import load_current_usage
+from .usage_limits import SPARK_MODEL
 
 _ACCOUNT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 _ASCII_TOKEN_RE = re.compile(r"[!-~]{1,128}")
@@ -114,6 +122,45 @@ class IntegrationSecureIOError(IntegrationSnapshotError):
 
 class IntegrationBusy(IntegrationSnapshotError):
     exit_code = 75
+
+
+@dataclass(frozen=True)
+class CurrentSourceRecordBinding:
+    account_id: str
+    current_file: SourceFileBinding
+    state_generation: int
+    state_generation_file: SourceFileBinding | None
+    has_spark_source_evidence: bool
+
+
+@dataclass(frozen=True)
+class CurrentSourceSnapshot:
+    usages: tuple[AccountUsage, ...]
+    current_directory: SourceRootIdentity
+    records: tuple[CurrentSourceRecordBinding, ...]
+
+    @property
+    def has_spark_source_evidence(self) -> bool:
+        return any(record.has_spark_source_evidence for record in self.records)
+
+    def to_contract(self) -> dict[str, object]:
+        return {
+            "current_directory": self.current_directory.to_contract(),
+            "records": [
+                {
+                    "account_id": record.account_id,
+                    "current_file": record.current_file.to_contract(),
+                    "state_generation": record.state_generation,
+                    "state_generation_file": (
+                        None
+                        if record.state_generation_file is None
+                        else record.state_generation_file.to_contract()
+                    ),
+                }
+                for record in self.records
+            ],
+            "source_input_binding_schema_version": 1,
+        }
 
 
 def _invalid() -> NoReturn:
@@ -234,6 +281,158 @@ def read_current_usage_records(current_dir: Path) -> tuple[AccountUsage, ...]:
     if _directory_identity(current_dir) != initial_identity:
         raise IntegrationInvalidSource()
     return tuple(records)
+
+
+def read_current_usage_records_with_binding(current_dir: Path) -> CurrentSourceSnapshot:
+    """Read the exact Current inputs that will be bound into a V2 generation."""
+    if not isinstance(current_dir, Path) or not current_dir.is_absolute():
+        raise IntegrationInvalidSource()
+    initial_identity = _directory_identity(current_dir)
+    try:
+        current_directory = capture_private_source_directory(current_dir)
+        candidates: list[Path] = []
+        entries_seen = 0
+        for path in current_dir.iterdir():
+            entries_seen += 1
+            if entries_seen > _MAX_DIRECTORY_ENTRIES:
+                raise IntegrationInvalidSource()
+            if _is_transient_current_path(path):
+                continue
+            if len(candidates) >= _MAX_ACCOUNTS:
+                raise IntegrationInvalidSource()
+            candidates.append(path)
+    except IntegrationSnapshotError:
+        raise
+    except OSError:
+        raise IntegrationUnavailable() from None
+    except ValueError:
+        raise IntegrationInvalidSource() from None
+    if _directory_identity(current_dir) != initial_identity:
+        raise IntegrationInvalidSource()
+
+    account_paths: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+    for path in candidates:
+        account_id = _safe_account_filename(path)
+        if account_id is None or account_id in seen:
+            raise IntegrationInvalidSource()
+        seen.add(account_id)
+        account_paths.append((account_id, path))
+    account_paths.sort(key=lambda item: item[0])
+
+    records: list[AccountUsage] = []
+    bindings: list[CurrentSourceRecordBinding] = []
+    for account_id, path in account_paths:
+        if _directory_identity(current_dir) != initial_identity:
+            raise IntegrationInvalidSource()
+        try:
+            before_payload, before_file = capture_private_source_file(
+                path,
+                maximum=_MAX_DOCUMENT_BYTES,
+            )
+            generation, generation_file = _bound_state_generation(
+                account_id,
+                current_dir,
+            )
+        except OSError:
+            raise IntegrationUnavailable() from None
+        except ValueError:
+            raise IntegrationInvalidSource() from None
+        usage = load_current_usage(account_id, current_dir)
+        if _directory_identity(current_dir) != initial_identity:
+            raise IntegrationInvalidSource()
+        try:
+            after_payload, after_file = capture_private_source_file(
+                path,
+                maximum=_MAX_DOCUMENT_BYTES,
+            )
+            repeated_generation, repeated_generation_file = _bound_state_generation(
+                account_id,
+                current_dir,
+            )
+        except OSError:
+            raise IntegrationUnavailable() from None
+        except ValueError:
+            raise IntegrationInvalidSource() from None
+        if (
+            before_file != after_file
+            or _current_payload_has_spark_source_evidence(before_payload)
+            != _current_payload_has_spark_source_evidence(after_payload)
+            or generation != repeated_generation
+            or generation_file != repeated_generation_file
+            or not isinstance(usage, AccountUsage)
+            or usage.account_id != account_id
+            or (usage.state_generation if usage.state_generation is not None else 0)
+            != generation
+        ):
+            raise IntegrationInvalidSource()
+        records.append(usage)
+        bindings.append(
+            CurrentSourceRecordBinding(
+                account_id=account_id,
+                current_file=after_file,
+                state_generation=generation,
+                state_generation_file=generation_file,
+                has_spark_source_evidence=_current_payload_has_spark_source_evidence(
+                    after_payload
+                ),
+            )
+        )
+    if (
+        _directory_identity(current_dir) != initial_identity
+        or capture_private_source_directory(current_dir) != current_directory
+    ):
+        raise IntegrationInvalidSource()
+    return CurrentSourceSnapshot(
+        usages=tuple(records),
+        current_directory=current_directory,
+        records=tuple(bindings),
+    )
+
+
+def _bound_state_generation(
+    account_id: str,
+    current_dir: Path,
+) -> tuple[int, SourceFileBinding | None]:
+    path = current_dir.parent / "generations" / f"{account_id}.json"
+    try:
+        item = path.lstat()
+    except FileNotFoundError:
+        return 0, None
+    if path.is_symlink() or not stat.S_ISREG(item.st_mode):
+        raise ValueError("state generation is invalid")
+    payload, binding = capture_private_source_file(
+        path,
+        maximum=4096,
+    )
+    try:
+        value = loads_strict(payload.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise ValueError("state generation is invalid") from None
+    if (
+        not isinstance(value, dict)
+        or value.get("account") != account_id
+        or type(value.get("generation")) is not int
+        or value["generation"] < 0
+    ):
+        raise ValueError("state generation is invalid")
+    return value["generation"], binding
+
+
+def _current_payload_has_spark_source_evidence(payload: bytes) -> bool:
+    try:
+        value = loads_strict(payload.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise ValueError("current source payload is invalid") from None
+    if type(value) is not dict:
+        raise ValueError("current source payload is invalid")
+    models = value.get("models")
+    if type(models) is not dict:
+        return False
+    return any(
+        type(key) is str and key.casefold() == SPARK_MODEL
+        for key in models
+    )
 
 
 def _is_transient_current_path(path: Path) -> bool:

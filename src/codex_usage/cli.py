@@ -147,6 +147,7 @@ from .service import (
     service_status,
     service_uninstall,
 )
+from .source_lock import source_lock
 from .spark_health import set_spark_health, spark_health_status
 from .state import (
     backend_provenance_matches_configured,
@@ -1276,13 +1277,16 @@ def _cmd_account_delete(args: argparse.Namespace) -> int:
     with account_lock("__all_accounts__"):
         with profile_job_creation_lock():
             _cancel_account_profile_jobs(account.id)
-            with account_lock(account.id):  # pragma: no branch - context-manager unwind edge
-                if args.delete_profile:
-                    _validate_profile_delete_target(
-                        profile_path,
-                        force=args.force_delete_profile,
-                    )
-                delete_transaction()
+            # State writers use Source -> Account. Keep the deferred state
+            # transaction inside the same order through its commit/rollback.
+            with source_lock(default_state_dir(), create_root=True):
+                with account_lock(account.id):  # pragma: no branch - context-manager unwind edge
+                    if args.delete_profile:
+                        _validate_profile_delete_target(
+                            profile_path,
+                            force=args.force_delete_profile,
+                        )
+                    delete_transaction()
     if args.format == "json":
         print(
             json.dumps(
