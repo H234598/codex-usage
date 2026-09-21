@@ -548,6 +548,399 @@ def _stop_process(process: subprocess.Popen[str]) -> None:
             process.wait(timeout=5)
 
 
+@pytest.mark.parametrize("payload", ("", "historical current lock sidecar\n"))
+def test_dry_run_ignores_safe_historical_current_lock_sidecars_for_every_d296_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: str
+) -> None:
+    """Would fail if a valid Producer-style current lock blocked maintenance."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    current = data_home / "codex-usage" / "current"
+    sidecars = tuple(current / f"{account_id}.json.lock" for account_id in _D296_IDS)
+    for sidecar in sidecars:
+        _write_private(sidecar, payload)
+
+    report = quarantine_unconfigured_usage_state(
+        config_path=config_path,
+        data_home=data_home,
+        state_home=state_home,
+        apply=False,
+    )
+
+    assert report.applied is False
+    assert report.quarantined_account_ids == tuple(sorted(_FOREIGN_IDS))
+    assert tuple(sidecar.read_text(encoding="utf-8") for sidecar in sidecars) == (
+        payload,
+    ) * len(sidecars)
+
+
+def test_dry_run_rejects_a_symlinked_historical_current_lock_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Would fail if a Producer-style suffix bypassed no-follow validation."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    current = data_home / "codex-usage" / "current"
+    sidecar = current / "BW_Nufker.json.lock"
+    outside = tmp_path / "outside-lock"
+    _write_private(outside, "outside")
+    sidecar.symlink_to(outside)
+
+    with pytest.raises(ValueError, match="current lock sidecar"):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=False,
+        )
+
+    assert sidecar.is_symlink()
+    assert outside.read_text(encoding="utf-8") == "outside"
+
+
+def test_dry_run_rejects_a_hardlinked_historical_current_lock_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Would fail if a hardlinked historical sidecar became transient."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    current = data_home / "codex-usage" / "current"
+    sidecar = current / "BW_Nufker.json.lock"
+    outside = tmp_path / "outside-lock"
+    _write_private(outside, "outside")
+    os.link(outside, sidecar)
+
+    with pytest.raises(ValueError, match="current lock sidecar"):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=False,
+        )
+
+    assert sidecar.stat().st_nlink == 2
+    assert outside.read_text(encoding="utf-8") == "outside"
+
+
+def test_dry_run_rejects_a_wrong_mode_historical_current_lock_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Would fail if an owner file with a non-private mode were ignored."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    sidecar = data_home / "codex-usage" / "current" / "BW_Nufker.json.lock"
+    _write_private(sidecar, "historical")
+    sidecar.chmod(0o640)
+
+    with pytest.raises(ValueError, match="current lock sidecar"):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=False,
+        )
+
+    assert stat.S_IMODE(sidecar.stat().st_mode) == 0o640
+
+
+def test_dry_run_rejects_a_foreign_owner_historical_current_lock_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Would fail if a foreign UID in the sidecar evidence were ignored."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    sidecar = data_home / "codex-usage" / "current" / "BW_Nufker.json.lock"
+    _write_private(sidecar, "historical")
+    original_read_private_text = maintenance_module.read_private_text
+
+    def read_with_foreign_owner(path: Path, **kwargs: object) -> tuple[str, os.stat_result]:
+        text, item = original_read_private_text(path, **kwargs)
+        if path == sidecar:
+            fields = list(item)
+            fields[stat.ST_UID] = item.st_uid + 1
+            return text, os.stat_result(fields)
+        return text, item
+
+    monkeypatch.setattr(maintenance_module, "read_private_text", read_with_foreign_owner)
+
+    with pytest.raises(ValueError, match="current lock sidecar"):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=False,
+        )
+
+
+def test_dry_run_rejects_a_rebound_historical_current_lock_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Would fail if a verified sidecar could be swapped before scan completion."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    current = data_home / "codex-usage" / "current"
+    sidecar = current / "BW_Nufker.json.lock"
+    _write_private(sidecar, "first")
+    original_identity = maintenance_module._private_identity
+    rebound = False
+
+    def capture_then_rebind(path: Path, *, label: str) -> maintenance_module._Identity:
+        nonlocal rebound
+        identity = original_identity(path, label=label)
+        if path == sidecar and not rebound:
+            rebound = True
+            replacement = current / ".replacement"
+            _write_private(replacement, "second")
+            replacement.replace(sidecar)
+        return identity
+
+    monkeypatch.setattr(maintenance_module, "_private_identity", capture_then_rebind)
+
+    with pytest.raises(ValueError, match="current directory changed while scanning"):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=False,
+        )
+
+    assert rebound is True
+    assert sidecar.read_text(encoding="utf-8") == "second"
+
+
+@pytest.mark.parametrize("drift", ("hardlink", "in_place", "mode"))
+def test_dry_run_rejects_post_scan_drift_of_historical_current_lock_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, drift: str
+) -> None:
+    """Ignored sidecars stay identity-bound through the final verification."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    sidecar = data_home / "codex-usage" / "current" / "BW_Nufker.json.lock"
+    _write_private(sidecar, "first")
+    real_verify_authority = maintenance_module._verify_authority_snapshot
+    drifted = False
+
+    def drift_after_scan(*args: object) -> None:
+        nonlocal drifted
+        real_verify_authority(*args)
+        if drifted:
+            return
+        drifted = True
+        if drift == "hardlink":
+            os.link(sidecar, tmp_path / "rebound-lock")
+        elif drift == "in_place":
+            sidecar.write_text("other", encoding="utf-8")
+        elif drift == "mode":
+            sidecar.chmod(0o640)
+        else:  # pragma: no cover - closed parametrization
+            raise AssertionError(drift)
+
+    monkeypatch.setattr(
+        maintenance_module, "_verify_authority_snapshot", drift_after_scan
+    )
+
+    with pytest.raises(ValueError):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=False,
+        )
+
+    assert drifted is True
+
+
+def test_apply_ignores_safe_historical_current_lock_sidecars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The D299 exception neither blocks nor quarantines a safe Producer sidecar."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    current = data_home / "codex-usage" / "current"
+    sidecars = tuple(current / f"{account_id}.json.lock" for account_id in _D296_IDS)
+    for sidecar in sidecars:
+        _write_private(sidecar, "historical")
+
+    report = quarantine_unconfigured_usage_state(
+        config_path=config_path,
+        data_home=data_home,
+        state_home=state_home,
+        apply=True,
+    )
+
+    assert report.applied is True
+    assert report.quarantined_account_ids == tuple(sorted(_FOREIGN_IDS))
+    assert tuple(sidecar.read_text(encoding="utf-8") for sidecar in sidecars) == (
+        "historical",
+    ) * len(sidecars)
+
+
+@pytest.mark.parametrize("drift", ("hardlink", "in_place", "mode"))
+@pytest.mark.parametrize("phase", ("after_pending_manifest", "after_authority_snapshot"))
+def test_apply_rejects_historical_current_lock_sidecar_drift_before_any_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+    phase: str,
+) -> None:
+    """Safe sidecars remain bound from the pending journal through every move."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    root = data_home / "codex-usage"
+    sidecar = root / "current" / "BW_Nufker.json.lock"
+    _write_private(sidecar, "first")
+    drifted = False
+
+    def introduce_drift() -> None:
+        nonlocal drifted
+        assert drifted is False
+        drifted = True
+        if drift == "hardlink":
+            os.link(sidecar, tmp_path / "rebound-lock")
+        elif drift == "in_place":
+            sidecar.write_text("other", encoding="utf-8")
+        elif drift == "mode":
+            sidecar.chmod(0o640)
+        else:  # pragma: no cover - closed parametrization
+            raise AssertionError(drift)
+
+    if phase == "after_pending_manifest":
+        real_write_manifest = maintenance_module._write_manifest
+        writes = 0
+
+        def write_then_drift(*args: object) -> None:
+            nonlocal writes
+            real_write_manifest(*args)
+            writes += 1
+            if writes == 1:
+                introduce_drift()
+
+        monkeypatch.setattr(maintenance_module, "_write_manifest", write_then_drift)
+    elif phase == "after_authority_snapshot":
+        real_verify = maintenance_module._verify_authority_snapshot_for_apply
+
+        def verify_then_drift(*args: object) -> None:
+            real_verify(*args)
+            introduce_drift()
+
+        monkeypatch.setattr(
+            maintenance_module,
+            "_verify_authority_snapshot_for_apply",
+            verify_then_drift,
+        )
+    else:  # pragma: no cover - closed parametrization
+        raise AssertionError(phase)
+
+    with pytest.raises(ValueError):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=True,
+        )
+
+    assert drifted is True
+    assert (root / "current" / "account.json").is_file()
+    assert (root / "snapshots" / "account.json").is_file()
+    quarantine = root / "maintenance-quarantine-v1"
+    assert not quarantine.exists() or not tuple(quarantine.glob("transaction-*"))
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    (
+        (b"\xff", "current lock sidecar"),
+        (b"x" * (maintenance_module._MAX_STATE_ARTIFACT_BYTES + 1), "current lock sidecar"),
+    ),
+    ids=("invalid-utf8", "max-bytes"),
+)
+def test_dry_run_rejects_nontext_or_unbounded_historical_current_lock_sidecars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: bytes, expected: str
+) -> None:
+    """The transient exception keeps the Producer's bounded text-file boundary."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    sidecar = data_home / "codex-usage" / "current" / "BW_Nufker.json.lock"
+    sidecar.write_bytes(payload)
+    sidecar.chmod(0o600)
+
+    with pytest.raises(ValueError, match=expected):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=False,
+        )
+
+
+@pytest.mark.parametrize(
+    "name",
+    ("unknown", "BW_Nufker.json.lock.bak", ".json.lock"),
+)
+def test_dry_run_keeps_arbitrary_current_names_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """Would fail if the suffix rule admitted names beyond exact sidecars."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    entry = data_home / "codex-usage" / "current" / name
+    _write_private(entry, "unknown")
+
+    with pytest.raises(ValueError, match="current contains a nontransient unknown entry"):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=False,
+        )
+
+    assert entry.read_text(encoding="utf-8") == "unknown"
+
+
+@pytest.mark.parametrize("kind", ("snapshots", "debug", "generations"))
+def test_dry_run_does_not_extend_current_lock_sidecar_semantics_to_other_namespaces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """Would fail if the current-only exception relaxed another State namespace."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    entry = data_home / "codex-usage" / kind / "BW_Nufker.json.lock"
+    _write_private(entry, "historical")
+
+    with pytest.raises(ValueError, match=f"{kind} contains a nontransient unknown entry"):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=False,
+        )
+
+
+def test_dry_run_does_not_ignore_a_current_style_sidecar_in_the_lock_namespace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Would fail if current-only sidecar handling leaked into locks."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    entry = data_home / "codex-usage" / "locks" / "BW_Nufker.json.lock"
+    _write_private(entry, "historical")
+
+    report = quarantine_unconfigured_usage_state(
+        config_path=config_path,
+        data_home=data_home,
+        state_home=state_home,
+        apply=False,
+    )
+
+    assert "BW_Nufker.json" in report.quarantined_account_ids
+    assert entry.read_text(encoding="utf-8") == "historical"
+
+
+def test_dry_run_keeps_current_entry_bound_before_ignoring_safe_lock_sidecars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Would fail if ignored sidecars could evade the current namespace bound."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    current = data_home / "codex-usage" / "current"
+    for index in range(maintenance_module._MAX_ARTIFACTS - len(tuple(current.iterdir())) + 1):
+        _write_private(current / f"legacy-{index}.json.lock", "")
+
+    with pytest.raises(ValueError, match="current directory has too many entries"):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=False,
+        )
+
+
 def test_quarantine_unconfigured_usage_state_dry_run_is_canonical_and_does_not_mutate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -845,7 +1238,9 @@ def test_apply_recovers_identity_bound_pending_quarantine_before_new_commit(
     config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
     root = data_home / "codex-usage"
     authority = maintenance_module._load_authority_snapshot(config_path, state_home)
-    artifacts = maintenance_module._scan_artifacts(root, authority.configured_account_ids)
+    artifacts = maintenance_module._scan_artifacts(
+        root, authority.configured_account_ids
+    ).artifacts
     quarantine_root = root / "maintenance-quarantine-v1"
     ensure_private_directory(quarantine_root, label="test quarantine root")
     pending = quarantine_root / ".pending-11111111111111111111111111111111"
@@ -878,7 +1273,9 @@ def test_apply_recovers_a_fully_staged_pending_quarantine_before_reporting_no_wo
     config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
     root = data_home / "codex-usage"
     authority = maintenance_module._load_authority_snapshot(config_path, state_home)
-    artifacts = maintenance_module._scan_artifacts(root, authority.configured_account_ids)
+    artifacts = maintenance_module._scan_artifacts(
+        root, authority.configured_account_ids
+    ).artifacts
     quarantine_root = root / "maintenance-quarantine-v1"
     ensure_private_directory(quarantine_root, label="test quarantine root")
     pending = quarantine_root / ".pending-22222222222222222222222222222222"

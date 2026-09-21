@@ -34,11 +34,11 @@ _MANIFEST_MAX_BYTES = 128 * 1024
 MAX_ATTESTATION_FILE_BYTES = 4 * 1024 * 1024
 MAX_RELEASE_TREE_ENTRIES = 4096
 MAX_RELEASE_TREE_BYTES = 128 * 1024 * 1024
-_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.540.dist-info"
-_EXPECTED_VERSION = "0.6.540"
+_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.541.dist-info"
+_EXPECTED_VERSION = "0.6.541"
 _EXPECTED_DISTRIBUTION = "codex-usage-integration-producer"
 _EXPECTED_CORE_DISTRIBUTION = "codex-usage"
-_CORE_DIST_INFO_PREFIX = "codex_usage-0.6.540.dist-info"
+_CORE_DIST_INFO_PREFIX = "codex_usage-0.6.541.dist-info"
 TRUSTED_CORE_MODULES = (
     "__init__.py",
     "account_lock.py",
@@ -55,8 +55,10 @@ TRUSTED_CORE_MODULES = (
     "json_utils.py",
     "models.py",
     "history.py",
+    "pool_authority_owner.py",
     "private_io.py",
     "source_lock.py",
+    "state_maintenance.py",
     "state.py",
     "usage_limits.py",
     "usage_resets.py",
@@ -89,8 +91,8 @@ _PRODUCER_DIST_INFO_RECORD_RELATIVES = (
     f"{_DIST_INFO_PREFIX}/top_level.txt",
 )
 MAX_RUNTIME_INTERPRETER_BYTES = 128 * 1024 * 1024
-_PREVIOUS_SCHEMA2_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.537.dist-info"
-_PREVIOUS_SCHEMA2_VERSION = "0.6.537"
+_PREVIOUS_SCHEMA2_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.540.dist-info"
+_PREVIOUS_SCHEMA2_VERSION = "0.6.540"
 _CURRENT_SCHEMA2_MANIFEST_FIELDS = frozenset(
     {
         "data_home",

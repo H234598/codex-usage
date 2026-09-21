@@ -32,8 +32,10 @@ _SOURCE_FILES = (
     "src/codex_usage/json_utils.py",
     "src/codex_usage/models.py",
     "src/codex_usage/history.py",
+    "src/codex_usage/pool_authority_owner.py",
     "src/codex_usage/private_io.py",
     "src/codex_usage/source_lock.py",
+    "src/codex_usage/state_maintenance.py",
     "src/codex_usage/state.py",
     "src/codex_usage/usage_limits.py",
     "src/codex_usage/usage_resets.py",
@@ -916,7 +918,7 @@ def _create_complete_generations(
                     payload_sha256=hashlib.sha256(payload).hexdigest(),
                     payload_size_bytes=len(payload),
                     published_at=published_at,
-                    producer_version="0.6.540",
+                    producer_version="0.6.541",
                     release_id=verified_active_manifest.release_id,
                     source_manifest_sha256=(
                         verified_active_manifest.source_manifest_sha256
@@ -1367,7 +1369,7 @@ def _rewrite_complete_generation(
         binding = replace(
             binding,
             active_manifest_sha256="c" * 64,
-            release_id="0.6.540-" + "d" * 16,
+            release_id="0.6.541-" + "d" * 16,
             source_manifest_sha256="e" * 64,
         )
     from codex_usage.integration_pool_authority import (
@@ -4894,8 +4896,8 @@ def test_binding_requires_exact_nested_fields_and_32kib_limit():
         payload_sha256="c" * 64,
         payload_size_bytes=64,
         published_at="2026-08-25T10:00:00Z",
-        producer_version="0.6.540",
-        release_id="0.6.540-" + "d" * 16,
+        producer_version="0.6.541",
+        release_id="0.6.541-" + "d" * 16,
         source_manifest_sha256="e" * 64,
         usage_binding_schema_version=2,
         pool_authority_filename="pool-authority-v2.json",
@@ -5316,7 +5318,7 @@ def test_reader_fails_closed_on_pool_authority_bundle_tampering(
     else:
         authority = parse_pool_authority_projection(authority_path.read_bytes())
         if mutation == "authority_release_mismatch":
-            authority["release_id"] = "0.6.540-" + "d" * 16
+            authority["release_id"] = "0.6.541-" + "d" * 16
         elif mutation == "authority_generation_mismatch":
             authority["generation_id"] = "e" * 32
         elif mutation == "authority_usage_digest_tamper":

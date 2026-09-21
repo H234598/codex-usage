@@ -98,6 +98,18 @@ class _Artifact:
 
 
 @dataclass(frozen=True)
+class _VerifiedTransient:
+    source: Path
+    identity: _Identity
+
+
+@dataclass(frozen=True)
+class _ScannedArtifacts:
+    artifacts: tuple[_Artifact, ...]
+    verified_transients: tuple[_VerifiedTransient, ...]
+
+
+@dataclass(frozen=True)
 class _AuthoritySnapshot:
     configured_account_ids: tuple[str, ...]
     config_identity: _Identity
@@ -148,20 +160,20 @@ def quarantine_unconfigured_usage_state(
         if not apply:
             with _authority_guard(selected_config, selected_state):
                 authority = _load_authority_snapshot(selected_config, selected_state)
-                artifacts = _scan_artifacts(state_root, authority.configured_account_ids)
+                scanned = _scan_artifacts(state_root, authority.configured_account_ids)
                 _verify_authority_snapshot(selected_config, selected_state, authority)
-                _verify_artifacts(artifacts)
-                return _report(authority, artifacts, applied=False, quarantine_path=None)
+                _verify_artifacts(scanned.artifacts, scanned.verified_transients)
+                return _report(authority, scanned.artifacts, applied=False, quarantine_path=None)
 
         # Reject invalid owner/config/state inputs before creating the maintenance
         # barrier itself.  This keeps a rejected request strictly no-mutation.
         with _authority_guard(selected_config, selected_state):
             preflight_authority = _load_authority_snapshot(selected_config, selected_state)
-            preflight_artifacts = _scan_artifacts(
+            preflight = _scan_artifacts(
                 state_root, preflight_authority.configured_account_ids
             )
             _verify_authority_snapshot(selected_config, selected_state, preflight_authority)
-            _verify_artifacts(preflight_artifacts)
+            _verify_artifacts(preflight.artifacts, preflight.verified_transients)
 
         with state_maintenance_lock():
             with _authority_guard(selected_config, selected_state):
@@ -169,18 +181,19 @@ def quarantine_unconfigured_usage_state(
                 authority = _load_authority_snapshot(selected_config, selected_state)
                 _recover_pending_transactions(quarantine_root, authority)
                 _verify_authority_snapshot(selected_config, selected_state, authority)
-                artifacts = _scan_artifacts(state_root, authority.configured_account_ids)
+                scanned = _scan_artifacts(state_root, authority.configured_account_ids)
                 _before_quarantine_mutation()
                 _verify_authority_snapshot(selected_config, selected_state, authority)
-                _verify_artifacts(artifacts)
-                report = _report(authority, artifacts, applied=True, quarantine_path=None)
-                if not artifacts:
+                _verify_artifacts(scanned.artifacts, scanned.verified_transients)
+                report = _report(authority, scanned.artifacts, applied=True, quarantine_path=None)
+                if not scanned.artifacts:
                     return report
                 return _apply_quarantine(
                     state_root=state_root,
                     quarantine_root=quarantine_root,
                     authority=authority,
-                    artifacts=artifacts,
+                    artifacts=scanned.artifacts,
+                    verified_transients=scanned.verified_transients,
                     report=report,
                 )
 
@@ -287,14 +300,22 @@ def _verify_authority_snapshot(
         raise ValueError("pool authority changed before state maintenance mutation")
 
 
-def _scan_artifacts(state_root: Path, configured_ids: tuple[str, ...]) -> tuple[_Artifact, ...]:
+def _scan_artifacts(
+    state_root: Path, configured_ids: tuple[str, ...]
+) -> _ScannedArtifacts:
     _require_private_directory(state_root, label="state maintenance root")
     current = state_root / "current"
     locks = state_root / "locks"
     _require_private_directory(current, label="state maintenance current directory")
     _require_private_directory(locks, label="state maintenance locks directory")
+    verified_transients: list[_VerifiedTransient] = []
     by_kind = {
-        "current": _scan_named_directory(current, "current", suffix=".json"),
+        "current": _scan_named_directory(
+            current,
+            "current",
+            suffix=".json",
+            verified_transients=verified_transients,
+        ),
         "snapshots": _scan_optional_named_directory(
             state_root / "snapshots", "snapshots", suffix=".json"
         ),
@@ -327,7 +348,10 @@ def _scan_artifacts(state_root: Path, configured_ids: tuple[str, ...]) -> tuple[
                 )
     if len(artifacts) > _MAX_ARTIFACTS:
         raise ValueError("state maintenance has too many foreign artifacts")
-    return tuple(sorted(artifacts, key=lambda item: (item.account_id, item.kind)))
+    return _ScannedArtifacts(
+        artifacts=tuple(sorted(artifacts, key=lambda item: (item.account_id, item.kind))),
+        verified_transients=tuple(verified_transients),
+    )
 
 
 def _scan_optional_named_directory(
@@ -347,6 +371,7 @@ def _scan_named_directory(
     *,
     suffix: str,
     ignored_names: frozenset[str] = frozenset(),
+    verified_transients: list[_VerifiedTransient] | None = None,
 ) -> tuple[tuple[str, Path, _Identity], ...]:
     _require_private_directory(directory, label=f"state maintenance {kind} directory")
     initial = _directory_identity(directory, label=f"state maintenance {kind} directory")
@@ -360,6 +385,13 @@ def _scan_named_directory(
     for path in paths:
         if path.name in ignored_names or _is_transient(path.name):
             continue
+        if kind == "current":
+            identity = _historical_current_lock_sidecar_identity(path)
+            if identity is not None:
+                if verified_transients is None:  # pragma: no cover - internal invariant
+                    raise AssertionError("current sidecar identities must be retained")
+                verified_transients.append(_VerifiedTransient(path, identity))
+                continue
         account_id = _account_id_from_name(path.name, suffix)
         if account_id is None:
             raise ValueError(f"state maintenance {kind} contains a nontransient unknown entry")
@@ -374,6 +406,16 @@ def _is_transient(name: str) -> bool:
     return name.startswith(".") and (".tmp-" in name or ".rollback" in name)
 
 
+def _historical_current_lock_sidecar_identity(path: Path) -> _Identity | None:
+    """Bind only the legacy ``<account>.json.lock`` form the Producer skips."""
+    name = path.name
+    if not name.endswith(".json.lock"):
+        return None
+    if _account_id_from_name(name.removesuffix(".lock"), ".json") is None:
+        return None
+    return _private_identity(path, label="state maintenance current lock sidecar")
+
+
 def _account_id_from_name(name: str, suffix: str) -> str | None:
     if not name.endswith(suffix):
         return None
@@ -383,10 +425,20 @@ def _account_id_from_name(name: str, suffix: str) -> str | None:
     return account_id
 
 
-def _verify_artifacts(artifacts: tuple[_Artifact, ...]) -> None:
+def _verify_artifacts(
+    artifacts: tuple[_Artifact, ...],
+    verified_transients: tuple[_VerifiedTransient, ...] = (),
+) -> None:
     for artifact in artifacts:
         current = _private_identity(artifact.source, label=f"state maintenance {artifact.kind}")
         if current != artifact.identity:
+            raise ValueError("state artifact changed before maintenance mutation")
+    for transient in verified_transients:
+        current = _private_identity(
+            transient.source,
+            label="state maintenance current lock sidecar",
+        )
+        if current != transient.identity:
             raise ValueError("state artifact changed before maintenance mutation")
 
 
@@ -423,6 +475,7 @@ def _apply_quarantine(
     quarantine_root: Path,
     authority: _AuthoritySnapshot,
     artifacts: tuple[_Artifact, ...],
+    verified_transients: tuple[_VerifiedTransient, ...],
     report: StateMaintenanceReport,
 ) -> StateMaintenanceReport:
     state_root_identity = _directory_identity(
@@ -457,15 +510,22 @@ def _apply_quarantine(
             quarantine_root,
             label="state maintenance quarantine root",
         )
+        _verify_artifacts(artifacts, verified_transients)
         _write_manifest(pending, authority, artifacts, moved)
-        _verify_authority_snapshot_for_apply(authority, state_root, artifacts)
+        _verify_authority_snapshot_for_apply(
+            authority,
+            state_root,
+            artifacts,
+            verified_transients,
+        )
         for artifact in artifacts:
             destination = pending / artifact.relative_path
+            _verify_artifacts((), verified_transients)
             ensure_private_directory(
                 destination.parent,
                 label="state maintenance transaction artifact directory",
             )
-            _verify_artifacts((artifact,))
+            _verify_artifacts((artifact,), verified_transients)
             if destination.exists() or destination.is_symlink():
                 raise ValueError("state maintenance quarantine destination already exists")
             _rename_no_replace(
@@ -479,13 +539,16 @@ def _apply_quarantine(
             ):
                 raise ValueError("state maintenance artifact changed during quarantine")
             moved.append(artifact)
+            _verify_artifacts((), verified_transients)
             _write_manifest(pending, authority, artifacts, moved)
+        _verify_artifacts((), verified_transients)
         write_private_text(
             pending / _AUDIT_NAME,
             report.audit_json,
             label="state maintenance audit",
             mode=0o600,
         )
+        _verify_artifacts((), verified_transients)
         _rename_no_replace(
             pending,
             completed,
@@ -524,11 +587,12 @@ def _verify_authority_snapshot_for_apply(
     authority: _AuthoritySnapshot,
     state_root: Path,
     artifacts: tuple[_Artifact, ...],
+    verified_transients: tuple[_VerifiedTransient, ...],
 ) -> None:
     # The caller already holds both authority locks.  This function deliberately
     # only repeats local state invariants after the pending journal is durable.
     _require_private_directory(state_root, label="state maintenance root")
-    _verify_artifacts(artifacts)
+    _verify_artifacts(artifacts, verified_transients)
     if not authority.configured_account_ids:
         raise ValueError("pool authority inventory must not be empty for state maintenance")
 

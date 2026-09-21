@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.541 - 2026-09-21
+
+### Fixed
+
+- D299 lässt State-Maintenance ausschließlich sichere historische
+  `current/<account>.json.lock`-Sidecars als transiente Producerreste
+  klassifizieren. Die Klassifikation verlangt einen regulären, owner-eigenen,
+  nicht verlinkten `0600`-Eintrag mit begrenztem UTF-8-Inhalt; falscher Name,
+  Namespace, Modus, Owner, Linktyp oder Namespace-Rebind bleiben fail-closed.
+  Producer-, No-Spark-, Snapshot-/WAL- und D296-Semantik bleiben unverändert.
+
 ## 0.6.540 - 2026-09-21
 
 ### Changed

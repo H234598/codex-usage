@@ -9,9 +9,17 @@ import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures" / "pool_authority_v2"
 GENERATION_ID = "b" * 32
-RELEASE_ID = "0.6.540-" + "a" * 16
+RELEASE_ID = "0.6.541-" + "a" * 16
 PAYLOAD_DIGEST = "1" * 64
 BINDING_DIGEST = "2" * 64
+D296_ACCOUNT_IDS = (
+    "BW_Nufker",
+    "BW_Privat",
+    "BW_Work",
+    "Birthe_Privat",
+    "GPT1",
+    "RH_Privat",
+)
 
 
 def _source_bytes() -> bytes:
@@ -118,7 +126,7 @@ def test_positive_source_projection_and_decision_are_canonical_and_closed():
         FIXTURES / "projection-v2-positive.json"
     ).read_bytes().rstrip(b"\n")
     assert projection["pool_authority_schema_version"] == 2
-    assert projection["producer_version"] == "0.6.540"
+    assert projection["producer_version"] == "0.6.541"
     assert projection["issued_at"] == "2026-08-31T12:00:00Z"
     assert projection["expires_at"] == "2026-08-31T12:15:00Z"
     assert _evaluate(_projection_bytes()) is True
@@ -126,7 +134,58 @@ def test_positive_source_projection_and_decision_are_canonical_and_closed():
         POOL_AUTHORITY_SCHEMA_VERSION,
         POOL_AUTHORITY_SOURCE_SCHEMA_VERSION,
         PRODUCER_VERSION,
-    ) == (2, 2, "0.6.540")
+    ) == (2, 2, "0.6.541")
+
+
+def test_d296_pool_authority_projection_accepts_the_bound_06541_release():
+    """D299's six-owner projection must bind to the only candidate release."""
+    from codex_usage.integration_pool_authority import (
+        build_pool_authority_projection,
+        evaluate_pool_authority,
+        parse_pool_authority_source,
+        serialize_pool_authority_projection,
+    )
+
+    source = parse_pool_authority_source(_source_bytes())
+    authority_template = source["authorities"][0]
+    assert isinstance(authority_template, dict)
+    source["authorities"] = [
+        {**authority_template, "account_id": account_id}
+        for account_id in D296_ACCOUNT_IDS
+    ]
+    usage = _usage_document()
+    usage_template = usage["accounts"][0]
+    assert isinstance(usage_template, dict)
+    usage["accounts"] = [
+        {**json.loads(json.dumps(usage_template)), "account_id": account_id}
+        for account_id in D296_ACCOUNT_IDS
+    ]
+    release_id = "0.6.541-" + "a" * 16
+
+    payload = serialize_pool_authority_projection(
+        build_pool_authority_projection(
+            source=source,
+            usage_document=usage,
+            usage_binding_published_at="2026-08-31T12:00:00Z",
+            generation_id=GENERATION_ID,
+            release_id=release_id,
+            usage_payload_sha256=PAYLOAD_DIGEST,
+            usage_binding_sha256=BINDING_DIGEST,
+        )
+    )
+
+    assert all(
+        evaluate_pool_authority(
+            payload,
+            replace(_request(), account_id=account_id),
+            now=datetime(2026, 8, 31, 12, 10, tzinfo=UTC),
+            expected_release_id=release_id,
+            expected_generation_id=GENERATION_ID,
+            expected_usage_payload_sha256=PAYLOAD_DIGEST,
+            expected_usage_binding_sha256=BINDING_DIGEST,
+        )
+        for account_id in D296_ACCOUNT_IDS
+    )
 
 
 @pytest.mark.parametrize(

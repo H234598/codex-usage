@@ -31,7 +31,7 @@ zuerst den allgemeinen Watchdog mit exakt
 fail-closed vor Attestierung und Publish. Danach attestiert der Wrapper den
 aktiven Producer. Direkt vor dem Publisherstart attestiert er zusätzlich die
 bereits importierte Watchdog-Runtime gegen denselben extern verankerten
-Core-0.6.540-Modulsatz und ruft erst danach ausschließlich den attestierten
+Core-0.6.541-Modulsatz und ruft erst danach ausschließlich den attestierten
 Release-Launcher mit `integration-snapshot --schema 2 --format json` auf.
 Fehlende oder
 malformed Producer-Authority bleibt dabei der gebundene Publisher-Fehler
@@ -67,7 +67,7 @@ Console-Scripts (`codex-usage` und `codex-usage-integration-watchdog`) direkt
 vor dem Unitwrite erneut dieselbe no-follow gelesene Identität besitzen wie
 beim Resolve. Beide Scripts müssen regulär, einfach verlinkt, ausführbar, mit
 dem erwarteten Interpreter geshebangt und über `RECORD`, `METADATA`, Modulbytes
-und Version exakt an die installierte Distribution `codex-usage==0.6.540`
+und Version exakt an die installierte Distribution `codex-usage==0.6.541`
 gebunden sein. Ein fehlender Resolve-Cache, ein anderer Interpreter, ein
 Kommentar-Fake, ein Hard-/Symlink, ein fremder Release oder ein vor-D297-Release
 mit gleichen Bytes oder RECORD-/Modul-/Script-Drift stoppt fail-closed vor
@@ -329,18 +329,18 @@ Rohfehlerausgaben. Tokens enden mit genau einem Newline. Exceptions,
 Terminalausgaben, Providerantworten, Credentials und lokale Pfade werden nicht
 ausgegeben.
 
-## Release 0.6.540 und Attestierung
+## Release 0.6.541 und Attestierung
 
-D297 ist ein One-Way-Cutover: Als lokale, strikt attestierte
-Predecessor-Provenienz darf ausschließlich `0.6.537` gelesen werden, und nur
-wenn `current.json` fehlt und der V2-Generationsnamespace leer ist. Der
+D299 ist ein One-Way-Cutover: Als lokale, strikt attestierte
+Predecessor-Provenienz darf ausschließlich `0.6.540` gelesen werden. Der
 Installer führt diesen Vorgänger nicht aus, schreibt kein `previous.json` und
 die öffentliche Rollback-API lehnt ab. Seine eigene Precommit-Transaktion darf
 den attestierten Altzustand bei einem Fehler wiederherstellen. Jede
-`0.6.538`-, `0.6.536`-/Schema-1- oder V1-Residuenlage wird vor Recovery und
-jeder Mutation abgelehnt. Das umfasst auch gültig benannte und malformed
-`.evidence-v1-cutover-*`-Dateien, -Verzeichnisse und -Symlinks; der Installer
-benennt, repariert oder pensioniert sie nie.
+`0.6.539`-, `0.6.538`-, `0.6.537`-, `0.6.536`-/Schema-1- oder
+V1-Residuenlage wird vor Recovery und jeder Mutation abgelehnt. Das umfasst
+auch gültig benannte und malformed `.evidence-v1-cutover-*`-Dateien,
+-Verzeichnisse und -Symlinks; der Installer benennt, repariert oder
+pensioniert sie nie.
 
 Der Producer hält einen privaten Source-Lock über Current-/State- und
 SQLite-WAL-Zugriffe bis zum finalen Pointer-Swap. `source-inputs-v2.json`
@@ -351,7 +351,7 @@ Owner-Source werden unmittelbar vor dem Pointer-Rename erneut gebunden;
 jedes Drift erhält den alten Pointer.
 
 Projekt, Producer-Wheel, Dist-Info, Manifest und Runtime-Attestierung tragen
-gemeinsam Version `0.6.540`. Das aktive Manifest hat exakt Integer-Schema `2`.
+gemeinsam Version `0.6.541`. Das aktive Manifest hat exakt Integer-Schema `2`.
 Es bindet Release-ID und Source-Manifest-SHA-256 sowie die SHA-256-Werte von
 Entry Point, Wheel, RECORD, Launcher und gesamtem Releasebaum.
 
@@ -375,23 +375,23 @@ Kanonische Pfade innerhalb des privaten Releasebaums sind fest:
 producer.whl
 venv/bin/codex-usage
 venv/lib/python*/site-packages/codex_usage/integration_entrypoint.py
-venv/lib/python*/site-packages/codex_usage_integration_producer-0.6.540.dist-info/RECORD
+venv/lib/python*/site-packages/codex_usage_integration_producer-0.6.541.dist-info/RECORD
 ```
 
 Launcher, Wheel oder Dist-Info unter alternativen Pfaden werden auch bei
 passenden Einzelhashes abgelehnt. RECORD bindet jedes Wheelmitglied; Metadata
-bindet Distribution `codex-usage-integration-producer` und Version `0.6.540`.
+bindet Distribution `codex-usage-integration-producer` und Version `0.6.541`.
 Der Releasebaumhash umfasst sortiert jeden no-follow Verzeichnis-/Dateieintrag
 mit Typ, relativem Pfad, Modus, Dateigröße und Datei-SHA-256. Symlinks,
 Hardlinks, fremde Owner, falsche Modi, Sonderdateien, Device-/Inodewechsel,
 Races, zusätzliche oder fehlende Einträge schlagen fehl.
 
-Runtimeattestierung akzeptiert nur `0.6.540`/Schema 2. Ausschließlich der
+Runtimeattestierung akzeptiert nur `0.6.541`/Schema 2. Ausschließlich der
 Installer darf bei seinem einmaligen Cutover die vollständig attestierte
-`0.6.537`-Predecessor-Provenienz lesen, ohne sie auszuführen. Dabei muss
-`current.json` fehlen und der V2-Generationsnamespace leer sein. Die
-`0.6.540`-Runtime- und Releasebaumprüfung hat keine Vorgänger- oder
-Kompatibilitätsausnahme.
+`0.6.540`-Predecessor-Provenienz lesen, ohne sie auszuführen. Die vorhandene
+V2-Current-/Generations-Evidenz wird dabei weder als Fallback gelesen noch
+verändert. Die `0.6.541`-Runtime- und Releasebaumprüfung hat keine Vorgänger-
+oder Kompatibilitätsausnahme.
 
 Vor `recover_evidence_staging` wird jeder `0.6.536`-/Schema-1-Active und jede
 V1-Residuenlage no-follow gebunden abgelehnt, ohne Active, Current oder
@@ -399,7 +399,7 @@ Generationen umzubenennen, zu reparieren oder zu löschen. Es gibt weder
 `previous.json` noch eine öffentliche Rückmigration oder einen
 Altversionsfallback. Die installereigene Precommit-Transaktion darf allein den
 nachweisbaren unmittelbaren Altzustand ihres noch nicht abgeschlossenen
-`0.6.540`-Installvorgangs wiederherstellen.
+`0.6.541`-Installvorgangs wiederherstellen.
 
 Der Runtime-Wrapper bindet die Codeidentität zusätzlich außerhalb von
 `active.json`: Er verwendet den installierten Core-Pfad
@@ -408,7 +408,7 @@ liest ihn no-follow als reguläre owner-eigene Datei mit festem Modus und
 vergleicht seine Bytes mit dem vollständig manifest-, RECORD- und
 Releasebaum-attestierten Producer-Entry-Point. Zusätzlich muss derselbe
 `site-packages`-Root exakt ein no-follow gelesenes
-`codex_usage-0.6.540.dist-info` für Distribution `codex-usage` enthalten.
+`codex_usage-0.6.541.dist-info` für Distribution `codex-usage` enthalten.
 `METADATA` wird als echte Headerstruktur ausgewertet, nicht per
 Substring-Suche, und `RECORD` muss die tatsächlich gelesenen Entry-Point- und
 Metadata-Bytes samt Größe und SHA-256 sowie die eigene RECORD-Row binden.
@@ -428,7 +428,7 @@ GID und ctime; ein Owner- oder ctime-Wechsel zwischen weiterhin erlaubten
 Eigentümern ist ein Identity-Drift und bleibt fail-closed.
 Parallele stale oder mehrdeutige `codex_usage-*.dist-info`-Bäume, Metadata-/
 RECORD-Inodewechsel und identische Entry-Point-Bytes aus einem vor-D297-Core
-gegen aktivem Producer `0.6.540` bleiben fail-closed, bis Core und
+gegen aktivem Producer `0.6.541` bleiben fail-closed, bis Core und
 Producer kohärent installiert sind. `active.json` liefert nur den untrusted
 Kandidatenpfad für die bestehende Release-Attestierung; es wird nie derselbe
 selbstdeklarierte Pfad als erwartete externe Identität akzeptiert.
@@ -468,7 +468,7 @@ Recovery behalten die referenzierten Ordner.
 ### Maschinenprüfbare Kette
 
 1. Reader attestiert zuerst `active.json` vollständig gegen erwarteten
-   Entry-Point: Schema 2, Version `0.6.540`, Release-ID, Source-Manifest,
+   Entry-Point: Schema 2, Version `0.6.541`, Release-ID, Source-Manifest,
    kanonische Pfade, Entry-Point, Wheel, RECORD, Launcher und Releasebaum.
    Das Ergebnis ist `VerifiedActiveManifest`, einschließlich
    `active_manifest_sha256`.
@@ -489,7 +489,7 @@ Recovery behalten die referenzierten Ordner.
    `generation_id`, `payload_filename`, `payload_sha256`,
    `payload_size_bytes`, `published_at`, `producer_version`, `release_id`,
    `source_manifest_sha256`. `payload_filename` ist exakt
-   `account-usage-v2.json`; `producer_version` ist `0.6.540`.
+   `account-usage-v2.json`; `producer_version` ist `0.6.541`.
 5. Usage-Binding-`generation_id`, `active_manifest_sha256`, `release_id` und
    `source_manifest_sha256` müssen exakt zu Ordner und
    `VerifiedActiveManifest` passen. Payloadgröße und SHA-256 müssen dem
@@ -498,7 +498,7 @@ Recovery behalten die referenzierten Ordner.
 6. Danach liest der Reader `pool-authority-v2.json` bounded/no-follow. Größe
    und SHA-256 müssen dem äußeren Binding entsprechen. Die Projektion hat
    exakt neun Felder: `pool_authority_schema_version=2`,
-   `producer_version=0.6.540`, `release_id`, `generation_id`, `issued_at`,
+   `producer_version=0.6.541`, `release_id`, `generation_id`, `issued_at`,
    `expires_at`, `usage_payload_sha256`, `usage_binding_sha256`,
    `authorities`. `usage_payload_sha256` bindet die exakten Usage-Bytes;
    `usage_binding_sha256` bindet die kanonischen Bytes des gesamten
@@ -815,7 +815,7 @@ attestiert ihn erneut und ersetzt erst dann atomar `active.json`. Manuelles
 Kopieren eines Releasebaums oder Editieren von `active.json` ist verboten.
 
 Verifizierter Nachweis liest anschließend `active.json` nur bounded/no-follow
-und prüft: Schema `2`, Version `0.6.540`, Release-ID, kanonische vier Pfade,
+und prüft: Schema `2`, Version `0.6.541`, Release-ID, kanonische vier Pfade,
 Manifest-/Launcher-/Wheel-/RECORD-/Entry-Point-/Releasebaumhashes, Owner, Modi,
 Linkcount sowie Device/Inode-Identität. Berichtsfähig sind nur Version, Schema,
 Release-ID und Digests; absolute lokale Pfade bleiben ausschließlich im lokalen
@@ -823,7 +823,7 @@ Installationsreport. Schlägt Installer oder Nachprüfung fehl, endet das
 Verfahren ohne stärkeren Workaround; vorherige aktive Generation bleibt aktiv.
 
 Eine öffentliche `--rollback`-Anforderung ist für den attestierten
-`0.6.540`-Producer nicht autorisiert: Sie endet vor I/O mit RC `69`
+`0.6.541`-Producer nicht autorisiert: Sie endet vor I/O mit RC `69`
 (`integration_producer_unavailable`) und ohne `active.json`-Swap. Sie ist
 weder Fallback noch Rückmigration; lediglich die interne Pre-Commit-
 Kompensation einer eigenen, noch nicht veröffentlichten Installation darf
