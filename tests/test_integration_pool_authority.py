@@ -9,7 +9,7 @@ import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures" / "pool_authority_v2"
 GENERATION_ID = "b" * 32
-RELEASE_ID = "0.6.541-" + "a" * 16
+RELEASE_ID = "0.6.542-" + "a" * 16
 PAYLOAD_DIGEST = "1" * 64
 BINDING_DIGEST = "2" * 64
 D296_ACCOUNT_IDS = (
@@ -126,7 +126,7 @@ def test_positive_source_projection_and_decision_are_canonical_and_closed():
         FIXTURES / "projection-v2-positive.json"
     ).read_bytes().rstrip(b"\n")
     assert projection["pool_authority_schema_version"] == 2
-    assert projection["producer_version"] == "0.6.541"
+    assert projection["producer_version"] == "0.6.542"
     assert projection["issued_at"] == "2026-08-31T12:00:00Z"
     assert projection["expires_at"] == "2026-08-31T12:15:00Z"
     assert _evaluate(_projection_bytes()) is True
@@ -134,7 +134,7 @@ def test_positive_source_projection_and_decision_are_canonical_and_closed():
         POOL_AUTHORITY_SCHEMA_VERSION,
         POOL_AUTHORITY_SOURCE_SCHEMA_VERSION,
         PRODUCER_VERSION,
-    ) == (2, 2, "0.6.541")
+    ) == (2, 2, "0.6.542")
 
 
 def test_d296_pool_authority_projection_accepts_the_bound_06541_release():
@@ -160,7 +160,7 @@ def test_d296_pool_authority_projection_accepts_the_bound_06541_release():
         {**json.loads(json.dumps(usage_template)), "account_id": account_id}
         for account_id in D296_ACCOUNT_IDS
     ]
-    release_id = "0.6.541-" + "a" * 16
+    release_id = "0.6.542-" + "a" * 16
 
     payload = serialize_pool_authority_projection(
         build_pool_authority_projection(

@@ -3,8 +3,8 @@
 ## Versionierte Fakten
 
 Die Paketversion steht in `pyproject.toml`; auf der dokumentierten Basis ist
-sie `0.6.541`. Die Service-Implementierung bindet ihre Installation ebenfalls
-an die erwartete Distribution `codex-usage==0.6.541` und verweigert bei
+sie `0.6.542`. Die Service-Implementierung bindet ihre Installation ebenfalls
+an die erwartete Distribution `codex-usage==0.6.542` und verweigert bei
 abweichender oder nicht verifizierbarer Script-, RECORD-, Metadaten- oder
 Modulbindung das Schreiben der Unit.
 

@@ -5,6 +5,7 @@ import os
 import stat
 import subprocess
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -31,6 +32,31 @@ _D296_IDS = (
     "RH_Privat",
 )
 _FOREIGN_IDS = ("account", "blocked", "broken", "ok")
+_D300_SIDECARS = (
+    ("snapshots", "BW_Nufker.json.lock", "BW_Nufker.json"),
+    ("debug", "BW_Nufker-last-ingest.json.lock", "BW_Nufker-last-ingest.json"),
+    ("generations", "BW_Nufker.json.lock", "BW_Nufker.json"),
+)
+_D300_REBIND_TARGETS = (
+    ("state root", "snapshots"),
+    ("snapshots namespace", "snapshots"),
+    ("debug namespace", "debug"),
+    ("generations namespace", "generations"),
+)
+_D300_REBIND_BOUNDARIES = (
+    "before_pending",
+    "after_pending",
+    "after_authority",
+    "before_artifact_rename",
+    "before_audit",
+    "before_publication",
+)
+_D300_APPLY_PATH_RACE_BOUNDARIES = (
+    "pending_mkdir",
+    "artifact_rename",
+    "audit",
+    "publication",
+)
 
 
 def _account(account_id: str, root: Path) -> Account:
@@ -121,6 +147,76 @@ def _artifact_bytes(root: Path) -> dict[Path, bytes]:
         for path in (root / "locks").iterdir()
         if path.name != "__state_maintenance__.lock"
     }
+
+
+def _rebind_private_directory_with_entries(directory: Path) -> None:
+    """Replace a private directory path while retaining its child objects."""
+    replacement_source = directory.with_name(f".{directory.name}-before-rebind")
+    assert not replacement_source.exists()
+    directory.rename(replacement_source)
+    directory.mkdir(mode=0o700)
+    directory.chmod(0o700)
+    for child in tuple(replacement_source.iterdir()):
+        child.rename(directory / child.name)
+    replacement_source.rmdir()
+
+
+def _prepare_d300_directory_rebind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    target: str,
+    sidecar_kind: str,
+) -> tuple[Path, Path, Path, Path, Callable[[], None], Callable[[], bool]]:
+    """Stage one exact D300 sidecar and an identity-preserving ancestor rebind.
+
+    Replacing an individual namespace necessarily changes its child file ctime.
+    The narrow identity shim below preserves that separately-tested sidecar
+    binding so this helper exercises the real directory no-follow binding.
+    Rebinding the state root instead moves whole child directories and needs no
+    such shim to retain child-file identities.
+    """
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    root = data_home / "codex-usage"
+    name = next(name for kind, name, _payload in _D300_SIDECARS if kind == sidecar_kind)
+    namespace = root / sidecar_kind
+    if target != "state root":
+        for entry in tuple(namespace.iterdir()):
+            entry.unlink()
+    sidecar = namespace / name
+    _write_private(sidecar, "")
+    expected_sidecar_identity: maintenance_module._Identity | None = None
+    rebound = False
+    original_private_identity = maintenance_module._private_identity
+
+    def preserve_sidecar_identity(
+        path: Path, *, label: str
+    ) -> maintenance_module._Identity:
+        nonlocal expected_sidecar_identity
+        actual = original_private_identity(path, label=label)
+        if path != sidecar:
+            return actual
+        if expected_sidecar_identity is None:
+            expected_sidecar_identity = actual
+        if target != "state root" and rebound:
+            return expected_sidecar_identity
+        return actual
+
+    monkeypatch.setattr(
+        maintenance_module,
+        "_private_identity",
+        preserve_sidecar_identity,
+    )
+
+    def rebind() -> None:
+        nonlocal rebound
+        assert expected_sidecar_identity is not None
+        assert rebound is False
+        directory = root if target == "state root" else namespace
+        _rebind_private_directory_with_entries(directory)
+        rebound = True
+
+    return config_path, data_home, state_home, root, rebind, lambda: rebound
 
 
 def _bound_file_bytes(path: Path) -> tuple[bytes, tuple[int, int, int, int, int, int, int, int]]:
@@ -837,6 +933,808 @@ def test_apply_rejects_historical_current_lock_sidecar_drift_before_any_rename(
     assert not quarantine.exists() or not tuple(quarantine.glob("transaction-*"))
 
 
+@pytest.mark.parametrize(("kind", "sidecar_name", "payload_name"), _D300_SIDECARS)
+@pytest.mark.parametrize("pair_exists", (True, False))
+def test_dry_run_ignores_only_empty_d300_sidecars_regardless_of_payload_pair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    sidecar_name: str,
+    payload_name: str,
+    pair_exists: bool,
+) -> None:
+    """Would fail if an exact D300 lock needed, or ignored, a normal payload pair."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    root = data_home / "codex-usage"
+    payload = root / kind / payload_name
+    if not pair_exists:
+        payload.unlink()
+    sidecar = root / kind / sidecar_name
+    _write_private(sidecar, "")
+
+    report = quarantine_unconfigured_usage_state(
+        config_path=config_path,
+        data_home=data_home,
+        state_home=state_home,
+        apply=False,
+    )
+
+    assert report.applied is False
+    assert report.quarantined_account_ids == tuple(sorted(_FOREIGN_IDS))
+    assert sidecar.read_bytes() == b""
+    assert payload.exists() is pair_exists
+
+
+@pytest.mark.parametrize(("kind", "sidecar_name", "_payload_name"), _D300_SIDECARS)
+@pytest.mark.parametrize(
+    "payload",
+    (b"not-empty", b"\xff", b"x" * (maintenance_module._MAX_STATE_ARTIFACT_BYTES + 1)),
+    ids=("nonempty", "invalid-utf8", "max-bytes"),
+)
+def test_dry_run_rejects_nonempty_or_nontext_d300_sidecars(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    sidecar_name: str,
+    _payload_name: str,
+    payload: bytes,
+) -> None:
+    """Would fail if a D300 sidecar were treated like D299's nonempty Current lock."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    sidecar = data_home / "codex-usage" / kind / sidecar_name
+    sidecar.write_bytes(payload)
+    sidecar.chmod(0o600)
+
+    with pytest.raises(ValueError, match="D300 lock sidecar"):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=False,
+        )
+
+
+@pytest.mark.parametrize(("kind", "sidecar_name", "_payload_name"), _D300_SIDECARS)
+@pytest.mark.parametrize("violation", ("symlink", "hardlink", "mode", "owner"))
+def test_dry_run_rejects_unsafe_d300_sidecar_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    sidecar_name: str,
+    _payload_name: str,
+    violation: str,
+) -> None:
+    """Would fail if the D300 no-op bypassed Producer private-file invariants."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    sidecar = data_home / "codex-usage" / kind / sidecar_name
+    if violation == "symlink":
+        outside = tmp_path / "outside-lock"
+        _write_private(outside, "")
+        sidecar.symlink_to(outside)
+    elif violation == "hardlink":
+        outside = tmp_path / "outside-lock"
+        _write_private(outside, "")
+        os.link(outside, sidecar)
+    else:
+        _write_private(sidecar, "")
+        if violation == "mode":
+            sidecar.chmod(0o640)
+        else:
+            original_read_private_text = maintenance_module.read_private_text
+
+            def read_with_foreign_owner(
+                path: Path, **kwargs: object
+            ) -> tuple[str, os.stat_result]:
+                text, item = original_read_private_text(path, **kwargs)
+                if path == sidecar:
+                    fields = list(item)
+                    fields[stat.ST_UID] = item.st_uid + 1
+                    return text, os.stat_result(fields)
+                return text, item
+
+            monkeypatch.setattr(
+                maintenance_module,
+                "read_private_text",
+                read_with_foreign_owner,
+            )
+
+    with pytest.raises(ValueError, match="D300 lock sidecar"):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=False,
+        )
+
+
+@pytest.mark.parametrize(("kind", "sidecar_name", "_payload_name"), _D300_SIDECARS)
+def test_dry_run_rejects_symlinked_d300_sidecar_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    sidecar_name: str,
+    _payload_name: str,
+) -> None:
+    """Would fail if an exact D300 file survived a no-follow directory rebind."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    root = data_home / "codex-usage"
+    directory = root / kind
+    original = root / f"{kind}-original"
+    directory.rename(original)
+    directory.symlink_to(original, target_is_directory=True)
+
+    with pytest.raises(ValueError, match=f"{kind} directory"):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=False,
+        )
+
+    assert directory.is_symlink()
+
+
+@pytest.mark.parametrize(("kind", "sidecar_name", "_payload_name"), _D300_SIDECARS)
+def test_dry_run_rejects_rebound_d300_sidecar_during_directory_scan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    sidecar_name: str,
+    _payload_name: str,
+) -> None:
+    """Would fail if a D300 directory identity were not rebound after enumeration."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    directory = data_home / "codex-usage" / kind
+    sidecar = directory / sidecar_name
+    _write_private(sidecar, "")
+    original_identity = maintenance_module._private_identity
+    rebound = False
+
+    def capture_then_rebind(path: Path, *, label: str) -> maintenance_module._Identity:
+        nonlocal rebound
+        identity = original_identity(path, label=label)
+        if path == sidecar and not rebound:
+            rebound = True
+            replacement = directory / ".replacement"
+            _write_private(replacement, "")
+            replacement.replace(sidecar)
+        return identity
+
+    monkeypatch.setattr(maintenance_module, "_private_identity", capture_then_rebind)
+
+    with pytest.raises(ValueError, match=f"{kind} directory changed while scanning"):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=False,
+        )
+
+    assert rebound is True
+    assert sidecar.read_bytes() == b""
+
+
+@pytest.mark.parametrize(("kind", "sidecar_name", "_payload_name"), _D300_SIDECARS)
+def test_dry_run_rejects_post_scan_drift_of_d300_sidecar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    sidecar_name: str,
+    _payload_name: str,
+) -> None:
+    """Would fail if a D300 no-op were unbound between scan and report."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    sidecar = data_home / "codex-usage" / kind / sidecar_name
+    _write_private(sidecar, "")
+    real_verify_authority = maintenance_module._verify_authority_snapshot
+    drifted = False
+
+    def drift_after_scan(*args: object) -> None:
+        nonlocal drifted
+        real_verify_authority(*args)
+        if not drifted:
+            drifted = True
+            sidecar.write_text("drift", encoding="utf-8")
+
+    monkeypatch.setattr(
+        maintenance_module,
+        "_verify_authority_snapshot",
+        drift_after_scan,
+    )
+
+    with pytest.raises(ValueError, match="state artifact changed before maintenance mutation"):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=False,
+        )
+
+    assert drifted is True
+
+
+@pytest.mark.parametrize(("target", "sidecar_kind"), _D300_REBIND_TARGETS)
+def test_dry_run_rejects_post_scan_rebound_d300_root_or_namespace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+    sidecar_kind: str,
+) -> None:
+    """Would fail if D300 sidecars did not bind their root and namespace at scan."""
+    config_path, data_home, state_home, _root, rebind, rebound = _prepare_d300_directory_rebind(
+        tmp_path,
+        monkeypatch,
+        target=target,
+        sidecar_kind=sidecar_kind,
+    )
+    real_verify_authority = maintenance_module._verify_authority_snapshot
+    real_report = maintenance_module._report
+    report_called = False
+
+    def verify_then_rebind(*args: object) -> None:
+        real_verify_authority(*args)
+        rebind()
+
+    def record_report(*args: object, **kwargs: object) -> maintenance_module.StateMaintenanceReport:
+        nonlocal report_called
+        report_called = True
+        return real_report(*args, **kwargs)
+
+    monkeypatch.setattr(
+        maintenance_module,
+        "_verify_authority_snapshot",
+        verify_then_rebind,
+    )
+    monkeypatch.setattr(maintenance_module, "_report", record_report)
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"state maintenance D300 .* (directory|ancestor chain) changed"
+            r"|source root changed while locked"
+        ),
+    ):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=False,
+        )
+
+    assert rebound() is True
+    assert report_called is False
+
+
+@pytest.mark.parametrize(("target", "sidecar_kind"), _D300_REBIND_TARGETS)
+def test_dry_run_rejects_d300_rebind_after_fd_check_before_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+    sidecar_kind: str,
+) -> None:
+    """Would fail if a closed D300 FD chain were followed by path-based reporting."""
+    config_path, data_home, state_home, _root, rebind, rebound = _prepare_d300_directory_rebind(
+        tmp_path,
+        monkeypatch,
+        target=target,
+        sidecar_kind=sidecar_kind,
+    )
+    real_open = maintenance_module._open_d300_private_directory
+    real_verify_authority = maintenance_module._verify_authority_snapshot
+    real_report = maintenance_module._report
+    armed = False
+    report_called = False
+
+    def arm_after_scan(*args: object) -> None:
+        nonlocal armed
+        real_verify_authority(*args)
+        armed = True
+
+    def open_then_rebind(
+        path: Path | str,
+        *,
+        label: str,
+        parent_fd: int | None = None,
+    ) -> tuple[int, private_io.FileIdentity]:
+        fd, identity = real_open(path, label=label, parent_fd=parent_fd)
+        if armed and parent_fd is not None and path == sidecar_kind and not rebound():
+            rebind()
+        return fd, identity
+
+    def record_report(*args: object, **kwargs: object) -> maintenance_module.StateMaintenanceReport:
+        nonlocal report_called
+        report_called = True
+        return real_report(*args, **kwargs)
+
+    monkeypatch.setattr(
+        maintenance_module,
+        "_open_d300_private_directory",
+        open_then_rebind,
+    )
+    monkeypatch.setattr(maintenance_module, "_verify_authority_snapshot", arm_after_scan)
+    monkeypatch.setattr(maintenance_module, "_report", record_report)
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"state maintenance D300 .* ancestor chain changed"
+            r"|source root changed while locked"
+        ),
+    ):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=False,
+        )
+
+    assert rebound() is True
+    assert report_called is False
+
+
+@pytest.mark.parametrize("boundary", _D300_APPLY_PATH_RACE_BOUNDARIES)
+def test_apply_rejects_d300_root_rebind_after_check_before_path_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+) -> None:
+    """Would fail if a checked D300 root still directed a later Path mutation."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    root = data_home / "codex-usage"
+    _write_private(root / "snapshots" / "BW_Nufker.json.lock", "")
+    quarantine = root / "maintenance-quarantine-v1"
+    expected_artifact_count = len(_FOREIGN_IDS) * len(maintenance_module._KINDS)
+    real_verify = maintenance_module._verify_artifacts
+    real_mkdir = Path.mkdir
+    real_rename = maintenance_module._rename_no_replace
+    real_write_text = maintenance_module.write_private_text
+    rebound = False
+    mutation_attempted = False
+
+    def rebind() -> None:
+        nonlocal rebound
+        assert rebound is False
+        _rebind_private_directory_with_entries(root)
+        rebound = True
+
+    def should_rebind(artifacts: tuple[maintenance_module._Artifact, ...]) -> bool:
+        pending = next(quarantine.glob(".pending-*"), None)
+        if boundary == "pending_mkdir":
+            return (
+                bool(artifacts)
+                and quarantine.is_dir()
+                and pending is None
+            )
+        if boundary == "artifact_rename":
+            return len(artifacts) == 1
+        if pending is None:
+            return False
+        moved = sum(
+            1
+            for kind in maintenance_module._KINDS
+            if (pending / kind).is_dir()
+            for entry in (pending / kind).iterdir()
+            if entry.is_file()
+        )
+        manifest = pending / maintenance_module._MANIFEST_NAME
+        moved_paths = ()
+        if manifest.is_file():
+            loaded_manifest = json.loads(manifest.read_text(encoding="utf-8"))
+            moved_paths = tuple(loaded_manifest["moved_relative_paths"])
+        if boundary == "audit":
+            return (
+                moved == expected_artifact_count
+                and len(moved_paths) == expected_artifact_count
+                and not (pending / maintenance_module._AUDIT_NAME).exists()
+            )
+        if boundary == "publication":
+            return (pending / maintenance_module._AUDIT_NAME).is_file()
+        raise AssertionError(boundary)  # pragma: no cover - closed parametrization
+
+    def verify_then_rebind(
+        artifacts: tuple[maintenance_module._Artifact, ...],
+        verified_transients: tuple[
+            maintenance_module._VerifiedTransient
+            | maintenance_module._VerifiedD300AncestorChain,
+            ...,
+        ] = (),
+        *,
+        d300_accesses: dict[str, maintenance_module._OpenedD300AncestorChain] | None = None,
+    ) -> None:
+        real_verify(
+            artifacts,
+            verified_transients,
+            d300_accesses=d300_accesses,
+        )
+        if not rebound and should_rebind(artifacts):
+            rebind()
+
+    def record_pending_mkdir(path: Path, *args: object, **kwargs: object) -> None:
+        nonlocal mutation_attempted
+        if boundary == "pending_mkdir" and path.name.startswith(".pending-"):
+            mutation_attempted = True
+        real_mkdir(path, *args, **kwargs)
+
+    def record_rename(source: Path, destination: Path, *, label: str) -> None:
+        nonlocal mutation_attempted
+        if (
+            boundary == "artifact_rename"
+            and label == "state maintenance artifact quarantine"
+        ) or (
+            boundary == "publication"
+            and label == "state maintenance transaction publication"
+        ):
+            mutation_attempted = True
+        real_rename(source, destination, label=label)
+
+    def record_audit_write(path: Path, value: str, *, label: str, mode: int) -> None:
+        nonlocal mutation_attempted
+        if boundary == "audit" and label == "state maintenance audit":
+            mutation_attempted = True
+        real_write_text(path, value, label=label, mode=mode)
+
+    monkeypatch.setattr(maintenance_module, "_verify_artifacts", verify_then_rebind)
+    monkeypatch.setattr(Path, "mkdir", record_pending_mkdir)
+    monkeypatch.setattr(maintenance_module, "_rename_no_replace", record_rename)
+    monkeypatch.setattr(maintenance_module, "write_private_text", record_audit_write)
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"state maintenance D300 .* ancestor chain changed"
+            r"|source root changed while locked"
+        ),
+    ):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=True,
+        )
+
+    assert rebound is True
+    assert mutation_attempted is False
+    assert not tuple(quarantine.glob("transaction-*"))
+    assert (root / "snapshots" / "account.json").is_file()
+    assert (root / "snapshots" / "BW_Nufker.json.lock").read_bytes() == b""
+
+
+@pytest.mark.parametrize(("target", "sidecar_kind"), _D300_REBIND_TARGETS)
+@pytest.mark.parametrize("boundary", _D300_REBIND_BOUNDARIES)
+def test_apply_rejects_d300_root_or_namespace_rebind_at_each_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+    sidecar_kind: str,
+    boundary: str,
+) -> None:
+    """Would fail if a D300 ancestor rebind survived an apply boundary."""
+    config_path, data_home, state_home, root, rebind, rebound = _prepare_d300_directory_rebind(
+        tmp_path,
+        monkeypatch,
+        target=target,
+        sidecar_kind=sidecar_kind,
+    )
+
+    if boundary == "before_pending":
+        real_fsync = maintenance_module._fsync_directory_fd
+
+        def fsync_then_rebind(fd: int) -> None:
+            real_fsync(fd)
+            if not rebound():
+                rebind()
+
+        monkeypatch.setattr(maintenance_module, "_fsync_directory_fd", fsync_then_rebind)
+    elif boundary == "after_pending":
+        real_write_manifest = maintenance_module._write_manifest_at
+
+        def write_pending_then_rebind(*args: object) -> None:
+            real_write_manifest(*args)
+            if not rebound():
+                rebind()
+
+        monkeypatch.setattr(maintenance_module, "_write_manifest_at", write_pending_then_rebind)
+    elif boundary == "after_authority":
+        real_verify = maintenance_module._verify_authority_snapshot_for_apply
+
+        def verify_then_rebind(*args: object) -> None:
+            real_verify(*args)
+            rebind()
+
+        monkeypatch.setattr(
+            maintenance_module,
+            "_verify_authority_snapshot_for_apply",
+            verify_then_rebind,
+        )
+    elif boundary == "before_artifact_rename":
+        real_ensure_directory = maintenance_module._ensure_d300_private_directory_at
+
+        def ensure_then_rebind(parent_fd: int, name: str, *, label: str) -> int:
+            result = real_ensure_directory(parent_fd, name, label=label)
+            if label == "state maintenance transaction artifact directory" and not rebound():
+                rebind()
+            return result
+
+        monkeypatch.setattr(
+            maintenance_module,
+            "_ensure_d300_private_directory_at",
+            ensure_then_rebind,
+        )
+    elif boundary == "before_audit":
+        real_write_manifest = maintenance_module._write_manifest_at
+
+        def write_final_manifest_then_rebind(
+            pending_fd: int,
+            authority: maintenance_module._AuthoritySnapshot,
+            artifacts: tuple[maintenance_module._Artifact, ...],
+            moved: list[maintenance_module._Artifact],
+        ) -> None:
+            real_write_manifest(pending_fd, authority, artifacts, moved)
+            if len(moved) == len(artifacts) and not rebound():
+                rebind()
+
+        monkeypatch.setattr(
+            maintenance_module,
+            "_write_manifest_at",
+            write_final_manifest_then_rebind,
+        )
+    elif boundary == "before_publication":
+        real_write_text = maintenance_module._write_private_text_at
+
+        def write_audit_then_rebind(
+            parent_fd: int,
+            name: str,
+            value: str,
+            *,
+            label: str,
+        ) -> None:
+            real_write_text(parent_fd, name, value, label=label)
+            if name == maintenance_module._AUDIT_NAME and not rebound():
+                rebind()
+
+        monkeypatch.setattr(maintenance_module, "_write_private_text_at", write_audit_then_rebind)
+    else:  # pragma: no cover - closed parametrization
+        raise AssertionError(boundary)
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"state maintenance D300 .* (directory|ancestor chain) changed"
+            r"|source root changed while locked"
+        ),
+    ):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=True,
+        )
+
+    assert rebound() is True
+    quarantine = root / "maintenance-quarantine-v1"
+    assert not quarantine.exists() or not tuple(quarantine.glob("transaction-*"))
+
+
+def test_apply_revalidates_d300_ancestor_binding_before_pending_mkdir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Would fail if a rebind after fsync could create a pending journal first."""
+    config_path, data_home, state_home, _root, rebind, rebound = _prepare_d300_directory_rebind(
+        tmp_path,
+        monkeypatch,
+        target="snapshots namespace",
+        sidecar_kind="snapshots",
+    )
+    real_fsync = maintenance_module._fsync_directory_fd
+    real_mkdir = maintenance_module._mkdir_d300_private_directory_at
+    pending_mkdir_attempted = False
+
+    def fsync_then_rebind(fd: int) -> None:
+        real_fsync(fd)
+        if not rebound():
+            rebind()
+
+    def track_pending_mkdir(parent_fd: int, name: str, *, label: str) -> int:
+        nonlocal pending_mkdir_attempted
+        if name.startswith(".pending-"):
+            pending_mkdir_attempted = True
+        return real_mkdir(parent_fd, name, label=label)
+
+    monkeypatch.setattr(maintenance_module, "_fsync_directory_fd", fsync_then_rebind)
+    monkeypatch.setattr(maintenance_module, "_mkdir_d300_private_directory_at", track_pending_mkdir)
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"state maintenance D300 snapshots ancestor chain changed"
+            r"|source root changed while locked"
+        ),
+    ):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=True,
+        )
+
+    assert rebound() is True
+    assert pending_mkdir_attempted is False
+
+
+def test_d300_transient_binds_real_nofollow_ancestors_from_state_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Would fail if D300 recorded paths rather than no-follow ancestor identities."""
+    _config_path, data_home, _state_home = _prepared_state(tmp_path, monkeypatch)
+    root = data_home / "codex-usage"
+    _write_private(root / "snapshots" / "BW_Nufker.json.lock", "")
+
+    scanned = maintenance_module._scan_artifacts(root, _D296_IDS)
+    chains = tuple(
+        item
+        for item in scanned.verified_transients
+        if isinstance(item, maintenance_module._VerifiedD300AncestorChain)
+    )
+
+    assert len(chains) == 1
+    chain = chains[0]
+    assert chain.state_root == root
+    assert chain.namespace == "snapshots"
+    assert len(chain.identities) == 2
+    assert all(isinstance(identity, private_io.FileIdentity) for identity in chain.identities)
+
+
+@pytest.mark.parametrize(("kind", "sidecar_name", "_payload_name"), _D300_SIDECARS)
+@pytest.mark.parametrize(
+    "phase",
+    ("after_pending_manifest", "after_authority_snapshot", "before_artifact_rename"),
+)
+def test_apply_rejects_d300_sidecar_drift_at_every_transaction_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    sidecar_name: str,
+    _payload_name: str,
+    phase: str,
+) -> None:
+    """Would fail if D300 sidecar validation ended before a durable apply boundary."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    root = data_home / "codex-usage"
+    sidecar = root / kind / sidecar_name
+    _write_private(sidecar, "")
+    drifted = False
+
+    def introduce_drift() -> None:
+        nonlocal drifted
+        assert drifted is False
+        drifted = True
+        sidecar.write_text("drift", encoding="utf-8")
+
+    if phase == "after_pending_manifest":
+        real_write_manifest = maintenance_module._write_manifest_at
+        writes = 0
+
+        def write_then_drift(*args: object) -> None:
+            nonlocal writes
+            real_write_manifest(*args)
+            writes += 1
+            if writes == 1:
+                introduce_drift()
+
+        monkeypatch.setattr(maintenance_module, "_write_manifest_at", write_then_drift)
+    elif phase == "after_authority_snapshot":
+        real_verify = maintenance_module._verify_authority_snapshot_for_apply
+
+        def verify_then_drift(*args: object) -> None:
+            real_verify(*args)
+            introduce_drift()
+
+        monkeypatch.setattr(
+            maintenance_module,
+            "_verify_authority_snapshot_for_apply",
+            verify_then_drift,
+        )
+    elif phase == "before_artifact_rename":
+        real_rename = maintenance_module._rename_d300_no_replace_at
+
+        def drift_before_rename(*args: object, label: str, **kwargs: object) -> None:
+            if label == "state maintenance artifact quarantine" and not drifted:
+                introduce_drift()
+            real_rename(*args, label=label, **kwargs)
+
+        monkeypatch.setattr(
+            maintenance_module,
+            "_rename_d300_no_replace_at",
+            drift_before_rename,
+        )
+    else:  # pragma: no cover - closed parametrization
+        raise AssertionError(phase)
+
+    with pytest.raises(ValueError):
+        quarantine_unconfigured_usage_state(
+            config_path=config_path,
+            data_home=data_home,
+            state_home=state_home,
+            apply=True,
+        )
+
+    assert drifted is True
+    assert (root / "current" / "account.json").is_file()
+    assert (root / "snapshots" / "account.json").is_file()
+    quarantine = root / "maintenance-quarantine-v1"
+    assert not quarantine.exists() or not tuple(quarantine.glob("transaction-*"))
+
+
+def test_apply_quarantines_unconfigured_payloads_but_retains_exact_d300_sidecars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Would fail if a D300 no-op blocked D297 quarantine or were itself moved."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    root = data_home / "codex-usage"
+    sidecars = tuple(
+        root / kind / name.replace("BW_Nufker", "account")
+        for kind, name, _payload_name in _D300_SIDECARS
+    )
+    for sidecar in sidecars:
+        _write_private(sidecar, "")
+
+    first = quarantine_unconfigured_usage_state(
+        config_path=config_path,
+        data_home=data_home,
+        state_home=state_home,
+        apply=True,
+    )
+    second = quarantine_unconfigured_usage_state(
+        config_path=config_path,
+        data_home=data_home,
+        state_home=state_home,
+        apply=True,
+    )
+
+    assert "account" in first.quarantined_account_ids
+    assert second.quarantined_account_ids == ()
+    assert not (root / "snapshots" / "account.json").exists()
+    assert not (root / "debug" / "account-last-ingest.json").exists()
+    assert not (root / "generations" / "account.json").exists()
+    assert tuple(sidecar.read_bytes() for sidecar in sidecars) == (b"",) * len(sidecars)
+
+
+@pytest.mark.parametrize(
+    "missing_namespaces",
+    (("debug",), ("generations",), ("debug", "generations")),
+    ids=("missing-debug", "missing-generations", "missing-both"),
+)
+def test_apply_quarantines_current_payload_with_d300_sidecar_and_missing_optional_namespaces(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing_namespaces: tuple[str, ...],
+) -> None:
+    """D300 binding must not require unrelated optional D297 namespaces."""
+    config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
+    root = data_home / "codex-usage"
+    sidecar = root / "snapshots" / "BW_Nufker.json.lock"
+    _write_private(sidecar, "")
+    for namespace in missing_namespaces:
+        directory = root / namespace
+        for entry in directory.iterdir():
+            entry.unlink()
+        directory.rmdir()
+
+    report = quarantine_unconfigured_usage_state(
+        config_path=config_path,
+        data_home=data_home,
+        state_home=state_home,
+        apply=True,
+    )
+
+    assert report.applied is True
+    assert "account" in report.quarantined_account_ids
+    assert not (root / "current" / "account.json").exists()
+    assert sidecar.read_bytes() == b""
+    assert all(not (root / namespace).exists() for namespace in missing_namespaces)
+    assert (report.quarantine_path / "current" / "account.json").is_file()
+
+
 @pytest.mark.parametrize(
     ("payload", "expected"),
     (
@@ -886,14 +1784,25 @@ def test_dry_run_keeps_arbitrary_current_names_fail_closed(
     assert entry.read_text(encoding="utf-8") == "unknown"
 
 
-@pytest.mark.parametrize("kind", ("snapshots", "debug", "generations"))
-def test_dry_run_does_not_extend_current_lock_sidecar_semantics_to_other_namespaces(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+@pytest.mark.parametrize(
+    ("kind", "name"),
+    (
+        ("snapshots", "BW_Nufker.json.lock.bak"),
+        ("snapshots", ".json.lock"),
+        ("debug", "BW_Nufker.json.lock"),
+        ("debug", "BW_Nufker-last-ingest.json.lock.bak"),
+        ("generations", "BW_Nufker.json.lock.bak"),
+        ("generations", "über.json.lock"),
+        ("generations", f"{'a' * 65}.json.lock"),
+    ),
+)
+def test_dry_run_keeps_nonexact_d300_names_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, name: str
 ) -> None:
-    """Would fail if the current-only exception relaxed another State namespace."""
+    """Would fail if a suffix or broad ID pattern expanded the D300 allowlist."""
     config_path, data_home, state_home = _prepared_state(tmp_path, monkeypatch)
-    entry = data_home / "codex-usage" / kind / "BW_Nufker.json.lock"
-    _write_private(entry, "historical")
+    entry = data_home / "codex-usage" / kind / name
+    _write_private(entry, "")
 
     with pytest.raises(ValueError, match=f"{kind} contains a nontransient unknown entry"):
         quarantine_unconfigured_usage_state(

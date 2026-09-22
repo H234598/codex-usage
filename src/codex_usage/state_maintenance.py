@@ -32,11 +32,14 @@ from .pool_authority_owner import (
     pool_authority_source_path,
 )
 from .private_io import (
+    FileIdentity,
     _rename_private_lock_residue_no_replace,
     assert_no_symlink_ancestors,
     ensure_private_directory,
     private_path_lock,
+    read_private_bytes_at,
     read_private_text,
+    write_private_bytes_at,
     write_private_text,
 )
 from .source_lock import source_lock
@@ -101,12 +104,29 @@ class _Artifact:
 class _VerifiedTransient:
     source: Path
     identity: _Identity
+    label: str
+    d300_namespace: str | None = None
+
+
+@dataclass(frozen=True)
+class _VerifiedD300AncestorChain:
+    state_root: Path
+    namespace: str
+    identities: tuple[FileIdentity, FileIdentity]
+    label: str
+
+
+@dataclass(frozen=True)
+class _OpenedD300AncestorChain:
+    binding: _VerifiedD300AncestorChain
+    root_fd: int
+    namespace_fd: int
 
 
 @dataclass(frozen=True)
 class _ScannedArtifacts:
     artifacts: tuple[_Artifact, ...]
-    verified_transients: tuple[_VerifiedTransient, ...]
+    verified_transients: tuple[_VerifiedTransient | _VerifiedD300AncestorChain, ...]
 
 
 @dataclass(frozen=True)
@@ -162,8 +182,20 @@ def quarantine_unconfigured_usage_state(
                 authority = _load_authority_snapshot(selected_config, selected_state)
                 scanned = _scan_artifacts(state_root, authority.configured_account_ids)
                 _verify_authority_snapshot(selected_config, selected_state, authority)
-                _verify_artifacts(scanned.artifacts, scanned.verified_transients)
-                return _report(authority, scanned.artifacts, applied=False, quarantine_path=None)
+                with _opened_d300_ancestor_chains(
+                    scanned.verified_transients
+                ) as d300_accesses:
+                    _verify_artifacts(
+                        scanned.artifacts,
+                        scanned.verified_transients,
+                        d300_accesses=d300_accesses,
+                    )
+                    return _report(
+                        authority,
+                        scanned.artifacts,
+                        applied=False,
+                        quarantine_path=None,
+                    )
 
         # Reject invalid owner/config/state inputs before creating the maintenance
         # barrier itself.  This keeps a rejected request strictly no-mutation.
@@ -184,18 +216,31 @@ def quarantine_unconfigured_usage_state(
                 scanned = _scan_artifacts(state_root, authority.configured_account_ids)
                 _before_quarantine_mutation()
                 _verify_authority_snapshot(selected_config, selected_state, authority)
-                _verify_artifacts(scanned.artifacts, scanned.verified_transients)
-                report = _report(authority, scanned.artifacts, applied=True, quarantine_path=None)
-                if not scanned.artifacts:
-                    return report
-                return _apply_quarantine(
-                    state_root=state_root,
-                    quarantine_root=quarantine_root,
-                    authority=authority,
-                    artifacts=scanned.artifacts,
-                    verified_transients=scanned.verified_transients,
-                    report=report,
-                )
+                with _opened_d300_ancestor_chains(
+                    scanned.verified_transients
+                ) as d300_accesses:
+                    _verify_artifacts(
+                        scanned.artifacts,
+                        scanned.verified_transients,
+                        d300_accesses=d300_accesses,
+                    )
+                    report = _report(
+                        authority,
+                        scanned.artifacts,
+                        applied=True,
+                        quarantine_path=None,
+                    )
+                    if not scanned.artifacts:
+                        return report
+                    return _apply_quarantine(
+                        state_root=state_root,
+                        quarantine_root=quarantine_root,
+                        authority=authority,
+                        artifacts=scanned.artifacts,
+                        verified_transients=scanned.verified_transients,
+                        d300_accesses=d300_accesses,
+                        report=report,
+                    )
 
 
 def _select_config_path(value: Path | None) -> Path:
@@ -304,34 +349,51 @@ def _scan_artifacts(
     state_root: Path, configured_ids: tuple[str, ...]
 ) -> _ScannedArtifacts:
     _require_private_directory(state_root, label="state maintenance root")
+    state_root_identity = _directory_identity(state_root, label="state maintenance root")
     current = state_root / "current"
     locks = state_root / "locks"
     _require_private_directory(current, label="state maintenance current directory")
     _require_private_directory(locks, label="state maintenance locks directory")
-    verified_transients: list[_VerifiedTransient] = []
+    verified_transients: list[_VerifiedTransient | _VerifiedD300AncestorChain] = []
     by_kind = {
         "current": _scan_named_directory(
             current,
             "current",
             suffix=".json",
+            state_root=state_root,
             verified_transients=verified_transients,
         ),
         "snapshots": _scan_optional_named_directory(
-            state_root / "snapshots", "snapshots", suffix=".json"
+            state_root / "snapshots",
+            "snapshots",
+            suffix=".json",
+            state_root=state_root,
+            verified_transients=verified_transients,
         ),
         "debug": _scan_optional_named_directory(
-            state_root / "debug", "debug", suffix="-last-ingest.json"
+            state_root / "debug",
+            "debug",
+            suffix="-last-ingest.json",
+            state_root=state_root,
+            verified_transients=verified_transients,
         ),
         "generations": _scan_optional_named_directory(
-            state_root / "generations", "generations", suffix=".json"
+            state_root / "generations",
+            "generations",
+            suffix=".json",
+            state_root=state_root,
+            verified_transients=verified_transients,
         ),
         "locks": _scan_named_directory(
             locks,
             "locks",
             suffix=".lock",
             ignored_names=_IGNORED_LOCK_NAMES,
+            state_root=state_root,
         ),
     }
+    if _directory_identity(state_root, label="state maintenance root") != state_root_identity:
+        raise ValueError("state maintenance root changed while scanning")
     configured = set(configured_ids)
     artifacts: list[_Artifact] = []
     for kind in _KINDS:
@@ -359,10 +421,18 @@ def _scan_optional_named_directory(
     kind: str,
     *,
     suffix: str,
+    state_root: Path,
+    verified_transients: list[_VerifiedTransient | _VerifiedD300AncestorChain],
 ) -> tuple[tuple[str, Path, _Identity], ...]:
     if not directory.exists() and not directory.is_symlink():
         return ()
-    return _scan_named_directory(directory, kind, suffix=suffix)
+    return _scan_named_directory(
+        directory,
+        kind,
+        suffix=suffix,
+        state_root=state_root,
+        verified_transients=verified_transients,
+    )
 
 
 def _scan_named_directory(
@@ -371,11 +441,13 @@ def _scan_named_directory(
     *,
     suffix: str,
     ignored_names: frozenset[str] = frozenset(),
-    verified_transients: list[_VerifiedTransient] | None = None,
+    state_root: Path,
+    verified_transients: list[_VerifiedTransient | _VerifiedD300AncestorChain] | None = None,
 ) -> tuple[tuple[str, Path, _Identity], ...]:
     _require_private_directory(directory, label=f"state maintenance {kind} directory")
     initial = _directory_identity(directory, label=f"state maintenance {kind} directory")
     entries: list[tuple[str, Path, _Identity]] = []
+    saw_d300_sidecar = False
     try:
         paths = tuple(sorted(directory.iterdir(), key=lambda item: item.name))
     except OSError as exc:
@@ -385,13 +457,22 @@ def _scan_named_directory(
     for path in paths:
         if path.name in ignored_names or _is_transient(path.name):
             continue
-        if kind == "current":
-            identity = _historical_current_lock_sidecar_identity(path)
-            if identity is not None:
-                if verified_transients is None:  # pragma: no cover - internal invariant
-                    raise AssertionError("current sidecar identities must be retained")
-                verified_transients.append(_VerifiedTransient(path, identity))
-                continue
+        transient = _historical_lock_sidecar_identity(kind, path)
+        if transient is not None:
+            if verified_transients is None:  # pragma: no cover - internal invariant
+                raise AssertionError("transient sidecar identities must be retained")
+            identity, label = transient
+            verified_transients.append(
+                _VerifiedTransient(
+                    path,
+                    identity,
+                    label,
+                    d300_namespace=kind if label == "state maintenance D300 lock sidecar" else None,
+                )
+            )
+            if label == "state maintenance D300 lock sidecar":
+                saw_d300_sidecar = True
+            continue
         account_id = _account_id_from_name(path.name, suffix)
         if account_id is None:
             raise ValueError(f"state maintenance {kind} contains a nontransient unknown entry")
@@ -399,11 +480,32 @@ def _scan_named_directory(
         entries.append((account_id, path, identity))
     if _directory_identity(directory, label=f"state maintenance {kind} directory") != initial:
         raise ValueError(f"state maintenance {kind} directory changed while scanning")
+    if saw_d300_sidecar:
+        if verified_transients is None:  # pragma: no cover - internal invariant
+            raise AssertionError("D300 sidecar identities must be retained")
+        verified_transients.append(
+            _capture_d300_ancestor_chain(
+                state_root,
+                directory,
+                kind=kind,
+            )
+        )
     return tuple(entries)
 
 
 def _is_transient(name: str) -> bool:
     return name.startswith(".") and (".tmp-" in name or ".rollback" in name)
+
+
+def _historical_lock_sidecar_identity(
+    kind: str, path: Path
+) -> tuple[_Identity, str] | None:
+    if kind == "current":
+        identity = _historical_current_lock_sidecar_identity(path)
+        if identity is None:
+            return None
+        return identity, "state maintenance current lock sidecar"
+    return _d300_lock_sidecar_identity(kind, path)
 
 
 def _historical_current_lock_sidecar_identity(path: Path) -> _Identity | None:
@@ -414,6 +516,196 @@ def _historical_current_lock_sidecar_identity(path: Path) -> _Identity | None:
     if _account_id_from_name(name.removesuffix(".lock"), ".json") is None:
         return None
     return _private_identity(path, label="state maintenance current lock sidecar")
+
+
+def _d300_lock_sidecar_identity(kind: str, path: Path) -> tuple[_Identity, str] | None:
+    """Bind only the three empty legacy lock forms authorized by D300."""
+    name = path.name
+    if kind in {"snapshots", "generations"}:
+        account_id = _account_id_from_name(name.removesuffix(".lock"), ".json")
+    elif kind == "debug":
+        account_id = _account_id_from_name(
+            name.removesuffix(".lock"), "-last-ingest.json"
+        )
+    else:
+        return None
+    if account_id is None or not name.endswith(".lock"):
+        return None
+    label = "state maintenance D300 lock sidecar"
+    identity = _private_identity(path, label=label)
+    if identity.size != 0:
+        raise ValueError(f"{label} must be empty")
+    return identity, label
+
+
+def _capture_d300_ancestor_chain(
+    state_root: Path,
+    namespace: Path,
+    *,
+    kind: str,
+) -> _VerifiedD300AncestorChain:
+    if namespace.parent != state_root or namespace.name != kind:
+        raise AssertionError("D300 ancestor chain namespace is invalid")
+    label = f"state maintenance D300 {kind} ancestor chain"
+    root_fd = namespace_fd = -1
+    try:
+        root_fd, root_identity = _open_d300_private_directory(
+            state_root,
+            label=label,
+        )
+        namespace_fd, namespace_identity = _open_d300_private_directory(
+            namespace.name,
+            parent_fd=root_fd,
+            label=label,
+        )
+        return _VerifiedD300AncestorChain(
+            state_root=state_root,
+            namespace=namespace.name,
+            identities=(root_identity, namespace_identity),
+            label=label,
+        )
+    finally:
+        if namespace_fd >= 0:
+            os.close(namespace_fd)
+        if root_fd >= 0:
+            os.close(root_fd)
+
+
+def _open_verified_d300_ancestor_chain(
+    binding: _VerifiedD300AncestorChain,
+) -> tuple[int, int]:
+    root_fd = namespace_fd = -1
+    try:
+        root_fd, root_identity = _open_d300_private_directory(
+            binding.state_root,
+            label=binding.label,
+        )
+        if not _same_d300_directory_identity(root_identity, binding.identities[0]):
+            raise ValueError(f"{binding.label} changed before maintenance mutation")
+        namespace_fd, namespace_identity = _open_d300_private_directory(
+            binding.namespace,
+            parent_fd=root_fd,
+            label=binding.label,
+        )
+        if not _same_d300_directory_identity(namespace_identity, binding.identities[1]):
+            raise ValueError(f"{binding.label} changed before maintenance mutation")
+        _revalidate_d300_ancestor_chain_path(binding)
+        result = root_fd, namespace_fd
+        root_fd = namespace_fd = -1
+        return result
+    finally:
+        if namespace_fd >= 0:
+            os.close(namespace_fd)
+        if root_fd >= 0:
+            os.close(root_fd)
+
+
+@contextmanager
+def _opened_d300_ancestor_chains(
+    verified_transients: tuple[_VerifiedTransient | _VerifiedD300AncestorChain, ...],
+) -> Iterator[dict[str, _OpenedD300AncestorChain]]:
+    """Keep verified D300 ancestor descriptors alive through report/apply use."""
+    opened: dict[str, _OpenedD300AncestorChain] = {}
+    with ExitStack() as stack:
+        for transient in verified_transients:
+            if not isinstance(transient, _VerifiedD300AncestorChain):
+                continue
+            if transient.namespace in opened:  # pragma: no cover - scan invariant
+                raise AssertionError("D300 ancestor namespace is duplicated")
+            root_fd, namespace_fd = _open_verified_d300_ancestor_chain(transient)
+            stack.callback(os.close, namespace_fd)
+            stack.callback(os.close, root_fd)
+            opened[transient.namespace] = _OpenedD300AncestorChain(
+                binding=transient,
+                root_fd=root_fd,
+                namespace_fd=namespace_fd,
+            )
+        yield opened
+
+
+def _revalidate_d300_ancestor_chain_path(binding: _VerifiedD300AncestorChain) -> None:
+    """Reject a rebound name after opening the FD chain but before its use."""
+    root_fd = namespace_fd = -1
+    try:
+        root_fd, root_identity = _open_d300_private_directory(
+            binding.state_root,
+            label=binding.label,
+        )
+        if not _same_d300_directory_identity(root_identity, binding.identities[0]):
+            raise ValueError(f"{binding.label} changed before maintenance mutation")
+        namespace_fd, namespace_identity = _open_d300_private_directory(
+            binding.namespace,
+            parent_fd=root_fd,
+            label=binding.label,
+        )
+        if not _same_d300_directory_identity(namespace_identity, binding.identities[1]):
+            raise ValueError(f"{binding.label} changed before maintenance mutation")
+    finally:
+        if namespace_fd >= 0:
+            os.close(namespace_fd)
+        if root_fd >= 0:
+            os.close(root_fd)
+
+
+def _open_d300_private_directory(
+    path: Path | str,
+    *,
+    label: str,
+    parent_fd: int | None = None,
+) -> tuple[int, FileIdentity]:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    fd = -1
+    try:
+        if parent_fd is None:
+            if not isinstance(path, Path):  # pragma: no cover - internal invariant
+                raise AssertionError("D300 ancestor root path is invalid")
+            _require_private_directory(path, label=label)
+            fd = os.open(path, flags)
+        else:
+            if not isinstance(path, str) or path in {"", ".", ".."}:  # pragma: no cover
+                raise AssertionError("D300 ancestor component is invalid")
+            fd = os.open(path, flags, dir_fd=parent_fd)
+        item = os.fstat(fd)
+        if (
+            not stat.S_ISDIR(item.st_mode)
+            or item.st_uid != os.geteuid()
+            or stat.S_IMODE(item.st_mode) != 0o700
+        ):
+            raise ValueError(f"{label} must be a private real directory")
+        identity = FileIdentity(
+            item.st_dev,
+            item.st_ino,
+            stat.S_IMODE(item.st_mode),
+            gid=item.st_gid,
+            uid=item.st_uid,
+            ctime_ns=item.st_ctime_ns,
+        )
+        result = fd
+        fd = -1
+        return result, identity
+    except OSError as exc:
+        raise ValueError(f"{label} is unavailable") from exc
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _same_d300_directory_identity(left: FileIdentity, right: FileIdentity) -> bool:
+    """D297 moves may change ancestor ctime but never its no-follow binding."""
+    return (
+        left.device,
+        left.inode,
+        left.mode,
+        left.gid,
+        left.uid,
+    ) == (
+        right.device,
+        right.inode,
+        right.mode,
+        right.gid,
+        right.uid,
+    )
 
 
 def _account_id_from_name(name: str, suffix: str) -> str | None:
@@ -427,19 +719,90 @@ def _account_id_from_name(name: str, suffix: str) -> str | None:
 
 def _verify_artifacts(
     artifacts: tuple[_Artifact, ...],
-    verified_transients: tuple[_VerifiedTransient, ...] = (),
+    verified_transients: tuple[_VerifiedTransient | _VerifiedD300AncestorChain, ...] = (),
+    *,
+    d300_accesses: dict[str, _OpenedD300AncestorChain] | None = None,
 ) -> None:
+    if d300_accesses is None:
+        with _opened_d300_ancestor_chains(verified_transients) as opened:
+            _verify_artifacts(
+                artifacts,
+                verified_transients,
+                d300_accesses=opened,
+            )
+        return
+    for access in d300_accesses.values():
+        _revalidate_d300_ancestor_chain_path(access.binding)
+    root_fd = _d300_state_root_fd(d300_accesses) if d300_accesses else None
     for artifact in artifacts:
-        current = _private_identity(artifact.source, label=f"state maintenance {artifact.kind}")
+        if root_fd is None:
+            current = _private_identity(
+                artifact.source,
+                label=f"state maintenance {artifact.kind}",
+            )
+        else:
+            parent_fd = -1
+            try:
+                parent_fd = _open_d300_state_kind_directory(
+                    root_fd,
+                    artifact.kind,
+                    label=f"state maintenance {artifact.kind} directory",
+                )
+                current = _private_identity_at(
+                    parent_fd,
+                    artifact.source.name,
+                    label=f"state maintenance {artifact.kind}",
+                )
+            finally:
+                if parent_fd >= 0:
+                    os.close(parent_fd)
         if current != artifact.identity:
             raise ValueError("state artifact changed before maintenance mutation")
     for transient in verified_transients:
-        current = _private_identity(
-            transient.source,
-            label="state maintenance current lock sidecar",
-        )
+        if isinstance(transient, _VerifiedD300AncestorChain):
+            continue
+        if transient.d300_namespace is None:
+            current = _private_identity(
+                transient.source,
+                label=transient.label,
+            )
+        else:
+            access = d300_accesses.get(transient.d300_namespace)
+            if access is None:  # pragma: no cover - scan invariant
+                raise AssertionError("D300 transient ancestor namespace is unavailable")
+            current = _private_identity_at(
+                access.namespace_fd,
+                transient.source.name,
+                label=transient.label,
+            )
         if current != transient.identity:
             raise ValueError("state artifact changed before maintenance mutation")
+
+
+def _d300_state_root_fd(d300_accesses: dict[str, _OpenedD300AncestorChain]) -> int:
+    try:
+        return next(iter(d300_accesses.values())).root_fd
+    except StopIteration as exc:  # pragma: no cover - caller invariant
+        raise AssertionError("D300 state root descriptor is unavailable") from exc
+
+
+def _open_d300_state_kind_directory(root_fd: int, kind: str, *, label: str) -> int:
+    if kind not in _KINDS:  # pragma: no cover - caller invariant
+        raise AssertionError("D300 state kind is invalid")
+    fd, _identity = _open_d300_private_directory(
+        kind,
+        parent_fd=root_fd,
+        label=label,
+    )
+    return fd
+
+
+def _guard_d300_apply_mutation(
+    d300_accesses: dict[str, _OpenedD300AncestorChain],
+) -> None:
+    """Fail closed if a D300 root or namespace name rebound before a mutation."""
+    for access in d300_accesses.values():
+        _revalidate_d300_ancestor_chain_path(access.binding)
 
 
 def _report(
@@ -475,9 +838,46 @@ def _apply_quarantine(
     quarantine_root: Path,
     authority: _AuthoritySnapshot,
     artifacts: tuple[_Artifact, ...],
-    verified_transients: tuple[_VerifiedTransient, ...],
+    verified_transients: tuple[_VerifiedTransient | _VerifiedD300AncestorChain, ...],
+    d300_accesses: dict[str, _OpenedD300AncestorChain],
     report: StateMaintenanceReport,
 ) -> StateMaintenanceReport:
+    if d300_accesses:
+        return _apply_quarantine_d300_bound(
+            state_root=state_root,
+            quarantine_root=quarantine_root,
+            authority=authority,
+            artifacts=artifacts,
+            verified_transients=verified_transients,
+            d300_accesses=d300_accesses,
+            report=report,
+        )
+    return _apply_quarantine_path(
+        state_root=state_root,
+        quarantine_root=quarantine_root,
+        authority=authority,
+        artifacts=artifacts,
+        verified_transients=verified_transients,
+        d300_accesses=d300_accesses,
+        report=report,
+    )
+
+
+def _apply_quarantine_path(
+    *,
+    state_root: Path,
+    quarantine_root: Path,
+    authority: _AuthoritySnapshot,
+    artifacts: tuple[_Artifact, ...],
+    verified_transients: tuple[_VerifiedTransient | _VerifiedD300AncestorChain, ...],
+    d300_accesses: dict[str, _OpenedD300AncestorChain],
+    report: StateMaintenanceReport,
+) -> StateMaintenanceReport:
+    _verify_artifacts(
+        artifacts,
+        verified_transients,
+        d300_accesses=d300_accesses,
+    )
     state_root_identity = _directory_identity(
         state_root,
         label="state maintenance root",
@@ -500,6 +900,11 @@ def _apply_quarantine(
     transaction_name = f".pending-{secrets.token_hex(16)}"
     pending = quarantine_root / transaction_name
     completed = quarantine_root / f"transaction-{transaction_name.removeprefix('.pending-')}"
+    _verify_artifacts(
+        artifacts,
+        verified_transients,
+        d300_accesses=d300_accesses,
+    )
     try:
         pending.mkdir(mode=0o700)
     except OSError as exc:
@@ -510,22 +915,35 @@ def _apply_quarantine(
             quarantine_root,
             label="state maintenance quarantine root",
         )
-        _verify_artifacts(artifacts, verified_transients)
+        _verify_artifacts(
+            artifacts,
+            verified_transients,
+            d300_accesses=d300_accesses,
+        )
         _write_manifest(pending, authority, artifacts, moved)
         _verify_authority_snapshot_for_apply(
             authority,
             state_root,
             artifacts,
             verified_transients,
+            d300_accesses,
         )
         for artifact in artifacts:
             destination = pending / artifact.relative_path
-            _verify_artifacts((), verified_transients)
+            _verify_artifacts(
+                (),
+                verified_transients,
+                d300_accesses=d300_accesses,
+            )
             ensure_private_directory(
                 destination.parent,
                 label="state maintenance transaction artifact directory",
             )
-            _verify_artifacts((artifact,), verified_transients)
+            _verify_artifacts(
+                (artifact,),
+                verified_transients,
+                d300_accesses=d300_accesses,
+            )
             if destination.exists() or destination.is_symlink():
                 raise ValueError("state maintenance quarantine destination already exists")
             _rename_no_replace(
@@ -539,16 +957,28 @@ def _apply_quarantine(
             ):
                 raise ValueError("state maintenance artifact changed during quarantine")
             moved.append(artifact)
-            _verify_artifacts((), verified_transients)
+            _verify_artifacts(
+                (),
+                verified_transients,
+                d300_accesses=d300_accesses,
+            )
             _write_manifest(pending, authority, artifacts, moved)
-        _verify_artifacts((), verified_transients)
+        _verify_artifacts(
+            (),
+            verified_transients,
+            d300_accesses=d300_accesses,
+        )
         write_private_text(
             pending / _AUDIT_NAME,
             report.audit_json,
             label="state maintenance audit",
             mode=0o600,
         )
-        _verify_artifacts((), verified_transients)
+        _verify_artifacts(
+            (),
+            verified_transients,
+            d300_accesses=d300_accesses,
+        )
         _rename_no_replace(
             pending,
             completed,
@@ -583,16 +1013,447 @@ def _apply_quarantine(
         raise
 
 
+def _apply_quarantine_d300_bound(
+    *,
+    state_root: Path,
+    quarantine_root: Path,
+    authority: _AuthoritySnapshot,
+    artifacts: tuple[_Artifact, ...],
+    verified_transients: tuple[_VerifiedTransient | _VerifiedD300AncestorChain, ...],
+    d300_accesses: dict[str, _OpenedD300AncestorChain],
+    report: StateMaintenanceReport,
+) -> StateMaintenanceReport:
+    """Apply only through the scan-bound State-root descriptor chain."""
+    if (
+        quarantine_root.parent != state_root
+        or quarantine_root.name != _QUARANTINE_ROOT_NAME
+    ):  # pragma: no cover - caller invariant
+        raise AssertionError("D300 quarantine root is invalid")
+    root_fd = _d300_state_root_fd(d300_accesses)
+    quarantine_fd = pending_fd = -1
+    source_fds: dict[str, int] = {}
+    pending_name = completed_name = ""
+    published = False
+    try:
+        _verify_artifacts(
+            artifacts,
+            verified_transients,
+            d300_accesses=d300_accesses,
+        )
+        artifact_kinds = {artifact.kind for artifact in artifacts}
+        for kind in _KINDS:
+            if kind in artifact_kinds:
+                source_fds[kind] = _open_d300_state_kind_directory(
+                    root_fd,
+                    kind,
+                    label=f"state maintenance {kind} directory",
+                )
+        _guard_d300_apply_mutation(d300_accesses)
+        quarantine_fd = _ensure_d300_private_directory_at(
+            root_fd,
+            _QUARANTINE_ROOT_NAME,
+            label="state maintenance quarantine root",
+        )
+        _fsync_directory_fd(root_fd)
+        pending_name = f".pending-{secrets.token_hex(16)}"
+        completed_name = f"transaction-{pending_name.removeprefix('.pending-')}"
+        _verify_artifacts(
+            artifacts,
+            verified_transients,
+            d300_accesses=d300_accesses,
+        )
+        _guard_d300_apply_mutation(d300_accesses)
+        pending_fd = _mkdir_d300_private_directory_at(
+            quarantine_fd,
+            pending_name,
+            label="state maintenance transaction",
+        )
+        _fsync_directory_fd(quarantine_fd)
+        moved: list[_Artifact] = []
+        _verify_artifacts(
+            artifacts,
+            verified_transients,
+            d300_accesses=d300_accesses,
+        )
+        _guard_d300_apply_mutation(d300_accesses)
+        _write_manifest_at(pending_fd, authority, artifacts, moved)
+        _verify_authority_snapshot_for_apply(
+            authority,
+            state_root,
+            artifacts,
+            verified_transients,
+            d300_accesses,
+        )
+        for artifact in artifacts:
+            destination_fd = -1
+            try:
+                _verify_artifacts(
+                    (),
+                    verified_transients,
+                    d300_accesses=d300_accesses,
+                )
+                _guard_d300_apply_mutation(d300_accesses)
+                destination_fd = _ensure_d300_private_directory_at(
+                    pending_fd,
+                    artifact.kind,
+                    label="state maintenance transaction artifact directory",
+                )
+                _verify_artifacts(
+                    (artifact,),
+                    verified_transients,
+                    d300_accesses=d300_accesses,
+                )
+                _guard_d300_apply_mutation(d300_accesses)
+                if _d300_entry_exists(destination_fd, artifact.source.name):
+                    raise ValueError("state maintenance quarantine destination already exists")
+                _rename_d300_no_replace_at(
+                    source_fds[artifact.kind],
+                    artifact.source.name,
+                    destination_fd,
+                    artifact.source.name,
+                    label="state maintenance artifact quarantine",
+                    verified_transients=verified_transients,
+                    d300_accesses=d300_accesses,
+                )
+                if not _same_moved_artifact_identity(
+                    _private_identity_at(
+                        destination_fd,
+                        artifact.source.name,
+                        label="state maintenance quarantined artifact",
+                    ),
+                    artifact.identity,
+                ):
+                    raise ValueError("state maintenance artifact changed during quarantine")
+                moved.append(artifact)
+            finally:
+                if destination_fd >= 0:
+                    os.close(destination_fd)
+            _verify_artifacts(
+                (),
+                verified_transients,
+                d300_accesses=d300_accesses,
+            )
+            _guard_d300_apply_mutation(d300_accesses)
+            _write_manifest_at(pending_fd, authority, artifacts, moved)
+        _verify_artifacts(
+            (),
+            verified_transients,
+            d300_accesses=d300_accesses,
+        )
+        _guard_d300_apply_mutation(d300_accesses)
+        _write_private_text_at(
+            pending_fd,
+            _AUDIT_NAME,
+            report.audit_json,
+            label="state maintenance audit",
+        )
+        _verify_artifacts(
+            (),
+            verified_transients,
+            d300_accesses=d300_accesses,
+        )
+        _guard_d300_apply_mutation(d300_accesses)
+        _rename_d300_no_replace_at(
+            quarantine_fd,
+            pending_name,
+            quarantine_fd,
+            completed_name,
+            label="state maintenance transaction publication",
+            verified_transients=verified_transients,
+            d300_accesses=d300_accesses,
+        )
+        published = True
+        completed_fd, _completed_identity = _open_d300_private_directory(
+            completed_name,
+            parent_fd=quarantine_fd,
+            label="state maintenance completed transaction",
+        )
+        os.close(completed_fd)
+        return StateMaintenanceReport(
+            applied=True,
+            configured_account_ids=report.configured_account_ids,
+            quarantined_account_ids=report.quarantined_account_ids,
+            artifact_count=report.artifact_count,
+            audit_json=report.audit_json,
+            audit_sha256=report.audit_sha256,
+            quarantine_path=quarantine_root / completed_name,
+        )
+    except BaseException as primary_error:
+        if published:
+            raise ValueError(
+                "state maintenance transaction published but final verification failed"
+            ) from primary_error
+        if pending_fd >= 0:
+            try:
+                _rollback_d300_pending(
+                    source_fds=source_fds,
+                    quarantine_fd=quarantine_fd,
+                    pending_fd=pending_fd,
+                    pending_name=pending_name,
+                    artifacts=artifacts,
+                )
+            except BaseException as rollback_error:
+                raise BaseExceptionGroup(
+                    "state maintenance rollback failed", [primary_error, rollback_error]
+                ) from None
+        raise
+    finally:
+        if pending_fd >= 0:
+            os.close(pending_fd)
+        if quarantine_fd >= 0:
+            os.close(quarantine_fd)
+        for source_fd in source_fds.values():
+            os.close(source_fd)
+
+
+def _ensure_d300_private_directory_at(parent_fd: int, name: str, *, label: str) -> int:
+    try:
+        os.mkdir(name, 0o700, dir_fd=parent_fd)
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        raise ValueError(f"{label} is unavailable") from exc
+    fd, _identity = _open_d300_private_directory(name, parent_fd=parent_fd, label=label)
+    return fd
+
+
+def _mkdir_d300_private_directory_at(parent_fd: int, name: str, *, label: str) -> int:
+    try:
+        os.mkdir(name, 0o700, dir_fd=parent_fd)
+    except OSError as exc:
+        raise ValueError(f"could not create {label}") from exc
+    fd, _identity = _open_d300_private_directory(name, parent_fd=parent_fd, label=label)
+    return fd
+
+
+def _d300_entry_exists(parent_fd: int, name: str) -> bool:
+    try:
+        os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise ValueError("state maintenance quarantine destination is unavailable") from exc
+    return True
+
+
+def _rename_d300_no_replace_at(
+    source_fd: int,
+    source_name: str,
+    destination_fd: int,
+    destination_name: str,
+    *,
+    label: str,
+    verified_transients: tuple[_VerifiedTransient | _VerifiedD300AncestorChain, ...] = (),
+    d300_accesses: dict[str, _OpenedD300AncestorChain] | None = None,
+) -> None:
+    if d300_accesses:
+        _verify_artifacts(
+            (),
+            verified_transients,
+            d300_accesses=d300_accesses,
+        )
+    try:
+        _rename_private_lock_residue_no_replace(
+            source_fd=source_fd,
+            source_name=source_name,
+            destination_fd=destination_fd,
+            destination_name=destination_name,
+        )
+        _fsync_directory_fd(destination_fd)
+        if source_fd != destination_fd:
+            _fsync_directory_fd(source_fd)
+    except OSError as exc:
+        if exc.errno == errno.EEXIST:
+            raise ValueError(f"{label} destination already exists") from exc
+        raise ValueError(f"{label} failed") from exc
+
+
+def _write_private_text_at(parent_fd: int, name: str, text: str, *, label: str) -> None:
+    payload = text.encode("utf-8")
+    temporary = f".{name}.tmp-{os.getpid()}-{secrets.token_hex(8)}"
+    rollback = f".{name}.rollback-{os.getpid()}-{secrets.token_hex(8)}"
+    replaced = rollback_exists = False
+    try:
+        write_private_bytes_at(
+            parent_fd,
+            temporary,
+            payload,
+            mode=0o600,
+        )
+        if _d300_entry_exists(parent_fd, name):
+            previous, _previous_identity = read_private_bytes_at(
+                parent_fd,
+                name,
+                maximum=_MAX_STATE_ARTIFACT_BYTES,
+                mode=0o600,
+            )
+            write_private_bytes_at(parent_fd, rollback, previous, mode=0o600)
+            rollback_exists = True
+        os.replace(temporary, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        replaced = True
+        _fsync_directory_fd(parent_fd)
+        if rollback_exists:
+            os.unlink(rollback, dir_fd=parent_fd)
+            rollback_exists = False
+            _fsync_directory_fd(parent_fd)
+    except OSError as exc:
+        if replaced and rollback_exists:
+            try:
+                os.replace(rollback, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+                rollback_exists = False
+                _fsync_directory_fd(parent_fd)
+            except OSError as rollback_error:
+                raise ValueError(f"could not roll back {label}") from rollback_error
+        raise ValueError(f"could not write {label}") from exc
+    except ValueError as exc:
+        raise ValueError(f"could not write {label}") from exc
+    finally:
+        for candidate in (temporary, rollback):
+            try:
+                os.unlink(candidate, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+
+
+def _write_manifest_at(
+    pending_fd: int,
+    authority: _AuthoritySnapshot,
+    artifacts: tuple[_Artifact, ...],
+    moved: list[_Artifact],
+) -> None:
+    moved_paths = {item.relative_path for item in moved}
+    manifest = {
+        "artifacts": [item.audit_dict() for item in artifacts],
+        "config_identity": authority.config_identity.audit_dict(),
+        "configured_account_ids": list(authority.configured_account_ids),
+        "moved_relative_paths": [
+            item.relative_path for item in artifacts if item.relative_path in moved_paths
+        ],
+        "schema_version": 1,
+        "source_identity": authority.source_identity.audit_dict(),
+    }
+    _write_private_text_at(
+        pending_fd,
+        _MANIFEST_NAME,
+        _canonical_json(manifest),
+        label="state maintenance manifest",
+    )
+
+
+def _rollback_d300_pending(
+    *,
+    source_fds: dict[str, int],
+    quarantine_fd: int,
+    pending_fd: int,
+    pending_name: str,
+    artifacts: tuple[_Artifact, ...],
+) -> None:
+    rollback_errors: list[BaseException] = []
+    for artifact in reversed(artifacts):
+        destination_fd = -1
+        try:
+            source_fd = source_fds[artifact.kind]
+            try:
+                destination_fd = _open_d300_private_directory(
+                    artifact.kind,
+                    parent_fd=pending_fd,
+                    label="state maintenance transaction artifact directory",
+                )[0]
+            except ValueError:
+                destination_fd = -1
+            source_exists = _d300_entry_exists(source_fd, artifact.source.name)
+            destination_exists = (
+                destination_fd >= 0
+                and _d300_entry_exists(destination_fd, artifact.source.name)
+            )
+            if source_exists and not destination_exists:
+                continue
+            if not source_exists and destination_exists:
+                if not _same_moved_artifact_identity(
+                    _private_identity_at(
+                        destination_fd,
+                        artifact.source.name,
+                        label="state maintenance rollback artifact",
+                    ),
+                    artifact.identity,
+                ):
+                    raise ValueError("state maintenance quarantine artifact identity changed")
+                _rename_d300_no_replace_at(
+                    destination_fd,
+                    artifact.source.name,
+                    source_fd,
+                    artifact.source.name,
+                    label="state maintenance rollback",
+                )
+                if not _same_moved_artifact_identity(
+                    _private_identity_at(
+                        source_fd,
+                        artifact.source.name,
+                        label="state maintenance rollback artifact",
+                    ),
+                    artifact.identity,
+                ):
+                    raise ValueError("state maintenance rollback artifact identity changed")
+                continue
+            raise ValueError("state maintenance rollback artifact state is ambiguous")
+        except BaseException as exc:
+            rollback_errors.append(exc)
+        finally:
+            if destination_fd >= 0:
+                os.close(destination_fd)
+    if rollback_errors:
+        raise BaseExceptionGroup("state maintenance rollback failed", rollback_errors)
+    _remove_d300_pending_transaction(pending_fd, quarantine_fd, pending_name)
+
+
+def _remove_d300_pending_transaction(
+    pending_fd: int,
+    quarantine_fd: int,
+    pending_name: str,
+) -> None:
+    try:
+        with os.scandir(pending_fd) as iterator:
+            names = {entry.name for entry in iterator}
+        if names - {*_KINDS, _AUDIT_NAME, _MANIFEST_NAME}:
+            raise ValueError("state maintenance pending transaction contains an unknown entry")
+        for name in (_AUDIT_NAME, _MANIFEST_NAME):
+            if name in names:
+                os.unlink(name, dir_fd=pending_fd)
+        for kind in _KINDS:
+            if kind in names:
+                os.rmdir(kind, dir_fd=pending_fd)
+        os.rmdir(pending_name, dir_fd=quarantine_fd)
+        _fsync_directory_fd(quarantine_fd)
+    except OSError as exc:
+        raise ValueError("could not remove state maintenance transaction") from exc
+
+
 def _verify_authority_snapshot_for_apply(
     authority: _AuthoritySnapshot,
     state_root: Path,
     artifacts: tuple[_Artifact, ...],
-    verified_transients: tuple[_VerifiedTransient, ...],
+    verified_transients: tuple[_VerifiedTransient | _VerifiedD300AncestorChain, ...],
+    d300_accesses: dict[str, _OpenedD300AncestorChain],
 ) -> None:
     # The caller already holds both authority locks.  This function deliberately
     # only repeats local state invariants after the pending journal is durable.
-    _require_private_directory(state_root, label="state maintenance root")
-    _verify_artifacts(artifacts, verified_transients)
+    if d300_accesses:
+        item = os.fstat(_d300_state_root_fd(d300_accesses))
+        if (
+            not stat.S_ISDIR(item.st_mode)
+            or item.st_uid != os.geteuid()
+            or stat.S_IMODE(item.st_mode) != 0o700
+        ):
+            raise ValueError("state maintenance root must be a private real directory")
+    else:
+        _require_private_directory(state_root, label="state maintenance root")
+    _verify_artifacts(
+        artifacts,
+        verified_transients,
+        d300_accesses=d300_accesses,
+    )
     if not authority.configured_account_ids:
         raise ValueError("pool authority inventory must not be empty for state maintenance")
 
@@ -966,6 +1827,34 @@ def _private_identity(path: Path, *, label: str) -> _Identity:
         invalid_utf8_label=label,
     )
     return _identity_from_text(text, item, label=label)
+
+
+def _private_identity_at(parent_fd: int, name: str, *, label: str) -> _Identity:
+    """Read a D300 no-op only through its retained no-follow namespace FD."""
+    try:
+        payload, item = read_private_bytes_at(
+            parent_fd,
+            name,
+            maximum=_MAX_STATE_ARTIFACT_BYTES,
+            mode=0o600,
+        )
+    except ValueError as exc:
+        raise ValueError(f"{label} is unavailable") from exc
+    try:
+        payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"{label} is not valid UTF-8") from exc
+    return _Identity(
+        device=item.device,
+        inode=item.inode,
+        mode=item.mode,
+        uid=item.uid,
+        gid=item.gid,
+        nlink=1,
+        size=len(payload),
+        ctime_ns=item.ctime_ns,
+        sha256=hashlib.sha256(payload).hexdigest(),
+    )
 
 
 def _identity_from_text(text: str, item: os.stat_result, *, label: str) -> _Identity:

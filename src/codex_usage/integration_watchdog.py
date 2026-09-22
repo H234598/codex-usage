@@ -429,8 +429,8 @@ def _private_service_runtime_core_evidence(
     )
     expected_dist_info = f"codex_usage-{verified.active_release.version}.dist-info"
     if (
-        verified.active_release.version != "0.6.541"
-        or not verified.release_id.startswith("0.6.541-")
+        verified.active_release.version != "0.6.542"
+        or not verified.release_id.startswith("0.6.542-")
     ):
         raise IntegrationEvidenceUnavailable()
 

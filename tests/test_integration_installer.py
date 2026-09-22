@@ -640,7 +640,7 @@ def install_verified_06540_source(tmp_path: Path):
             temporary_root=temporary_root,
         )
     assert previous.version == integration_attestation._PREVIOUS_SCHEMA2_VERSION
-    _set_fixture_source_release_version(source_root, "0.6.541")
+    _set_fixture_source_release_version(source_root, "0.6.542")
     return integration_installer.install_release(
         source_root=source_root,
         state_home=state_home,
@@ -1064,7 +1064,7 @@ def test_foreign_tree_digest_detects_same_size_bytes_and_symlink_target(tmp_path
     assert _foreign_tree_digest(root=root) != linked_first
 
 
-def test_release_version_is_06541_across_project_surfaces():
+def test_release_version_is_06542_across_project_surfaces():
     from codex_usage import (
         __version__,
         integration_attestation,
@@ -1080,18 +1080,22 @@ def test_release_version_is_06541_across_project_surfaces():
         )
     )
 
-    assert integration_installer.RELEASE_VERSION == "0.6.541"
-    assert project["project"]["version"] == "0.6.541"
-    assert __version__ == "0.6.541"
-    assert applet["version"] == "0.6.541"
-    assert applet["comments"] == "Version: 0.6.541"
-    assert integration_attestation._EXPECTED_VERSION == "0.6.541"
+    assert integration_installer.RELEASE_VERSION == "0.6.542"
+    assert project["project"]["version"] == "0.6.542"
+    assert __version__ == "0.6.542"
+    assert applet["version"] == "0.6.542"
+    assert applet["comments"] == "Version: 0.6.542"
+    assert integration_attestation._EXPECTED_VERSION == "0.6.542"
     assert integration_attestation._DIST_INFO_PREFIX == (
+        "codex_usage_integration_producer-0.6.542.dist-info"
+    )
+    assert integration_attestation._CORE_DIST_INFO_PREFIX == "codex_usage-0.6.542.dist-info"
+    assert integration_attestation._PREVIOUS_SCHEMA2_VERSION == "0.6.541"
+    assert integration_attestation._PREVIOUS_SCHEMA2_DIST_INFO_PREFIX == (
         "codex_usage_integration_producer-0.6.541.dist-info"
     )
-    assert integration_attestation._CORE_DIST_INFO_PREFIX == "codex_usage-0.6.541.dist-info"
-    assert integration_pool_authority.PRODUCER_VERSION == "0.6.541"
-    assert service.EXPECTED_DISTRIBUTION_VERSION == "0.6.541"
+    assert integration_pool_authority.PRODUCER_VERSION == "0.6.542"
+    assert service.EXPECTED_DISTRIBUTION_VERSION == "0.6.542"
 
 
 def test_runtime_rejects_compromised_06535_but_installer_upgrades_verified_06540(
@@ -1099,7 +1103,7 @@ def test_runtime_rejects_compromised_06535_but_installer_upgrades_verified_06540
 ):
     from codex_usage.integration_attestation import IntegrationAttestationUnavailable
 
-    assert install_verified_06540_source(tmp_path / "verified-06540").version == "0.6.541"
+    assert install_verified_06540_source(tmp_path / "verified-06540").version == "0.6.542"
     with pytest.raises(IntegrationAttestationUnavailable):
         verify_compromised_06535_runtime(tmp_path / "compromised-06535")
 
@@ -1156,7 +1160,7 @@ def test_install_cutover_accepts_expected_runtime_bytecode_in_06536_release(
             python_executable=Path(sys.executable),
             temporary_root=temporary_root,
         )
-    _set_fixture_source_release_version(source_root, "0.6.541")
+    _set_fixture_source_release_version(source_root, "0.6.542")
     cache_path = _write_runtime_bytecode(
         previous.release_dir,
         invalidation_mode=invalidation_mode,
@@ -1170,7 +1174,7 @@ def test_install_cutover_accepts_expected_runtime_bytecode_in_06536_release(
         temporary_root=temporary_root,
     )
 
-    assert installed.version == "0.6.541"
+    assert installed.version == "0.6.542"
     assert cache_path.is_file()
     current_cache = _write_runtime_bytecode(installed.release_dir)
     with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
@@ -1214,7 +1218,7 @@ def test_install_cutover_rejects_unexpected_addition_beside_06536_runtime_byteco
             python_executable=Path(sys.executable),
             temporary_root=temporary_root,
         )
-    _set_fixture_source_release_version(source_root, "0.6.541")
+    _set_fixture_source_release_version(source_root, "0.6.542")
     cache_path = _write_runtime_bytecode(previous.release_dir)
     if addition == "unknown-cache-name":
         unexpected = cache_path.with_name("foreign.cpython-999.pyc")
@@ -1280,7 +1284,7 @@ def test_06536_bytecode_validation_rejects_source_inode_swap_after_tree_scan(
             python_executable=Path(sys.executable),
             temporary_root=temporary_root,
         )
-    _set_fixture_source_release_version(source_root, "0.6.541")
+    _set_fixture_source_release_version(source_root, "0.6.542")
     cache_path = _write_runtime_bytecode(previous.release_dir)
     source_path = cache_path.parent.parent / "integration_entrypoint.py"
     staged = tmp_path / "staged-race"
@@ -1444,14 +1448,14 @@ def _compromised_06535_with_previous_06534(tmp_path: Path):
     pycache.mkdir(mode=0o700)
     (pycache / "compromised.pyc").write_bytes(b"compromised")
     # Historical malformed-marker tests need an inert predecessor artifact.
-    # D299's real 0.6.541 install path never creates or consumes it.
+    # D299's real 0.6.542 install path never creates or consumes it.
     write_private_text(
         integration / "previous.json",
         historical_previous.decode("utf-8"),
         label="historical predecessor fixture",
         mode=0o600,
     )
-    _set_fixture_source_release_version(source_root, "0.6.541")
+    _set_fixture_source_release_version(source_root, "0.6.542")
     assert json.loads((integration / "previous.json").read_bytes())["version"] == "0.6.534"
     return (
         previous,
@@ -1847,8 +1851,8 @@ def test_install_creates_attested_private_active_release(tmp_path):
     release, data_home, state_home = _install(tmp_path)
     from codex_usage.integration_attestation import verify_active_release
 
-    assert release.version == "0.6.541"
-    assert release.release_dir.name.startswith("0.6.541-")
+    assert release.version == "0.6.542"
+    assert release.release_dir.name.startswith("0.6.542-")
     assert release.launcher_path.name == "codex-usage"
     assert stat.S_IMODE(release.launcher_path.lstat().st_mode) == 0o700
     verified = verify_active_release(
@@ -1863,10 +1867,10 @@ def test_install_creates_attested_private_active_release(tmp_path):
         )
     )
     assert active["schema_version"] == 2
-    assert active["version"] == "0.6.541"
+    assert active["version"] == "0.6.542"
     assert active["release_id"] == release.release_dir.name
     assert Path(active["record_path"]).parent.name == (
-        "codex_usage_integration_producer-0.6.541.dist-info"
+        "codex_usage_integration_producer-0.6.542.dist-info"
     )
     assert active["launcher_sha256"] == release.launcher_sha256
     assert active["release_tree_sha256"] == release.release_tree_sha256
@@ -1978,7 +1982,52 @@ def test_d297_rejects_all_v1_cutover_residues_before_recovery_or_mutation(
     assert snapshot(residue) == residue_before
 
 
-def _install_attested_d299_predecessor(tmp_path: Path):
+def _install_attested_d300_predecessor(tmp_path: Path):
+    from codex_usage import integration_installer
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    source_root = _temporary_source_copy(tmp_path)
+    with pytest.MonkeyPatch.context() as context:
+        _patch_release_identity(context, "0.6.541", source_root=source_root)
+        predecessor = integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    return predecessor, source_root, data_home, state_home, temporary_root
+
+
+def test_d300_cutover_accepts_only_attested_06541_predecessor_and_preserves_v2_contract(
+    tmp_path,
+):
+    from codex_usage import integration_installer
+
+    predecessor, source_root, data_home, state_home, temporary_root = (
+        _install_attested_d300_predecessor(tmp_path)
+    )
+    assert predecessor.version == "0.6.541"
+    _set_fixture_source_release_version(source_root, "0.6.542")
+    installed = integration_installer.install_release(
+        source_root=source_root,
+        state_home=state_home,
+        data_home=data_home,
+        python_executable=Path(sys.executable),
+        temporary_root=temporary_root,
+    )
+
+    integration = state_home / "codex-usage" / "integration"
+    assert installed.version == "0.6.542"
+    assert not (integration / "previous.json").exists()
+    assert not (integration / "current.json").exists()
+
+
+def test_d300_rejects_attested_06540_predecessor_without_mutation(
+    tmp_path,
+    monkeypatch,
+):
+    """D300 accepts no compatibility predecessor older than 0.6.541."""
     from codex_usage import integration_installer
 
     data_home, state_home, temporary_root = _roots(tmp_path)
@@ -1992,53 +2041,8 @@ def _install_attested_d299_predecessor(tmp_path: Path):
             python_executable=Path(sys.executable),
             temporary_root=temporary_root,
         )
-    return predecessor, source_root, data_home, state_home, temporary_root
-
-
-def test_d299_cutover_accepts_only_attested_06540_predecessor_and_preserves_v2_contract(
-    tmp_path,
-):
-    from codex_usage import integration_installer
-
-    predecessor, source_root, data_home, state_home, temporary_root = (
-        _install_attested_d299_predecessor(tmp_path)
-    )
     assert predecessor.version == "0.6.540"
-    _set_fixture_source_release_version(source_root, "0.6.541")
-    installed = integration_installer.install_release(
-        source_root=source_root,
-        state_home=state_home,
-        data_home=data_home,
-        python_executable=Path(sys.executable),
-        temporary_root=temporary_root,
-    )
-
-    integration = state_home / "codex-usage" / "integration"
-    assert installed.version == "0.6.541"
-    assert not (integration / "previous.json").exists()
-    assert not (integration / "current.json").exists()
-
-
-def test_d299_rejects_attested_06536_predecessor_without_mutation(
-    tmp_path,
-    monkeypatch,
-):
-    """D299 accepts no compatibility predecessor older than 0.6.540."""
-    from codex_usage import integration_installer
-
-    data_home, state_home, temporary_root = _roots(tmp_path)
-    source_root = _temporary_source_copy(tmp_path)
-    with pytest.MonkeyPatch.context() as context:
-        _patch_release_identity(context, "0.6.536", source_root=source_root)
-        predecessor = integration_installer.install_release(
-            source_root=source_root,
-            state_home=state_home,
-            data_home=data_home,
-            python_executable=Path(sys.executable),
-            temporary_root=temporary_root,
-        )
-    assert predecessor.version == "0.6.536"
-    _set_fixture_source_release_version(source_root, "0.6.541")
+    _set_fixture_source_release_version(source_root, "0.6.542")
     integration = state_home / "codex-usage" / "integration"
     active = integration / "active.json"
     before = active.read_bytes()
@@ -2047,7 +2051,7 @@ def test_d299_rejects_attested_06536_predecessor_without_mutation(
     generations_identity = (generations.lstat().st_dev, generations.lstat().st_ino)
 
     def reject_recovery(**_kwargs):
-        pytest.fail("D299 must reject a 0.6.536 active before any recovery")
+        pytest.fail("D300 must reject a 0.6.540 active before any recovery")
 
     monkeypatch.setattr(
         integration_installer,
@@ -2071,11 +2075,11 @@ def test_d299_rejects_attested_06536_predecessor_without_mutation(
     assert not (integration / "current.json").exists()
 
 
-def test_d299_rejects_attested_06539_predecessor_without_mutation(
+def test_d300_rejects_attested_06539_predecessor_without_mutation(
     tmp_path,
     monkeypatch,
 ):
-    """The new 0.6.541 release has no 0.6.539 compatibility cutover."""
+    """The new 0.6.542 release has no 0.6.539 compatibility cutover."""
     from codex_usage import integration_installer
 
     data_home, state_home, temporary_root = _roots(tmp_path)
@@ -2090,14 +2094,14 @@ def test_d299_rejects_attested_06539_predecessor_without_mutation(
             temporary_root=temporary_root,
         )
     assert predecessor.version == "0.6.539"
-    _set_fixture_source_release_version(source_root, "0.6.541")
+    _set_fixture_source_release_version(source_root, "0.6.542")
     integration = state_home / "codex-usage" / "integration"
     active = integration / "active.json"
     before = active.read_bytes()
     active_identity = (active.lstat().st_dev, active.lstat().st_ino)
 
     def reject_recovery(**_kwargs):
-        pytest.fail("D299 must reject a 0.6.539 active before any recovery")
+        pytest.fail("D300 must reject a 0.6.539 active before any recovery")
 
     monkeypatch.setattr(
         integration_installer,
@@ -2120,13 +2124,13 @@ def test_d299_rejects_attested_06539_predecessor_without_mutation(
     assert not (integration / "current.json").exists()
 
 
-def test_d299_cutover_preserves_existing_v2_namespace(tmp_path):
+def test_d300_cutover_preserves_existing_v2_namespace(tmp_path):
     from codex_usage import integration_installer
 
     _predecessor, source_root, data_home, state_home, temporary_root = (
-        _install_attested_d299_predecessor(tmp_path)
+        _install_attested_d300_predecessor(tmp_path)
     )
-    _set_fixture_source_release_version(source_root, "0.6.541")
+    _set_fixture_source_release_version(source_root, "0.6.542")
     integration = state_home / "codex-usage" / "integration"
     generation = integration / "generations" / ("a" * 32)
     generation.mkdir(mode=0o700)
@@ -2141,7 +2145,7 @@ def test_d299_cutover_preserves_existing_v2_namespace(tmp_path):
         temporary_root=temporary_root,
     )
 
-    assert installed.version == "0.6.541"
+    assert installed.version == "0.6.542"
     assert _foreign_tree_digest(root=integration / "generations") == before
 
 
@@ -3384,7 +3388,7 @@ def test_commit_cleanup_failure_returns_success_with_bounded_evidence(
     )
     result = prepared.run()
 
-    assert result.version == "0.6.541"
+    assert result.version == "0.6.542"
     assert cleanup_failed
     assert prepared.active_path.is_file()
     # D297 never creates a public active-release rollback path.  A pre-existing
@@ -3680,7 +3684,7 @@ def test_failed_publish_to_initially_absent_active_keeps_active_present(
         state_home=state_home,
         data_home=data_home,
         expected_entrypoint_path=None,
-    ).version == "0.6.541"
+    ).version == "0.6.542"
     if operation == "install":
         assert not previous_path.exists()
 
@@ -7434,8 +7438,8 @@ def test_public_prepare_source_normalizes_checkout_before_real_install(
     manifest = json.loads(
         (state_home / "codex-usage" / "integration" / "active.json").read_bytes()
     )
-    assert manifest["version"] == "0.6.541"
-    assert re.fullmatch(r"0\.6\.541-[0-9a-f]{16}", manifest["release_id"])
+    assert manifest["version"] == "0.6.542"
+    assert re.fullmatch(r"0\.6\.542-[0-9a-f]{16}", manifest["release_id"])
 
 
 @pytest.mark.parametrize(
@@ -7667,7 +7671,7 @@ def rollback_active_release(**kwargs):
     active = json.loads(
         (state_home / "codex-usage" / "integration" / "active.json").read_bytes()
     )
-    assert active["version"] == "0.6.541"
+    assert active["version"] == "0.6.542"
 
 
 def test_installer_script_rejects_symlinked_entrypoint_before_ambient_import(tmp_path):
@@ -12814,7 +12818,7 @@ def test_installer_release_entry_guards_and_public_wrapper(tmp_path, monkeypatch
     pyproject = bad_source_root / "pyproject.toml"
     pyproject.write_text(
         pyproject.read_text(encoding="utf-8").replace(
-            'version = "0.6.541"',
+            'version = "0.6.542"',
             'version = "0.0.0"',
         ),
         encoding="utf-8",
