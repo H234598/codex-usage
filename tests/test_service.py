@@ -522,6 +522,72 @@ def test_service_install_materializes_record_bound_runtime_importable_when_harde
     assert "ModuleNotFoundError" not in completed.stderr
 
 
+def test_service_install_upgrades_legacy_private_runtime_watchdog(
+    tmp_path,
+    monkeypatch,
+):
+    """A valid pre-canonical-import runtime must be replaced, not rejected."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    monkeypatch.setattr(service_module, "_systemctl", _inactive_systemctl)
+    config_path = tmp_path / "config.toml"
+    service_install(AppConfig(accounts=()), config_path)
+
+    runtime_root = tmp_path / "data" / "codex-usage-service-runtime-v2"
+    current = runtime_root / "current"
+    runtime_watchdog = current / "bin" / "codex-usage-integration-watchdog-v2"
+    interpreter = current / "venv" / "bin" / "python"
+    legacy_identity = current.lstat()
+    runtime_watchdog.write_bytes(b"#!/bin/sh\nexit 0\n")
+    runtime_watchdog.chmod(0o700)
+
+    with pytest.raises(ServiceError, match="service runtime watchdog is invalid"):
+        service_install(AppConfig(accounts=()), config_path)
+
+    rejected_identity = current.lstat()
+    assert (rejected_identity.st_dev, rejected_identity.st_ino) == (
+        legacy_identity.st_dev,
+        legacy_identity.st_ino,
+    )
+    assert sorted(path.name for path in runtime_root.iterdir()) == ["current"]
+
+    legacy_payload = (
+        "#!/bin/sh\n"
+        f"exec {shlex.quote(str(interpreter))} "
+        '-I -B -m codex_usage.integration_watchdog "$@"\n'
+    ).encode()
+    runtime_watchdog.write_bytes(legacy_payload)
+    runtime_watchdog.chmod(0o700)
+
+    service_install(AppConfig(accounts=()), config_path)
+
+    canonical_payload = (
+        "#!/bin/sh\n"
+        f"exec {shlex.quote(str(interpreter))} "
+        "-I -B -c 'from codex_usage.integration_watchdog import main; "
+        "raise SystemExit(main())' \"$@\"\n"
+    ).encode()
+    upgraded_identity = current.lstat()
+    assert (upgraded_identity.st_dev, upgraded_identity.st_ino) != (
+        legacy_identity.st_dev,
+        legacy_identity.st_ino,
+    )
+    assert runtime_watchdog.read_bytes() == canonical_payload
+    assert sorted(path.name for path in runtime_root.iterdir()) == ["current"]
+
+
 def test_private_runtime_real_watchdog_wrapper_is_publisher_only_and_rejects_args(
     tmp_path,
     monkeypatch,
@@ -1897,7 +1963,7 @@ def test_runtime_builder_rejects_user_owned_producer_venv_interpreter(
 
 @pytest.mark.parametrize(
     "drift",
-    ("symlink", "hardlink", "version", "interpreter", "module"),
+    ("symlink", "hardlink", "permissions", "version", "interpreter", "module"),
 )
 def test_runtime_revalidation_fails_closed_for_attested_component_drift(
     tmp_path,
@@ -1930,6 +1996,8 @@ def test_runtime_revalidation_fails_closed_for_attested_component_drift(
             current / "bin" / "codex-usage-integration-watchdog-v2",
             current / "bin" / "watchdog-hardlink",
         )
+    elif drift == "permissions":
+        (current / "bin" / "codex-usage-integration-watchdog-v2").chmod(0o755)
     elif drift == "version":
         metadata = (
             current

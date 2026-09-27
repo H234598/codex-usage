@@ -1929,6 +1929,17 @@ def _runtime_watchdog_payload(root: Path) -> bytes:
     ).encode()
 
 
+def _legacy_runtime_watchdog_payload(root: Path) -> bytes:
+    interpreter = root / SERVICE_RUNTIME_V2_CURRENT_NAME / "venv" / "bin" / "python"
+    rendered = str(interpreter)
+    if not rendered or any(character in rendered for character in "\x00\n\r"):
+        raise ServiceError("service runtime interpreter path is invalid")
+    return (
+        "#!/bin/sh\n"
+        f"exec {shlex.quote(rendered)} -I -B -m codex_usage.integration_watchdog \"$@\"\n"
+    ).encode()
+
+
 def _create_runtime_staging(root: Path) -> Path:
     root_binding = _private_runtime_directory(root, label="service runtime root")
     flags = private_io._directory_open_flags()
@@ -1988,7 +1999,12 @@ def _private_runtime_file(
     return binding
 
 
-def _service_runtime_binding(root: Path, generation: Path) -> _ServiceRuntimeBinding:
+def _service_runtime_binding(
+    root: Path,
+    generation: Path,
+    *,
+    allow_legacy_watchdog_upgrade: bool = False,
+) -> _ServiceRuntimeBinding:
     root_binding = _private_runtime_directory(root, label="service runtime root")
     generation_binding = _private_runtime_directory(
         generation,
@@ -2074,7 +2090,12 @@ def _service_runtime_binding(root: Path, generation: Path) -> _ServiceRuntimeBin
         mode=0o700,
         executable=True,
     )
-    if watchdog.payload != _runtime_watchdog_payload(root):
+    legacy_watchdog_upgrade = (
+        allow_legacy_watchdog_upgrade
+        and generation == root / SERVICE_RUNTIME_V2_CURRENT_NAME
+        and watchdog.payload == _legacy_runtime_watchdog_payload(root)
+    )
+    if watchdog.payload != _runtime_watchdog_payload(root) and not legacy_watchdog_upgrade:
         raise ServiceError("service runtime watchdog is invalid")
     return _ServiceRuntimeBinding(
         root=root_binding,
@@ -2143,7 +2164,11 @@ def _materialize_service_runtime(
         old_binding: _ServiceRuntimeBinding | None = None
         staging_binding = _service_runtime_binding(root, staging)
         if current.exists() or current.is_symlink():
-            old_binding = _service_runtime_binding(root, current)
+            old_binding = _service_runtime_binding(
+                root,
+                current,
+                allow_legacy_watchdog_upgrade=True,
+            )
         if before_cutover is not None:
             before_cutover(staging_binding, old_binding, staging)
         if old_binding is not None:
