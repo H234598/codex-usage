@@ -53,6 +53,8 @@ _SECURE_IO_STAGES = frozenset(
         "source_recheck",
         "final_attestation",
         "publish",
+        "evidence_lock_exit",
+        "source_lock_exit",
     )
 )
 _SECURE_IO_EXCEPTION_TOKENS = {
@@ -297,6 +299,8 @@ def execute(
                         generated_at,
                     ),
                 )
+                stage = "evidence_lock_exit"
+            stage = "source_lock_exit"
         return CommandResult(0, payload, b"")
     except EvidenceBusy:
         return _error_result(75)
@@ -305,9 +309,10 @@ def execute(
     except IntegrationEvidenceInvalid as exc:
         return _secure_io_error_result(stage, exc)
     except IntegrationSnapshotError as exc:
-        if exc.exit_code == 70:
+        code = exc.exit_code
+        if type(code) is int and code == 70:
             return _secure_io_error_result(stage, exc)
-        return _error_result(exc.exit_code)
+        return _error_result(code)
     except TimeoutError:
         return _error_result(75)
     except (OSError, TypeError, ValueError) as exc:

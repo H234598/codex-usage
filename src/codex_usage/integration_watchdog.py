@@ -112,6 +112,8 @@ _SECURE_IO_PUBLISHER_STAGES = frozenset(
         "source_recheck",
         "final_attestation",
         "publish",
+        "evidence_lock_exit",
+        "source_lock_exit",
         "unrecognized",
     )
 )

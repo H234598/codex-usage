@@ -899,6 +899,252 @@ def test_secure_io_diagnostic_collapses_unknown_stage_and_exception():
     )
 
 
+@pytest.mark.parametrize(
+    "failure_stage",
+    [
+        "runtime_paths",
+        "source_lock",
+        "evidence_lock",
+        "initial_attestation",
+        "clock",
+        "current_source",
+        "history_source",
+        "source_validation",
+        "document",
+        "source_recheck",
+        "final_attestation",
+        "publish",
+    ],
+)
+def test_d369_round1_execute_reports_each_failed_stage_without_publication(
+    tmp_path, monkeypatch, failure_stage
+):
+    from codex_usage import integration_entrypoint
+
+    secret = "/private/account-alpha sk-test-secret"
+
+    def fail():
+        raise PermissionError(secret)
+
+    real_runtime_paths = integration_entrypoint._runtime_paths
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "_runtime_paths",
+        lambda environ: fail() if failure_stage == "runtime_paths" else real_runtime_paths(environ),
+    )
+
+    @contextmanager
+    def source_guard(*_args, **_kwargs):
+        if failure_stage == "source_lock":
+            fail()
+        yield
+
+    @contextmanager
+    def evidence_guard(**_kwargs):
+        if failure_stage == "evidence_lock":
+            fail()
+        yield
+
+    monkeypatch.setattr(integration_entrypoint, "source_lock", source_guard)
+    monkeypatch.setattr(integration_entrypoint, "evidence_lock_set", evidence_guard)
+    verified = _verified_manifest(tmp_path)
+    verifier_calls = 0
+
+    def verifier(*_args):
+        nonlocal verifier_calls
+        verifier_calls += 1
+        if (failure_stage == "initial_attestation" and verifier_calls == 1) or (
+            failure_stage == "final_attestation" and verifier_calls == 2
+        ):
+            fail()
+        return verified
+
+    read_calls = 0
+
+    def read_current(_path):
+        nonlocal read_calls
+        read_calls += 1
+        if (failure_stage == "current_source" and read_calls == 1) or (
+            failure_stage == "source_recheck" and read_calls == 2
+        ):
+            fail()
+        return _source_snapshot(())
+
+    monkeypatch.setattr(integration_entrypoint, "_read_current_source_snapshot", read_current)
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "_load_tracker_samples_with_binding",
+        lambda *_args: fail()
+        if failure_stage == "history_source"
+        else ({}, integration_entrypoint.HistorySourceBinding(None, None, None, (), False)),
+    )
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "_reject_spark_source_evidence",
+        lambda *_args: fail() if failure_stage == "source_validation" else None,
+    )
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "build_schema2_document",
+        lambda *_args, **_kwargs: fail()
+        if failure_stage == "document"
+        else {"schema_version": 2, "generated_at": "2026-08-15T10:05:00Z", "accounts": []},
+    )
+    published: list[str] = []
+
+    def publish(*_args, **_kwargs):
+        if failure_stage == "publish":
+            fail()
+        published.append("published")
+
+    monkeypatch.setattr(integration_entrypoint, "_publish_evidence_generation_locked", publish)
+    result = integration_entrypoint.execute(
+        ARGV,
+        environ=_environment(tmp_path),
+        clock=lambda: fail() if failure_stage == "clock" else NOW,
+        expected_entrypoint_path=_expected_entrypoint(tmp_path),
+        verifier=verifier,
+    )
+
+    assert result == integration_entrypoint.CommandResult(
+        70,
+        b"",
+        b"integration_snapshot_secure_io_failed\n"
+        + f"stage={failure_stage} exception=PermissionError\n".encode("ascii"),
+    )
+    assert published == []
+    for forbidden in ("/private", "account-alpha", "sk-test-secret"):
+        assert forbidden.encode() not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "expected"),
+    [
+        (70.0, (69, b"integration_snapshot_unavailable\n")),
+        (70, (70, b"integration_snapshot_secure_io_failed\n"
+              b"stage=current_source exception=unrecognized\n")),
+    ],
+)
+def test_d369_round1_execute_normalizes_custom_snapshot_error(
+    tmp_path, monkeypatch, exit_code, expected
+):
+    from codex_usage import integration_entrypoint
+    from codex_usage.integration_snapshot import IntegrationSnapshotError
+
+    class AccountSecretError(IntegrationSnapshotError):
+        pass
+
+    AccountSecretError.exit_code = exit_code
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "_read_current_source_snapshot",
+        lambda _: (_ for _ in ()).throw(
+            AccountSecretError("/private/account-alpha sk-test-secret")
+        ),
+    )
+    result = integration_entrypoint.execute(
+        ARGV,
+        environ=_environment(tmp_path),
+        clock=lambda: NOW,
+        expected_entrypoint_path=_expected_entrypoint(tmp_path),
+        verifier=lambda *_: _verified_manifest(tmp_path),
+    )
+
+    assert result == integration_entrypoint.CommandResult(expected[0], b"", expected[1])
+    for forbidden in (b"/private", b"account-alpha", b"sk-test-secret"):
+        assert forbidden not in result.stderr
+
+
+@pytest.mark.parametrize("failed_guard", ["evidence", "source"])
+def test_d369_round1_execute_attributes_successful_body_lock_teardown(
+    tmp_path, monkeypatch, failed_guard
+):
+    from codex_usage import integration_entrypoint
+
+    @contextmanager
+    def guard(label):
+        yield
+        if label == failed_guard:
+            raise PermissionError("/private/account-alpha sk-test-secret")
+
+    monkeypatch.setattr(
+        integration_entrypoint, "source_lock", lambda *_args, **_kwargs: guard("source")
+    )
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "evidence_lock_set",
+        lambda **_kwargs: guard("evidence"),
+    )
+    monkeypatch.setattr(
+        integration_entrypoint, "_read_current_source_snapshot", lambda _: _source_snapshot(())
+    )
+    published: list[str] = []
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "_publish_evidence_generation_locked",
+        lambda *_args, **_kwargs: published.append("published"),
+    )
+    result = integration_entrypoint.execute(
+        ARGV,
+        environ=_environment(tmp_path),
+        clock=lambda: NOW,
+        expected_entrypoint_path=_expected_entrypoint(tmp_path),
+        verifier=lambda *_: _verified_manifest(tmp_path),
+    )
+
+    assert result == integration_entrypoint.CommandResult(
+        70,
+        b"",
+        b"integration_snapshot_secure_io_failed\n"
+        + f"stage={failed_guard}_lock_exit exception=PermissionError\n".encode("ascii"),
+    )
+    assert published == ["published"]
+
+
+@pytest.mark.parametrize("failed_guard", ["evidence", "source"])
+def test_d369_round1_execute_keeps_body_stage_while_lock_unwinds(
+    tmp_path, monkeypatch, failed_guard
+):
+    from codex_usage import integration_entrypoint
+
+    @contextmanager
+    def guard(label):
+        try:
+            yield
+        finally:
+            if label == failed_guard:
+                raise PermissionError("/private/cleanup-secret")
+
+    monkeypatch.setattr(
+        integration_entrypoint, "source_lock", lambda *_args, **_kwargs: guard("source")
+    )
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "evidence_lock_set",
+        lambda **_kwargs: guard("evidence"),
+    )
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "_read_current_source_snapshot",
+        lambda _: (_ for _ in ()).throw(IntegrationSecureIOError("/private/body-secret")),
+    )
+    result = integration_entrypoint.execute(
+        ARGV,
+        environ=_environment(tmp_path),
+        clock=lambda: NOW,
+        expected_entrypoint_path=_expected_entrypoint(tmp_path),
+        verifier=lambda *_: _verified_manifest(tmp_path),
+    )
+
+    assert result == integration_entrypoint.CommandResult(
+        70,
+        b"",
+        b"integration_snapshot_secure_io_failed\n"
+        b"stage=current_source exception=PermissionError\n",
+    )
+    assert b"/private" not in result.stderr
+
+
 def test_execute_maps_busy_lock_to_retryable_error(tmp_path, monkeypatch):
     from codex_usage import integration_entrypoint
     from codex_usage.integration_evidence import IntegrationBusy as EvidenceBusy

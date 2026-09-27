@@ -2770,8 +2770,11 @@ def test_publisher_stage_forwards_exact_secure_io_diagnostic(
         diagnostics=integration_watchdog._StageDiagnostics(stderr=stderr),
     )
     output = capsys.readouterr().err
-    assert "stderr_token=integration_snapshot_secure_io_failed" in output
-    assert expected in output
+    assert output == (
+        "integration publisher exited with rc=70; "
+        "stderr_token=integration_snapshot_secure_io_failed; "
+        f"publisher_diagnostic={expected}\n"
+    )
 
 
 @pytest.mark.parametrize(
@@ -2806,6 +2809,100 @@ def test_publisher_stage_rejects_unknown_or_dynamic_diagnostic(
         "/secret/traceback",
     ):
         assert forbidden not in output
+
+
+@pytest.mark.parametrize(
+    ("stderr", "status", "truncated"),
+    [
+        (
+            b"integration_snapshot_secure_io_failed\n"
+            b"stage=current_source exception=PermissionError\n",
+            70,
+            True,
+        ),
+        (
+            b"integration_snapshot_secure_io_failed\n"
+            b"stage=current_source exception=PermissionError\n",
+            69,
+            False,
+        ),
+        (
+            b"integration_snapshot_secure_io_failed\n"
+            b"stage=current_source exception=PermissionError",
+            70,
+            False,
+        ),
+        (
+            b"integration_snapshot_secure_io_failed\n"
+            b"stage=current_source exception=PermissionError\nextra-secret\n",
+            70,
+            False,
+        ),
+        (
+            b"integration_snapshot_unavailable\n"
+            b"stage=current_source exception=PermissionError\n",
+            70,
+            False,
+        ),
+    ],
+)
+def test_d369_round1_publisher_diagnostic_rejects_invalid_envelope(
+    capsys, stderr, status, truncated
+):
+    from codex_usage import integration_watchdog
+
+    integration_watchdog._emit_stage_diagnostic(
+        "integration publisher",
+        status=status,
+        diagnostics=integration_watchdog._StageDiagnostics(
+            stderr=stderr, stderr_truncated=truncated
+        ),
+    )
+    output = capsys.readouterr().err
+    assert "publisher_diagnostic=" not in output
+    assert "extra-secret" not in output
+    assert "stage=" not in output
+
+
+def test_d369_round1_child_entrypoint_diagnostic_reaches_watchdog_journal(
+    tmp_path, capsys
+):
+    from codex_usage import integration_watchdog
+
+    launcher = tmp_path / "publisher.py"
+    source_dir = Path(__file__).resolve().parents[1] / "src"
+    launcher.write_text(
+        (
+            f"#!{sys.executable}\n"
+            "from contextlib import contextmanager\n"
+            "import sys\n"
+            f"sys.path.insert(0, {str(source_dir)!r})\n"
+            "from codex_usage import integration_entrypoint as entry\n"
+            "@contextmanager\n"
+            "def unlocked(*args, **kwargs):\n"
+            "    yield\n"
+            "entry.source_lock = unlocked\n"
+            "entry.evidence_lock_set = unlocked\n"
+            "entry._default_verifier = lambda: lambda *args: None\n"
+            "entry._read_current_source_snapshot = lambda path: "
+            "(_ for _ in ()).throw(PermissionError('/private/account-alpha sk-test-secret'))\n"
+            "raise SystemExit(entry.main(sys.argv[1:]))\n"
+        ),
+        encoding="utf-8",
+    )
+    launcher.chmod(0o700)
+
+    assert integration_watchdog._run_publisher_stage(
+        launcher,
+        integration_watchdog.PUBLISH_ARGV,
+        5,
+        child_environ=_static_child_environment(),
+    ) == 70
+    assert capsys.readouterr().err == (
+        "integration publisher exited with rc=70; "
+        "stderr_token=integration_snapshot_secure_io_failed; "
+        "publisher_diagnostic=stage=current_source exception=PermissionError\n"
+    )
 
 
 def _write_timeout_process_tree_script(script: Path, marker: Path) -> None:
