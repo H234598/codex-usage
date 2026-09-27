@@ -2744,6 +2744,70 @@ def test_publisher_stage_diagnostic_redacts_unknown_stderr_payload(
     assert "unexpected detail" not in diagnostic
 
 
+@pytest.mark.parametrize(
+    ("stderr", "expected"),
+    [
+        (
+            b"integration_snapshot_secure_io_failed\n"
+            b"stage=current_source exception=PermissionError\n",
+            "stage=current_source exception=PermissionError",
+        ),
+        (
+            b"integration_snapshot_secure_io_failed\n"
+            b"stage=publish exception=IntegrationEvidenceInvalid\n",
+            "stage=publish exception=IntegrationEvidenceInvalid",
+        ),
+    ],
+)
+def test_publisher_stage_forwards_exact_secure_io_diagnostic(
+    capsys, stderr, expected
+):
+    from codex_usage import integration_watchdog
+
+    integration_watchdog._emit_stage_diagnostic(
+        "integration publisher",
+        status=70,
+        diagnostics=integration_watchdog._StageDiagnostics(stderr=stderr),
+    )
+    output = capsys.readouterr().err
+    assert "stderr_token=integration_snapshot_secure_io_failed" in output
+    assert expected in output
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        b"stage=current_source exception=AccountSecretError",
+        b"stage=/private/account-alpha exception=PermissionError",
+        b"stage=current_source exception=PermissionError sk-test-secret",
+        b"stage=current_source exception=PermissionError\n/secret/traceback",
+    ],
+)
+def test_publisher_stage_rejects_unknown_or_dynamic_diagnostic(
+    capsys, malformed
+):
+    from codex_usage import integration_watchdog
+
+    integration_watchdog._emit_stage_diagnostic(
+        "integration publisher",
+        status=70,
+        diagnostics=integration_watchdog._StageDiagnostics(
+            stderr=b"integration_snapshot_secure_io_failed\n" + malformed + b"\n"
+        ),
+    )
+    output = capsys.readouterr().err
+    assert "stderr_token=integration_snapshot_secure_io_failed" in output
+    assert "stage=" not in output
+    for forbidden in (
+        "AccountSecretError",
+        "/private",
+        "account-alpha",
+        "sk-test-secret",
+        "/secret/traceback",
+    ):
+        assert forbidden not in output
+
+
 def _write_timeout_process_tree_script(script: Path, marker: Path) -> None:
     script.write_text(
         (

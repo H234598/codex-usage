@@ -98,6 +98,43 @@ _KNOWN_PUBLISHER_STDERR_TOKENS = frozenset(
         "integration_snapshot_busy",
     )
 )
+_SECURE_IO_PUBLISHER_STAGES = frozenset(
+    (
+        "runtime_paths",
+        "source_lock",
+        "evidence_lock",
+        "initial_attestation",
+        "clock",
+        "current_source",
+        "history_source",
+        "source_validation",
+        "document",
+        "source_recheck",
+        "final_attestation",
+        "publish",
+        "unrecognized",
+    )
+)
+_SECURE_IO_PUBLISHER_EXCEPTIONS = frozenset(
+    (
+        "IntegrationEvidenceInvalid",
+        "IntegrationSnapshotError",
+        "IntegrationSecureIOError",
+        "OSError",
+        "PermissionError",
+        "FileNotFoundError",
+        "IsADirectoryError",
+        "NotADirectoryError",
+        "TypeError",
+        "ValueError",
+        "unrecognized",
+    )
+)
+_SECURE_IO_PUBLISHER_DIAGNOSTICS = frozenset(
+    f"stage={stage} exception={exception}".encode("ascii")
+    for stage in _SECURE_IO_PUBLISHER_STAGES
+    for exception in _SECURE_IO_PUBLISHER_EXCEPTIONS
+)
 _FORBIDDEN_RUNTIME_ENVIRONMENT_NAMES = frozenset(
     (
         "PYTHONPATH",
@@ -1152,6 +1189,16 @@ def _emit_stage_diagnostic(
         )
         if known_tokens:
             parts.append(f"stderr_token={','.join(known_tokens[:4])}")
+            exact_lines = diagnostics.stderr.split(b"\n")
+            if (
+                status == 70
+                and not diagnostics.stderr_truncated
+                and len(exact_lines) == 3
+                and exact_lines[0] == b"integration_snapshot_secure_io_failed"
+                and exact_lines[1] in _SECURE_IO_PUBLISHER_DIAGNOSTICS
+                and exact_lines[2] == b""
+            ):
+                parts.append(f"publisher_diagnostic={exact_lines[1].decode('ascii')}")
             if diagnostics.stderr_truncated:
                 parts.append("stderr=truncated")
         else:

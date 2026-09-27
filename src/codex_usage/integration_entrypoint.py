@@ -20,6 +20,7 @@ from .integration_evidence import (
 )
 from .integration_snapshot import (
     CurrentSourceSnapshot,
+    IntegrationSecureIOError,
     IntegrationSnapshotError,
     IntegrationUnavailable,
     build_schema2_document,
@@ -37,6 +38,34 @@ _ERROR_TOKENS = {
     69: b"integration_snapshot_unavailable\n",
     70: b"integration_snapshot_secure_io_failed\n",
     75: b"integration_snapshot_busy\n",
+}
+_SECURE_IO_STAGES = frozenset(
+    (
+        "runtime_paths",
+        "source_lock",
+        "evidence_lock",
+        "initial_attestation",
+        "clock",
+        "current_source",
+        "history_source",
+        "source_validation",
+        "document",
+        "source_recheck",
+        "final_attestation",
+        "publish",
+    )
+)
+_SECURE_IO_EXCEPTION_TOKENS = {
+    IntegrationEvidenceInvalid: "IntegrationEvidenceInvalid",
+    IntegrationSnapshotError: "IntegrationSnapshotError",
+    IntegrationSecureIOError: "IntegrationSecureIOError",
+    OSError: "OSError",
+    PermissionError: "PermissionError",
+    FileNotFoundError: "FileNotFoundError",
+    IsADirectoryError: "IsADirectoryError",
+    NotADirectoryError: "NotADirectoryError",
+    TypeError: "TypeError",
+    ValueError: "ValueError",
 }
 
 
@@ -130,6 +159,17 @@ def _error_result(code: int) -> CommandResult:
     return CommandResult(code, b"", _ERROR_TOKENS[code])
 
 
+def _secure_io_error_result(stage: str, error: BaseException) -> CommandResult:
+    safe_stage = stage if type(stage) is str and stage in _SECURE_IO_STAGES else "unrecognized"
+    safe_exception = _SECURE_IO_EXCEPTION_TOKENS.get(type(error), "unrecognized")
+    return CommandResult(
+        70,
+        b"",
+        _ERROR_TOKENS[70]
+        + f"stage={safe_stage} exception={safe_exception}\n".encode("ascii"),
+    )
+
+
 def _default_verifier() -> Callable[[Path, Path, Path], VerifiedActiveManifest]:
     try:
         from .integration_attestation import verify_active_manifest_at
@@ -172,9 +212,12 @@ def execute(
         or normalized_argv != _EXPECTED_ARGV
     ):
         return _error_result(64)
+    stage = "runtime_paths"
     try:
         paths = _runtime_paths(environ)
+        stage = "source_lock"
         with source_lock(paths.current_dir.parent, timeout_seconds=0):
+            stage = "evidence_lock"
             with evidence_lock_set(
                 state_home=paths.state_home,
                 release_mode="exclusive",
@@ -182,29 +225,36 @@ def execute(
                 timeout_seconds=0,
                 create=False,
             ):
+                stage = "initial_attestation"
                 first = verifier(
                     paths.state_home,
                     paths.data_home,
                     expected_entrypoint_path,
                 )
+                stage = "clock"
                 generated_at = _require_aware_utc(clock())
+                stage = "current_source"
                 current_source = _read_current_source_snapshot(paths.current_dir)
+                stage = "history_source"
                 tracker_samples, history_source = _load_tracker_samples_with_binding(
                     paths.history_path,
                     current_source.usages,
                     generated_at,
                 )
+                stage = "source_validation"
                 _reject_spark_source_evidence(current_source, history_source)
                 source_contract = _source_input_contract(
                     current_source,
                     history_source,
                 )
+                stage = "document"
                 document = build_schema2_document(
                     current_source.usages,
                     generated_at=generated_at,
                     tracker_samples=tracker_samples or None,
                 )
                 payload = serialize_schema2_document(document)
+                stage = "source_recheck"
                 repeated_current_source = _read_current_source_snapshot(paths.current_dir)
                 repeated_tracker_samples, repeated_history_source = (
                     _load_tracker_samples_with_binding(
@@ -228,12 +278,14 @@ def execute(
                     != source_contract
                 ):
                     raise IntegrationEvidenceInvalid()
+                stage = "final_attestation"
                 second = verifier(
                     paths.state_home,
                     paths.data_home,
                     expected_entrypoint_path,
                 )
                 _require_matching_verified_manifests(first, second)
+                stage = "publish"
                 _publish_evidence_generation_locked(
                     payload,
                     state_home=paths.state_home,
@@ -250,14 +302,16 @@ def execute(
         return _error_result(75)
     except IntegrationEvidenceUnavailable:
         return _error_result(69)
-    except IntegrationEvidenceInvalid:
-        return _error_result(70)
+    except IntegrationEvidenceInvalid as exc:
+        return _secure_io_error_result(stage, exc)
     except IntegrationSnapshotError as exc:
+        if exc.exit_code == 70:
+            return _secure_io_error_result(stage, exc)
         return _error_result(exc.exit_code)
     except TimeoutError:
         return _error_result(75)
-    except (OSError, TypeError, ValueError):
-        return _error_result(70)
+    except (OSError, TypeError, ValueError) as exc:
+        return _secure_io_error_result(stage, exc)
     except Exception:
         return _error_result(69)
 

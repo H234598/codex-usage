@@ -748,7 +748,12 @@ def test_entrypoint_uses_release_then_current_exclusive_lock_set(
     [
         (IntegrationInvalidSource(), 65, b"integration_snapshot_invalid_source\n"),
         (IntegrationUnavailable(), 69, b"integration_snapshot_unavailable\n"),
-        (IntegrationSecureIOError(), 70, b"integration_snapshot_secure_io_failed\n"),
+        (
+            IntegrationSecureIOError(),
+            70,
+            b"integration_snapshot_secure_io_failed\n"
+            b"stage=current_source exception=IntegrationSecureIOError\n",
+        ),
         (IntegrationBusy(), 75, b"integration_snapshot_busy\n"),
     ],
 )
@@ -801,6 +806,97 @@ def test_execute_normalizes_broad_failures_without_details(tmp_path, monkeypatch
     assert b"tmp" not in result.stderr
     assert b"alpha" not in result.stderr
     assert b"secret" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("error", "exception_token"),
+    [
+        (PermissionError("/private/account-alpha sk-test-secret"), b"PermissionError"),
+        (
+            IntegrationSecureIOError("/private/account-alpha sk-test-secret"),
+            b"IntegrationSecureIOError",
+        ),
+    ],
+)
+def test_execute_secure_io_failure_exposes_only_current_source_stage_and_class(
+    tmp_path, monkeypatch, error, exception_token
+):
+    from codex_usage import integration_entrypoint
+
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "_read_current_source_snapshot",
+        lambda _: (_ for _ in ()).throw(error),
+    )
+    result = integration_entrypoint.execute(
+        ARGV,
+        environ=_environment(tmp_path),
+        clock=lambda: NOW,
+        expected_entrypoint_path=_expected_entrypoint(tmp_path),
+        verifier=lambda *_: _verified_manifest(tmp_path),
+    )
+
+    assert result == integration_entrypoint.CommandResult(
+        70,
+        b"",
+        b"integration_snapshot_secure_io_failed\n"
+        + b"stage=current_source exception=" + exception_token + b"\n",
+    )
+    for forbidden in (b"/private", b"account-alpha", b"sk-test-secret", b"tmp"):
+        assert forbidden not in result.stderr
+
+
+def test_execute_secure_io_failure_identifies_publish_stage_without_details(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_entrypoint
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "_read_current_source_snapshot",
+        lambda _: _source_snapshot(()),
+    )
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "_publish_evidence_generation_locked",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            IntegrationEvidenceInvalid("/private/account-alpha sk-test-secret")
+        ),
+    )
+    result = integration_entrypoint.execute(
+        ARGV,
+        environ=_environment(tmp_path),
+        clock=lambda: NOW,
+        expected_entrypoint_path=_expected_entrypoint(tmp_path),
+        verifier=lambda *_: _verified_manifest(tmp_path),
+    )
+
+    assert result == integration_entrypoint.CommandResult(
+        70,
+        b"",
+        b"integration_snapshot_secure_io_failed\n"
+        b"stage=publish exception=IntegrationEvidenceInvalid\n",
+    )
+    for forbidden in (b"/private", b"account-alpha", b"sk-test-secret", b"tmp"):
+        assert forbidden not in result.stderr
+
+
+def test_secure_io_diagnostic_collapses_unknown_stage_and_exception():
+    from codex_usage import integration_entrypoint
+
+    class AccountSecretError(PermissionError):
+        pass
+
+    result = integration_entrypoint._secure_io_error_result(
+        "account-alpha /private", AccountSecretError("sk-test-secret")
+    )
+    assert result == integration_entrypoint.CommandResult(
+        70,
+        b"",
+        b"integration_snapshot_secure_io_failed\n"
+        b"stage=unrecognized exception=unrecognized\n",
+    )
 
 
 def test_execute_maps_busy_lock_to_retryable_error(tmp_path, monkeypatch):
@@ -873,7 +969,8 @@ def test_execute_rejects_invalid_timezone_before_source_read(tmp_path, monkeypat
     assert result == integration_entrypoint.CommandResult(
         70,
         b"",
-        b"integration_snapshot_secure_io_failed\n",
+        b"integration_snapshot_secure_io_failed\n"
+        b"stage=clock exception=ValueError\n",
     )
     assert len(clock_calls) == 1
 
@@ -901,7 +998,8 @@ def test_execute_rejects_clock_with_failing_astimezone_before_source_read(tmp_pa
     assert result == integration_entrypoint.CommandResult(
         70,
         b"",
-        b"integration_snapshot_secure_io_failed\n",
+        b"integration_snapshot_secure_io_failed\n"
+        b"stage=clock exception=ValueError\n",
     )
 
 
@@ -929,7 +1027,8 @@ def test_execute_rejects_clock_with_failing_tzinfo_before_source_read(tmp_path, 
     assert result == integration_entrypoint.CommandResult(
         70,
         b"",
-        b"integration_snapshot_secure_io_failed\n",
+        b"integration_snapshot_secure_io_failed\n"
+        b"stage=clock exception=ValueError\n",
     )
 
 
@@ -1238,7 +1337,10 @@ def test_real_entrypoint_rejects_raw_current_disk_drift_before_pointer(
     assert (new_item.st_dev, new_item.st_ino) != (old_item.st_dev, old_item.st_ino)
     assert hashlib.sha256(current_file.read_bytes()).hexdigest() == replacement_digest
     assert result.exit_code == 70
-    assert result.stderr == b"integration_snapshot_secure_io_failed\n"
+    assert result.stderr == (
+        b"integration_snapshot_secure_io_failed\n"
+        b"stage=publish exception=IntegrationEvidenceInvalid\n"
+    )
     assert pointer_path.read_bytes() == old_pointer
 
 
