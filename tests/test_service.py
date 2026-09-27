@@ -1137,6 +1137,189 @@ def test_service_status_rejects_corrupt_pending_transaction_before_systemctl(
     assert pending.read_text(encoding="utf-8") == "{not-json}\n"
 
 
+def _legacy_runtime_pending_recovery_scenario(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    codex_usage, watchdog, _record = _write_recorded_distribution(tmp_path, monkeypatch)
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    monkeypatch.setattr(service_module, "_systemctl", _inactive_systemctl)
+    config_path = tmp_path / "config.toml"
+    service_install(AppConfig(accounts=()), config_path)
+
+    unit_dir = tmp_path / "config" / "systemd" / "user"
+    paths = (unit_dir / SERVICE_NAME, unit_dir / TIMER_NAME)
+    previous = {path: service_module._read_unit_snapshot(path) for path in paths}
+    root = tmp_path / "data" / "codex-usage-service-runtime-v2"
+    current = root / "current"
+    interpreter = current / "venv" / "bin" / "python"
+    legacy_payload = (
+        "#!/bin/sh\n"
+        f"exec {shlex.quote(str(interpreter))} "
+        '-I -B -m codex_usage.integration_watchdog "$@"\n'
+    ).encode()
+    runtime_watchdog = current / "bin" / "codex-usage-integration-watchdog-v2"
+    runtime_watchdog.write_bytes(legacy_payload)
+    runtime_watchdog.chmod(0o700)
+    current_stat = current.lstat()
+    scenario = SimpleNamespace(
+        executable=service_module._resolve_codex_usage(),
+        root=root,
+        current=current,
+        legacy_payload=legacy_payload,
+        legacy_identity=(current_stat.st_dev, current_stat.st_ino),
+        unit_dir=unit_dir,
+        paths=paths,
+        previous=previous,
+        pending=None,
+        staging=None,
+    )
+
+    def before_cutover(new, old, staging):
+        assert old is not None
+        assert old.watchdog.payload == legacy_payload
+        scenario.staging = staging
+        scenario.pending = service_module._prepare_pending_service_transaction(
+            unit_dir=unit_dir,
+            operation="install",
+            previous_units=previous,
+            new_units={path: previous[path] or "" for path in paths},
+            activation=("disabled", "inactive"),
+            enable_link=None,
+            root=root,
+            staging=staging,
+            old=old,
+            new=new,
+        )
+        service_module._quiesce_systemd_activation(("disabled", "inactive"))
+        service_module._advance_pending_service_transaction(
+            scenario.pending,
+            "quiesced",
+        )
+
+    scenario.before_cutover = before_cutover
+    return scenario
+
+
+def test_pending_recovery_accepts_journal_bound_legacy_current_before_cutover(
+    tmp_path,
+    monkeypatch,
+):
+    """Recovery must recognize its legacy old generation before runtime cutover."""
+    scenario = _legacy_runtime_pending_recovery_scenario(tmp_path, monkeypatch)
+
+    class RecoveryComplete(Exception):
+        pass
+
+    def recover_before_cutover(new, old, staging):
+        scenario.before_cutover(new, old, staging)
+        service_module._recover_pending_service_operation()
+        raise RecoveryComplete
+
+    with pytest.raises(RecoveryComplete):
+        service_module._materialize_service_runtime(
+            scenario.executable,
+            before_cutover=recover_before_cutover,
+        )
+
+    current_stat = scenario.current.lstat()
+    assert (current_stat.st_dev, current_stat.st_ino) == scenario.legacy_identity
+    assert (
+        scenario.current / "bin" / "codex-usage-integration-watchdog-v2"
+    ).read_bytes() == scenario.legacy_payload
+    assert sorted(path.name for path in scenario.root.iterdir()) == ["current"]
+    assert {
+        path: service_module._read_unit_snapshot(path) for path in scenario.paths
+    } == scenario.previous
+    assert not (
+        scenario.unit_dir / service_module.SERVICE_PENDING_V1_NAME
+    ).exists()
+
+
+def test_pending_recovery_restores_journal_bound_legacy_generation_after_cutover(
+    tmp_path,
+    monkeypatch,
+):
+    """Recovery must recognize and restore its legacy rollback generation."""
+    scenario = _legacy_runtime_pending_recovery_scenario(tmp_path, monkeypatch)
+    runtime = service_module._materialize_service_runtime(
+        scenario.executable,
+        before_cutover=scenario.before_cutover,
+    )
+    assert scenario.pending is not None
+    assert runtime.rollback_path == scenario.staging
+    assert runtime.rollback_path is not None
+    assert (
+        runtime.rollback_path / "bin" / "codex-usage-integration-watchdog-v2"
+    ).read_bytes() == scenario.legacy_payload
+    service_module._advance_pending_service_transaction(scenario.pending, "runtime")
+
+    service_module._recover_pending_service_operation()
+
+    current_stat = scenario.current.lstat()
+    assert (current_stat.st_dev, current_stat.st_ino) == scenario.legacy_identity
+    assert (
+        scenario.current / "bin" / "codex-usage-integration-watchdog-v2"
+    ).read_bytes() == scenario.legacy_payload
+    assert sorted(path.name for path in scenario.root.iterdir()) == ["current"]
+    assert {
+        path: service_module._read_unit_snapshot(path) for path in scenario.paths
+    } == scenario.previous
+    assert not (
+        scenario.unit_dir / service_module.SERVICE_PENDING_V1_NAME
+    ).exists()
+
+
+def test_pending_recovery_never_treats_legacy_generation_as_journal_new(
+    tmp_path,
+    monkeypatch,
+):
+    """A valid legacy payload is recoverable only as the journal's old generation."""
+    scenario = _legacy_runtime_pending_recovery_scenario(tmp_path, monkeypatch)
+    runtime = service_module._materialize_service_runtime(
+        scenario.executable,
+        before_cutover=scenario.before_cutover,
+    )
+    assert scenario.pending is not None
+    assert runtime.rollback_path is not None
+    runtime_document = scenario.pending.document["runtime"]
+    assert isinstance(runtime_document, dict)
+    runtime_document["new_fingerprint"], runtime_document["old_fingerprint"] = (
+        runtime_document["old_fingerprint"],
+        runtime_document["new_fingerprint"],
+    )
+    service_module._write_pending_service_transaction(scenario.pending)
+    canonical_stat = scenario.current.lstat()
+    legacy_stat = runtime.rollback_path.lstat()
+
+    with pytest.raises(ServiceError, match="could not recover service pending transaction"):
+        service_module._recover_pending_service_operation()
+
+    current_stat = scenario.current.lstat()
+    rollback_stat = runtime.rollback_path.lstat()
+    assert (current_stat.st_dev, current_stat.st_ino) == (
+        canonical_stat.st_dev,
+        canonical_stat.st_ino,
+    )
+    assert (rollback_stat.st_dev, rollback_stat.st_ino) == (
+        legacy_stat.st_dev,
+        legacy_stat.st_ino,
+    )
+    assert (
+        runtime.rollback_path / "bin" / "codex-usage-integration-watchdog-v2"
+    ).read_bytes() == scenario.legacy_payload
+    assert (scenario.unit_dir / service_module.SERVICE_PENDING_V1_NAME).exists()
+
+
 def test_service_enable_rolls_back_runtime_units_and_activation_on_keyboardinterrupt(
     tmp_path,
     monkeypatch,

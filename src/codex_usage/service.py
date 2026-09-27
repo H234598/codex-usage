@@ -1073,19 +1073,26 @@ def _recover_pending_runtime(runtime: dict[str, object]) -> None:
     expected_new = cast(str, runtime["new_fingerprint"])
     expected_old = cast(str | None, runtime["old_fingerprint"])
 
-    def binding_at(path: Path) -> _ServiceRuntimeBinding | None:
+    def binding_at(
+        path: Path,
+    ) -> tuple[_ServiceRuntimeBinding | None, str | None]:
         if not (path.exists() or path.is_symlink()):
-            return None
-        return _service_runtime_binding(root, path)
+            return None, None
+        binding = _service_runtime_binding(
+            root,
+            path,
+            allow_journal_bound_legacy_watchdog=True,
+        )
+        fingerprint = _runtime_binding_fingerprint(binding)
+        if (
+            binding.watchdog.payload == _legacy_runtime_watchdog_payload(root)
+            and fingerprint != expected_old
+        ):
+            raise ServiceError("service pending transaction runtime is ambiguous")
+        return binding, fingerprint
 
-    current_binding = binding_at(current)
-    staging_binding = binding_at(staging)
-    current_fingerprint = (
-        None if current_binding is None else _runtime_binding_fingerprint(current_binding)
-    )
-    staging_fingerprint = (
-        None if staging_binding is None else _runtime_binding_fingerprint(staging_binding)
-    )
+    current_binding, current_fingerprint = binding_at(current)
+    staging_binding, staging_fingerprint = binding_at(staging)
     if expected_old is None:
         if current_fingerprint == expected_new and staging_binding is None:
             assert current_binding is not None
@@ -2004,6 +2011,7 @@ def _service_runtime_binding(
     generation: Path,
     *,
     allow_legacy_watchdog_upgrade: bool = False,
+    allow_journal_bound_legacy_watchdog: bool = False,
 ) -> _ServiceRuntimeBinding:
     root_binding = _private_runtime_directory(root, label="service runtime root")
     generation_binding = _private_runtime_directory(
@@ -2090,12 +2098,15 @@ def _service_runtime_binding(
         mode=0o700,
         executable=True,
     )
-    legacy_watchdog_upgrade = (
-        allow_legacy_watchdog_upgrade
-        and generation == root / SERVICE_RUNTIME_V2_CURRENT_NAME
-        and watchdog.payload == _legacy_runtime_watchdog_payload(root)
+    legacy_watchdog = watchdog.payload == _legacy_runtime_watchdog_payload(root)
+    legacy_watchdog_allowed = legacy_watchdog and (
+        (
+            allow_legacy_watchdog_upgrade
+            and generation == root / SERVICE_RUNTIME_V2_CURRENT_NAME
+        )
+        or allow_journal_bound_legacy_watchdog
     )
-    if watchdog.payload != _runtime_watchdog_payload(root) and not legacy_watchdog_upgrade:
+    if watchdog.payload != _runtime_watchdog_payload(root) and not legacy_watchdog_allowed:
         raise ServiceError("service runtime watchdog is invalid")
     return _ServiceRuntimeBinding(
         root=root_binding,
