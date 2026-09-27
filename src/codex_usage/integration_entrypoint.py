@@ -28,7 +28,13 @@ from .integration_snapshot import (
     serialize_schema2_document,
 )
 from .private_io import IntegrationEvidenceInvalid, IntegrationEvidenceUnavailable
-from .source_lock import SourceFileBinding, capture_private_source_file, source_lock
+from .source_lock import (
+    SourceFileBinding,
+    SourceLockObservation,
+    capture_private_source_file,
+    observe_source_lock,
+    source_lock,
+)
 from .usage_limits import SPARK_MODEL
 
 _EXPECTED_ARGV = ("integration-snapshot", "--schema", "2", "--format", "json")
@@ -161,14 +167,22 @@ def _error_result(code: int) -> CommandResult:
     return CommandResult(code, b"", _ERROR_TOKENS[code])
 
 
-def _secure_io_error_result(stage: str, error: BaseException) -> CommandResult:
+def _secure_io_error_result(
+    stage: str, error: BaseException, observation: SourceLockObservation | None = None,
+) -> CommandResult:
     safe_stage = stage if type(stage) is str and stage in _SECURE_IO_STAGES else "unrecognized"
     safe_exception = _SECURE_IO_EXCEPTION_TOKENS.get(type(error), "unrecognized")
+    detail = ""
+    if safe_stage == "source_lock":
+        if type(observation) is not SourceLockObservation:
+            observation = SourceLockObservation()
+        operation, category = observation.tokens(error)
+        detail = f" operation={operation} errno={category}"
     return CommandResult(
         70,
         b"",
         _ERROR_TOKENS[70]
-        + f"stage={safe_stage} exception={safe_exception}\n".encode("ascii"),
+        + f"stage={safe_stage} exception={safe_exception}{detail}\n".encode("ascii"),
     )
 
 
@@ -215,10 +229,13 @@ def execute(
     ):
         return _error_result(64)
     stage = "runtime_paths"
+    observation = None
     try:
         paths = _runtime_paths(environ)
         stage = "source_lock"
-        with source_lock(paths.current_dir.parent, timeout_seconds=0):
+        with observe_source_lock() as observation, source_lock(
+            paths.current_dir.parent, timeout_seconds=0,
+        ):
             stage = "evidence_lock"
             with evidence_lock_set(
                 state_home=paths.state_home,
@@ -307,16 +324,16 @@ def execute(
     except IntegrationEvidenceUnavailable:
         return _error_result(69)
     except IntegrationEvidenceInvalid as exc:
-        return _secure_io_error_result(stage, exc)
+        return _secure_io_error_result(stage, exc, observation)
     except IntegrationSnapshotError as exc:
         code = exc.exit_code
         if type(code) is int and code == 70:
-            return _secure_io_error_result(stage, exc)
+            return _secure_io_error_result(stage, exc, observation)
         return _error_result(code)
     except TimeoutError:
         return _error_result(75)
     except (OSError, TypeError, ValueError) as exc:
-        return _secure_io_error_result(stage, exc)
+        return _secure_io_error_result(stage, exc, observation)
     except Exception:
         return _error_result(69)
 

@@ -23,6 +23,70 @@ from codex_usage.private_io import (
 pytest_plugins = ("test_integration_evidence",)
 
 
+@pytest.mark.parametrize("suffix,accepted", [
+    (b" operation=lock_create_open errno=read_only_fs", True),
+    (b" operation=lock_entry_cleanup_close errno=invalid_descriptor", True),
+    (b" operation=unrecognized errno=other", True),
+    (b"", False),
+    (b" operation=lock_create_open", False),
+    (b" operation=secret errno=read_only_fs", False),
+    (b" operation=lock_create_open errno=30", False),
+    (b" operation=lock_create_open errno=read_only_fs extra=secret", False),
+])
+def test_d372_watchdog_requires_complete_finite_source_lock_pair(capsys, suffix, accepted):
+    from codex_usage import integration_watchdog
+
+    payload = (b"integration_snapshot_secure_io_failed\n"
+               b"stage=source_lock exception=OSError" + suffix + b"\n")
+    integration_watchdog._emit_stage_diagnostic(
+        "integration publisher", status=70,
+        diagnostics=integration_watchdog._StageDiagnostics(stderr=payload),
+    )
+    output = capsys.readouterr().err
+    assert ("publisher_diagnostic=" in output) is accepted
+    assert "secret" not in output
+
+
+def test_d372_watchdog_complete_vocabulary_and_envelope(capsys):
+    from codex_usage import integration_watchdog as watchdog
+
+    operations = (
+        "root_ancestors", "lock_create_open", "lock_existing_open", "lock_initial_fstat",
+        "lock_fchmod", "lock_postchmod_fstat", "lock_initial_lstat", "lock_helper_error_close",
+        "lock_acquire", "lock_recheck_fstat", "lock_recheck_lstat", "root_recheck_ancestors",
+        "lock_entry_cleanup_close", "unrecognized",
+    )
+    categories = (
+        "read_only_fs", "permission", "missing", "path_structure", "storage_limit",
+        "descriptor_limit", "lock_resource", "invalid_descriptor", "interrupted", "io",
+        "unsupported", "other",
+    )
+    for operation in operations:
+        for category in categories:
+            line = f"stage=source_lock exception=OSError operation={operation} errno={category}"
+            payload = b"integration_snapshot_secure_io_failed\n" + line.encode() + b"\n"
+            watchdog._emit_stage_diagnostic(
+                "integration publisher", status=70,
+                diagnostics=watchdog._StageDiagnostics(stderr=payload),
+            )
+            assert f"publisher_diagnostic={line}\n" in capsys.readouterr().err
+    for invalid_payload, truncated, status in (
+        (payload[:-1], False, 70), (payload + b"extra\n", False, 70),
+        (payload, True, 70), (payload, False, 69),
+        (payload.replace(b"source_lock", b"publish"), False, 70),
+        (payload.replace(b"OSError", b"SecretError"), False, 70),
+        (payload.replace(b"errno=other", b"errno=other\x00"), False, 70),
+        (payload.replace(b"\n", b"\r\n"), False, 70),
+    ):
+        watchdog._emit_stage_diagnostic(
+            "integration publisher", status=status,
+            diagnostics=watchdog._StageDiagnostics(
+                stderr=invalid_payload, stderr_truncated=truncated,
+            ),
+        )
+        assert "publisher_diagnostic=" not in capsys.readouterr().err
+
+
 def _flatten_exception_group(exc: BaseException) -> list[BaseException]:
     flattened: list[BaseException] = []
     if isinstance(exc, BaseExceptionGroup):
@@ -2902,6 +2966,48 @@ def test_d369_round1_child_entrypoint_diagnostic_reaches_watchdog_journal(
         "integration publisher exited with rc=70; "
         "stderr_token=integration_snapshot_secure_io_failed; "
         "publisher_diagnostic=stage=current_source exception=PermissionError\n"
+    )
+
+
+def test_d372_child_source_lock_failure_reaches_watchdog_without_private_data(tmp_path, capsys):
+    from codex_usage import integration_watchdog
+
+    source_dir = Path(__file__).resolve().parents[1] / "src"
+    root = tmp_path / "data" / "codex-usage"
+    root.mkdir(parents=True, mode=0o700)
+    root.chmod(0o700)
+    launcher = tmp_path / "publisher.py"
+    launcher.write_text(
+        f"#!{sys.executable}\n"
+        "import errno, sys\n"
+        f"sys.path.insert(0, {str(source_dir)!r})\n"
+        "from codex_usage import integration_entrypoint as entry\n"
+        "from codex_usage import source_lock as locks\n"
+        "original_open = locks.os.open\n"
+        "def denied(path, *args, **kwargs):\n"
+        "    if path.name == '.source-lock-v2':\n"
+        "        raise OSError(errno.EROFS, 'synthetic-private-marker')\n"
+        "    return original_open(path, *args, **kwargs)\n"
+        "locks.os.open = denied\n"
+        "raise SystemExit(entry.main(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+    launcher.chmod(0o700)
+    assert integration_watchdog._run_publisher_stage(
+        launcher, integration_watchdog.PUBLISH_ARGV, 5,
+        child_environ={
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONSAFEPATH": "1",
+            "XDG_DATA_HOME": str(tmp_path / "data"),
+            "XDG_STATE_HOME": str(tmp_path / "state"),
+        },
+    ) == 70
+    assert capsys.readouterr().err == (
+        "integration publisher exited with rc=70; "
+        "stderr_token=integration_snapshot_secure_io_failed; "
+        "publisher_diagnostic=stage=source_lock exception=OSError "
+        "operation=lock_create_open errno=read_only_fs\n"
     )
 
 

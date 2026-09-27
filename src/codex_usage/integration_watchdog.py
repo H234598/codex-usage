@@ -48,6 +48,7 @@ from .private_io import (
     open_verified_state_home,
     read_private_bytes_at,
 )
+from .source_lock import SOURCE_LOCK_ERRNO_CATEGORIES, SOURCE_LOCK_OPERATIONS
 
 PUBLISH_TIMEOUT_SECONDS = INTEGRATION_WATCHDOG_PUBLISH_TIMEOUT_SECONDS
 GENERIC_WATCHDOG_TIMEOUT_SECONDS = INTEGRATION_WATCHDOG_GENERIC_TIMEOUT_SECONDS
@@ -135,7 +136,15 @@ _SECURE_IO_PUBLISHER_EXCEPTIONS = frozenset(
 _SECURE_IO_PUBLISHER_DIAGNOSTICS = frozenset(
     f"stage={stage} exception={exception}".encode("ascii")
     for stage in _SECURE_IO_PUBLISHER_STAGES
+    if stage != "source_lock"
     for exception in _SECURE_IO_PUBLISHER_EXCEPTIONS
+).union(
+    (
+        f"stage=source_lock exception={exception} operation={operation} errno={category}"
+    ).encode("ascii")
+    for exception in _SECURE_IO_PUBLISHER_EXCEPTIONS
+    for operation in SOURCE_LOCK_OPERATIONS
+    for category in SOURCE_LOCK_ERRNO_CATEGORIES
 )
 _FORBIDDEN_RUNTIME_ENVIRONMENT_NAMES = frozenset(
     (

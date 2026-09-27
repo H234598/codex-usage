@@ -882,6 +882,39 @@ def test_execute_secure_io_failure_identifies_publish_stage_without_details(
         assert forbidden not in result.stderr
 
 
+def test_d372_source_lock_result_has_complete_fixed_pair(tmp_path, monkeypatch):
+    import errno
+
+    from codex_usage import integration_entrypoint as entry
+    from codex_usage import source_lock as locks
+
+    root = tmp_path / "data" / "codex-usage"
+    root.mkdir(parents=True, mode=0o700)
+    root.chmod(0o700)
+    original = locks.os.open
+
+    def denied(path, *args, **kwargs):
+        if path == root / ".source-lock-v2":
+            raise OSError(errno.EROFS, "synthetic-private-marker")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(locks.os, "open", denied)
+    result = entry.execute(
+        entry._EXPECTED_ARGV,
+        environ={"XDG_DATA_HOME": str(tmp_path / "data"),
+                 "XDG_STATE_HOME": str(tmp_path / "state")},
+        clock=lambda: pytest.fail("clock reached"),
+        expected_entrypoint_path=tmp_path / "entry.py",
+        verifier=lambda *_args: pytest.fail("verifier reached"),
+    )
+    assert result.exit_code == 70
+    assert result.stdout == b""
+    assert result.stderr == (
+        b"integration_snapshot_secure_io_failed\n"
+        b"stage=source_lock exception=OSError operation=lock_create_open errno=read_only_fs\n"
+    )
+
+
 def test_secure_io_diagnostic_collapses_unknown_stage_and_exception():
     from codex_usage import integration_entrypoint
 
@@ -1010,7 +1043,9 @@ def test_d369_round1_execute_reports_each_failed_stage_without_publication(
         70,
         b"",
         b"integration_snapshot_secure_io_failed\n"
-        + f"stage={failure_stage} exception=PermissionError\n".encode("ascii"),
+        + f"stage={failure_stage} exception=PermissionError".encode("ascii")
+        + (b" operation=unrecognized errno=other" if failure_stage == "source_lock" else b"")
+        + b"\n",
     )
     assert published == []
     for forbidden in ("/private", "account-alpha", "sk-test-secret"):

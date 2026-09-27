@@ -17,6 +17,60 @@ from .private_io import assert_no_symlink_ancestors, ensure_private_directory
 _PATH_TYPE = type(Path())
 _SOURCE_LOCK_NAME = ".source-lock-v2"
 _SOURCE_LOCK_STATE = threading.local()
+SOURCE_LOCK_OPERATIONS = frozenset((
+    "root_ancestors", "lock_create_open", "lock_existing_open", "lock_initial_fstat",
+    "lock_fchmod", "lock_postchmod_fstat", "lock_initial_lstat", "lock_helper_error_close",
+    "lock_acquire", "lock_recheck_fstat", "lock_recheck_lstat", "root_recheck_ancestors",
+    "lock_entry_cleanup_close", "unrecognized",
+))
+_ERRNO_CATEGORIES = {
+    errno.EROFS: "read_only_fs", errno.EACCES: "permission", errno.EPERM: "permission",
+    errno.ENOENT: "missing", errno.ENOTDIR: "path_structure", errno.ELOOP: "path_structure",
+    errno.EISDIR: "path_structure", errno.ENOSPC: "storage_limit", errno.EDQUOT: "storage_limit",
+    errno.EMFILE: "descriptor_limit", errno.ENFILE: "descriptor_limit",
+    errno.ENOLCK: "lock_resource", errno.EBADF: "invalid_descriptor", errno.EINTR: "interrupted",
+    errno.EIO: "io", errno.ENOSYS: "unsupported", errno.EOPNOTSUPP: "unsupported",
+}
+SOURCE_LOCK_ERRNO_CATEGORIES = frozenset((*_ERRNO_CATEGORIES.values(), "other"))
+
+
+@dataclass
+class SourceLockObservation:
+    """Invocation-local attribution, matched by exception identity, never by text."""
+
+    error: BaseException | None = None
+    operation: str = "unrecognized"
+
+    def tokens(self, error: BaseException) -> tuple[str, str]:
+        operation = self.operation if self.error is error else "unrecognized"
+        if type(operation) is not str or operation not in SOURCE_LOCK_OPERATIONS:
+            operation = "unrecognized"
+        # Read the built-in slot directly: custom exception properties are not diagnostics.
+        number = OSError.errno.__get__(error) if issubclass(type(error), OSError) else None
+        category = _ERRNO_CATEGORIES.get(number, "other") if type(number) is int else "other"
+        return operation, category
+
+
+@contextmanager
+def observe_source_lock() -> Iterator[SourceLockObservation]:
+    previous = getattr(_SOURCE_LOCK_STATE, "observation", None)
+    observation = SourceLockObservation()
+    _SOURCE_LOCK_STATE.observation = observation
+    try:
+        yield observation
+    finally:
+        _SOURCE_LOCK_STATE.observation = previous
+
+
+def _lock_operation(operation, function, *args, **kwargs):
+    try:
+        return function(*args, **kwargs)
+    except OSError as error:
+        observation = getattr(_SOURCE_LOCK_STATE, "observation", None)
+        if type(observation) is SourceLockObservation:
+            observation.error = error
+            observation.operation = operation
+        raise
 
 
 @dataclass(frozen=True)
@@ -43,7 +97,7 @@ class SourceLockBinding:
     identity: SourceRootIdentity
 
     def revalidate(self) -> None:
-        if _source_root_identity(self.root) != self.identity:
+        if _source_root_identity(self.root, operation="root_recheck_ancestors") != self.identity:
             raise ValueError("source root changed while locked")
 
 
@@ -148,10 +202,10 @@ def capture_private_source_file(
         os.close(fd)
 
 
-def _source_root_identity(root: Path) -> SourceRootIdentity:
+def _source_root_identity(root: Path, *, operation: str = "root_ancestors") -> SourceRootIdentity:
     if type(root) is not _PATH_TYPE or not root.is_absolute():
         raise ValueError("source root is invalid")
-    assert_no_symlink_ancestors(root, label="source root")
+    _lock_operation(operation, assert_no_symlink_ancestors, root, label="source root")
     try:
         item = root.lstat()
     except OSError as exc:
@@ -187,11 +241,12 @@ def _source_lock_fd(
     try:
         if create:
             try:
-                fd = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
+                fd = _lock_operation("lock_create_open", os.open, path,
+                                     flags | os.O_CREAT | os.O_EXCL, 0o600)
             except FileExistsError:
-                fd = os.open(path, flags)
+                fd = _lock_operation("lock_existing_open", os.open, path, flags)
         else:
-            fd = os.open(path, flags)
+            fd = _lock_operation("lock_existing_open", os.open, path, flags)
     except OSError as exc:
         if exc.errno == errno.ENOENT and not create:
             raise ValueError("source lock is unavailable") from exc
@@ -199,7 +254,7 @@ def _source_lock_fd(
             raise ValueError("source lock must be a private regular file") from exc
         raise
     try:
-        item = os.fstat(fd)
+        item = _lock_operation("lock_initial_fstat", os.fstat, fd)
         if (
             not stat.S_ISREG(item.st_mode)
             or item.st_uid != os.geteuid()
@@ -209,8 +264,8 @@ def _source_lock_fd(
         if not create and stat.S_IMODE(item.st_mode) != 0o600:
             raise ValueError("source lock must be a private regular file")
         if stat.S_IMODE(item.st_mode) != 0o600:
-            os.fchmod(fd, 0o600)
-            item = os.fstat(fd)
+            _lock_operation("lock_fchmod", os.fchmod, fd, 0o600)
+            item = _lock_operation("lock_postchmod_fstat", os.fstat, fd)
         identity = (
             item.st_dev,
             item.st_ino,
@@ -218,7 +273,7 @@ def _source_lock_fd(
             item.st_uid,
             item.st_gid,
         )
-        visible = path.lstat()
+        visible = _lock_operation("lock_initial_lstat", path.lstat)
         if (
             not stat.S_ISREG(visible.st_mode)
             or visible.st_nlink != 1
@@ -229,7 +284,7 @@ def _source_lock_fd(
             raise ValueError("source lock must be a private regular file")
         return fd, identity
     except BaseException:
-        os.close(fd)
+        _lock_operation("lock_helper_error_close", os.close, fd)
         raise
 
 
@@ -238,8 +293,8 @@ def _revalidate_source_lock(
     fd: int,
     expected: tuple[int, int, int, int, int],
 ) -> None:
-    item = os.fstat(fd)
-    visible = (root / _SOURCE_LOCK_NAME).lstat()
+    item = _lock_operation("lock_recheck_fstat", os.fstat, fd)
+    visible = _lock_operation("lock_recheck_lstat", (root / _SOURCE_LOCK_NAME).lstat)
     current = (
         item.st_dev,
         item.st_ino,
@@ -267,7 +322,7 @@ def _acquire_source_lock(fd: int, timeout_seconds: int | float) -> None:
     deadline = time.monotonic() + float(timeout_seconds)
     while True:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _lock_operation("lock_acquire", fcntl.flock, fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return
         except BlockingIOError as exc:
             if time.monotonic() >= deadline:
@@ -338,7 +393,7 @@ def source_lock(
             except OSError:
                 pass
             try:
-                os.close(fd)
+                _lock_operation("lock_entry_cleanup_close", os.close, fd)
             except OSError:
                 if primary_error is None:
                     raise
