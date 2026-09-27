@@ -591,6 +591,160 @@ def test_private_runtime_real_watchdog_wrapper_is_publisher_only_and_rejects_arg
     assert forbidden_argument.returncode == 64, forbidden_argument.stderr
 
 
+def test_generated_private_runtime_watchdog_reaches_attested_publisher(
+    tmp_path,
+    monkeypatch,
+    pytestconfig,
+):
+    """The generated wrapper must canonically import the self-attested watchdog."""
+    from codex_usage import integration_attestation, integration_installer, private_io
+
+    state_home = tmp_path / "state"
+    data_home = tmp_path / "data"
+    temporary_root = tmp_path / "temporary"
+    source_root = tmp_path / "producer-source"
+    publisher_marker = state_home / "publisher-called"
+    for path in (state_home, data_home, temporary_root, source_root):
+        path.mkdir(mode=0o700)
+        path.chmod(0o700)
+    (data_home / "codex-usage" / "current").mkdir(parents=True, mode=0o700)
+    (data_home / "codex-usage").chmod(0o700)
+    (data_home / "codex-usage" / "current").chmod(0o700)
+
+    project_root = Path(__file__).parents[1]
+    for relative_text in integration_installer.SOURCE_MANIFEST_FILES:
+        source = project_root / relative_text
+        destination = source_root / relative_text
+        destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        destination.parent.chmod(0o700)
+        shutil.copyfile(source, destination)
+        destination.chmod(0o600)
+    producer_entrypoint = source_root / "src/codex_usage/integration_entrypoint.py"
+    producer_entrypoint.write_text(
+        (
+            "from __future__ import annotations\n\n"
+            "import sys\n"
+            "from pathlib import Path\n\n"
+            "EXPECTED_ARGV = "
+            "('integration-snapshot', '--schema', '2', '--format', 'json')\n\n"
+            "def main(argv=None):\n"
+            "    normalized = tuple(sys.argv[1:] if argv is None else argv)\n"
+            "    if normalized != EXPECTED_ARGV:\n"
+            "        return 64\n"
+            f"    marker = Path({str(publisher_marker)!r})\n"
+            "    marker.write_text('publisher-called\\n', encoding='utf-8')\n"
+            "    marker.chmod(0o600)\n"
+            "    return 0\n"
+            "\n"
+            "if __name__ == '__main__':\n"
+            "    raise SystemExit(main())\n"
+        ),
+        encoding="utf-8",
+    )
+    producer_entrypoint.chmod(0o600)
+    release = integration_installer.install_release(
+        source_root=source_root,
+        state_home=state_home,
+        data_home=data_home,
+        python_executable=Path(sys.executable),
+        temporary_root=temporary_root,
+    )
+    assert integration_attestation.verify_active_manifest_at(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=release.entrypoint_path,
+    ).active_release == release
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    codex_usage, watchdog, _record = _write_recorded_worktree_distribution(
+        tmp_path / "core-distribution",
+        monkeypatch,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "_active_entrypoint_candidate_from_active_manifest",
+        integration_attestation._active_entrypoint_candidate_from_active_manifest,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "verify_active_manifest_at",
+        integration_attestation.verify_active_manifest_at,
+    )
+
+    def which(name: str) -> str | None:
+        if name == "codex-usage":
+            return str(codex_usage)
+        if name == "codex-usage-integration-watchdog":
+            return str(watchdog)
+        raise AssertionError(f"unexpected executable lookup: {name}")
+
+    monkeypatch.setattr(service_module.shutil, "which", which)
+    runtime = service_module._materialize_service_runtime(
+        service_module._resolve_codex_usage()
+    )
+    expected_interpreter = (
+        data_home / "codex-usage-service-runtime-v2/current/venv/bin/python"
+    )
+    wrapper_lines = runtime.binding.watchdog.payload.decode("utf-8").splitlines()
+    assert wrapper_lines == [
+        "#!/bin/sh",
+        (
+            "exec "
+            f"{shlex.quote(str(expected_interpreter))} "
+            "-I -B -c 'from codex_usage.integration_watchdog import main; "
+            "raise SystemExit(main())' \"$@\""
+        ),
+    ]
+    lock_root = private_io._private_lock_root()
+    production_lock_root = pytestconfig._private_lock_production_root
+    bwrap_item = Path("/usr/bin/bwrap").stat()
+    trusted_bwrap_fds = []
+    for candidate in Path("/proc/self/fd").iterdir():
+        try:
+            item = candidate.stat()
+        except OSError:
+            continue
+        if (item.st_dev, item.st_ino) == (bwrap_item.st_dev, bwrap_item.st_ino):
+            trusted_bwrap_fds.append(candidate)
+    assert len(trusted_bwrap_fds) == 1
+    completed = subprocess.run(
+        [
+            str(trusted_bwrap_fds[0]),
+            "--bind",
+            "/",
+            "/",
+            "--dev",
+            "/dev",
+            "--dev-bind",
+            "/dev/null",
+            "/dev/null",
+            "--bind",
+            str(lock_root),
+            str(production_lock_root),
+            "--",
+            str(runtime.binding.watchdog.path),
+        ],
+        cwd=tmp_path,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONSAFEPATH": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "XDG_DATA_HOME": str(data_home),
+            "XDG_STATE_HOME": str(state_home),
+        },
+        capture_output=True,
+        check=False,
+        text=True,
+        close_fds=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert publisher_marker.read_text(encoding="utf-8") == "publisher-called\n"
+
+
 def test_runtime_uses_active_producer_bytes_for_all_known_divergent_modules(
     tmp_path,
     monkeypatch,

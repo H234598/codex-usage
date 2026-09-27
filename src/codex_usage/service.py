@@ -1919,9 +1919,13 @@ def _runtime_watchdog_payload(root: Path) -> bytes:
     rendered = str(interpreter)
     if not rendered or any(character in rendered for character in "\x00\n\r"):
         raise ServiceError("service runtime interpreter path is invalid")
+    launcher = (
+        "from codex_usage.integration_watchdog import main; "
+        "raise SystemExit(main())"
+    )
     return (
         "#!/bin/sh\n"
-        f"exec {shlex.quote(rendered)} -I -B -m codex_usage.integration_watchdog \"$@\"\n"
+        f"exec {shlex.quote(rendered)} -I -B -c {shlex.quote(launcher)} \"$@\"\n"
     ).encode()
 
 
