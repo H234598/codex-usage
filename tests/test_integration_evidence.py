@@ -67,6 +67,44 @@ def _source_input_contract() -> dict[str, object]:
     }
 
 
+def _history_source_input_contract(*, size_bytes: int) -> dict[str, object]:
+    contract = _source_input_contract()
+    history = contract["history"]
+    assert isinstance(history, dict)
+    history["database"] = {
+        "ctime_ns": 1,
+        "device": 1,
+        "gid": os.getegid(),
+        "inode": 2,
+        "mode": 0o600,
+        "mtime_ns": 1,
+        "sha256": "0" * 64,
+        "size_bytes": size_bytes,
+        "uid": os.geteuid(),
+    }
+    return contract
+
+
+def test_source_input_contract_accepts_history_database_at_capture_limit():
+    from codex_usage import integration_evidence
+
+    contract = _history_source_input_contract(size_bytes=128 * 1024 * 1024)
+
+    assert integration_evidence._canonical_source_input_request(contract)["history"][
+        "database"
+    ]["size_bytes"] == 128 * 1024 * 1024
+
+
+def test_source_input_contract_rejects_history_database_above_capture_limit():
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    contract = _history_source_input_contract(size_bytes=128 * 1024 * 1024 + 1)
+
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence._canonical_source_input_request(contract)
+
+
 def _spark_payload(*, tracker: bool) -> bytes:
     """Return a canonical V2 payload whose only prohibited claim is Spark."""
     from codex_usage.integration_snapshot import serialize_schema2_document

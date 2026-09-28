@@ -56,6 +56,7 @@ _POINTER_MAX_BYTES = 4096
 _PAYLOAD_MAX_BYTES = 2 * 1024 * 1024
 _SOURCE_INPUT_FILENAME = "source-inputs-v2.json"
 _SOURCE_INPUT_MAX_BYTES = 512 * 1024
+_HISTORY_SOURCE_MAX_BYTES = 128 * 1024 * 1024
 _BINDING_FIELDS = frozenset(
     (
         "binding_schema_version",
@@ -476,13 +477,17 @@ def _canonical_source_directory(value: object) -> dict[str, int]:
     return result
 
 
-def _canonical_source_file(value: object) -> dict[str, int | str]:
+def _canonical_source_file(
+    value: object,
+    *,
+    maximum: int,
+) -> dict[str, int | str]:
     item = _require_exact_object(value, fields=_SOURCE_FILE_FIELDS)
     result: dict[str, int | str] = {}
     for name in _SOURCE_FILE_FIELDS - frozenset(("sha256",)):
         result[name] = _require_nonnegative_int(item[name])
     result["sha256"] = _require_digest(item["sha256"])
-    if result["mode"] != 0o600 or result["size_bytes"] > _SOURCE_INPUT_MAX_BYTES:
+    if result["mode"] != 0o600 or result["size_bytes"] > maximum:
         _invalid_contract()
     return result
 
@@ -524,10 +529,16 @@ def _canonical_source_input_request(value: object) -> dict[str, object]:
         canonical_records.append(
             {
                 "account_id": account_id,
-                "current_file": _canonical_source_file(entry["current_file"]),
+                "current_file": _canonical_source_file(
+                    entry["current_file"], maximum=_SOURCE_INPUT_MAX_BYTES
+                ),
                 "state_generation": _require_nonnegative_int(entry["state_generation"]),
                 "state_generation_file": (
-                    None if sidecar is None else _canonical_source_file(sidecar)
+                    None
+                    if sidecar is None
+                    else _canonical_source_file(
+                        sidecar, maximum=_SOURCE_INPUT_MAX_BYTES
+                    )
                 ),
             }
         )
@@ -555,10 +566,24 @@ def _canonical_source_input_request(value: object) -> dict[str, object]:
             "database": (
                 None
                 if history["database"] is None
-                else _canonical_source_file(history["database"])
+                else _canonical_source_file(
+                    history["database"], maximum=_HISTORY_SOURCE_MAX_BYTES
+                )
             ),
-            "shm": None if history["shm"] is None else _canonical_source_file(history["shm"]),
-            "wal": None if history["wal"] is None else _canonical_source_file(history["wal"]),
+            "shm": (
+                None
+                if history["shm"] is None
+                else _canonical_source_file(
+                    history["shm"], maximum=_HISTORY_SOURCE_MAX_BYTES
+                )
+            ),
+            "wal": (
+                None
+                if history["wal"] is None
+                else _canonical_source_file(
+                    history["wal"], maximum=_HISTORY_SOURCE_MAX_BYTES
+                )
+            ),
         },
         "records": canonical_records,
         "source_input_binding_schema_version": 1,
@@ -573,7 +598,9 @@ def _serialize_source_input_contract(
     if type(owner_source) is not SourceFileBinding:
         _invalid_contract()
     canonical = _canonical_source_input_request(value)
-    canonical["owner_source"] = _canonical_source_file(owner_source.to_contract())
+    canonical["owner_source"] = _canonical_source_file(
+        owner_source.to_contract(), maximum=_SOURCE_INPUT_MAX_BYTES
+    )
     payload = _serialize_contract(canonical)
     if not 1 <= len(payload) <= _SOURCE_INPUT_MAX_BYTES:
         _invalid_contract()
@@ -587,7 +614,9 @@ def _parse_source_input_contract(payload: bytes) -> dict[str, object]:
         item = _require_exact_object(loads_strict(payload), fields=_SOURCE_INPUT_FIELDS)
         request = {name: item[name] for name in _SOURCE_INPUT_REQUEST_FIELDS}
         canonical = _canonical_source_input_request(request)
-        canonical["owner_source"] = _canonical_source_file(item["owner_source"])
+        canonical["owner_source"] = _canonical_source_file(
+            item["owner_source"], maximum=_SOURCE_INPUT_MAX_BYTES
+        )
         if _serialize_contract(canonical) != payload:
             _invalid_contract()
         return canonical
