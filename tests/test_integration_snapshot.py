@@ -1708,6 +1708,44 @@ def test_schema2_serializer_rejects_coverage_inconsistent_with_sample_age(
         serialize_schema2_document(document)
 
 
+def test_schema2_serializer_accepts_submillisecond_history_quantization():
+    from codex_usage.integration_snapshot import serialize_schema2_document
+
+    document = _valid_schema2_document(with_evidence=True)
+    document["accounts"][0]["freshness"] = {
+        "captured_at": "2026-08-15T10:00:00.915872Z",
+        "fresh_until": "2026-08-15T10:15:00.915872Z",
+        "stale": False,
+    }
+    evidence = document["accounts"][0]["tracker_evidence"][0]
+    evidence["first_sample_at"] = "2026-08-15T10:00:00.916000Z"
+    evidence["last_sample_at"] = "2026-08-15T10:00:00.916000Z"
+
+    assert json.loads(serialize_schema2_document(document))["accounts"][0][
+        "tracker_evidence"
+    ][0]["last_sample_at"] == "2026-08-15T10:00:00.916000Z"
+
+
+def test_schema2_serializer_rejects_history_sample_one_millisecond_after_capture():
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        serialize_schema2_document,
+    )
+
+    document = _valid_schema2_document(with_evidence=True)
+    document["accounts"][0]["freshness"] = {
+        "captured_at": "2026-08-15T10:00:00.915872Z",
+        "fresh_until": "2026-08-15T10:15:00.915872Z",
+        "stale": False,
+    }
+    evidence = document["accounts"][0]["tracker_evidence"][0]
+    evidence["first_sample_at"] = "2026-08-15T10:00:00.916872Z"
+    evidence["last_sample_at"] = "2026-08-15T10:00:00.916872Z"
+
+    with pytest.raises(IntegrationInvalidSource):
+        serialize_schema2_document(document)
+
+
 def test_schema2_serializer_retains_old_single_sample_insufficient_semantics():
     from codex_usage.integration_snapshot import serialize_schema2_document
 

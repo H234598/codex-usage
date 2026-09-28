@@ -48,6 +48,7 @@ _MAX_TRACKER_SERIES = _MAX_ACCOUNTS * _MAX_TRACKER_EVIDENCE_PER_ACCOUNT
 _MAX_MODEL_POOLS_PER_ACCOUNT = 32
 _MAX_AVAILABILITY_SOURCES_PER_POOL = 32
 _FRESHNESS_SECONDS = 900
+_HISTORY_TIMESTAMP_RESOLUTION = timedelta(milliseconds=1)
 _MAX_RATE_PERCENTAGE_POINTS_PER_SECOND = 100.0
 _WINDOW_NAME_SECONDS = {
     "5h": 18_000,
@@ -1047,7 +1048,7 @@ def _canonical_document_v2(document: object) -> dict[str, object]:
             identity = (item["pool"], item["limit_window_seconds"])
             sample_age = generated_time - last_sample_at
             if (
-                last_sample_at > captured_time
+                last_sample_at >= captured_time + _HISTORY_TIMESTAMP_RESOLUTION
                 or limits_with_reset[identity] <= last_sample_at
                 or limits_with_reset[identity] <= generated_time
                 or (
