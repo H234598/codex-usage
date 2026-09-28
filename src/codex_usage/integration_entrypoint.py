@@ -495,9 +495,9 @@ def _revalidate_source_input_contract(
 
 def _reject_spark_source_evidence(
     current: CurrentSourceSnapshot,
-    history: HistorySourceBinding,
+    _history: HistorySourceBinding,
 ) -> None:
-    if current.has_spark_source_evidence or history.has_spark_source_evidence:
+    if current.has_spark_source_evidence:
         from .integration_snapshot import IntegrationInvalidSource
 
         raise IntegrationInvalidSource()

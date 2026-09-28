@@ -428,7 +428,9 @@ def test_execute_rejects_spark_source_before_staging_or_publisher(tmp_path, monk
     assert calls == []
 
 
-def test_execute_rejects_selected_spark_history_before_publisher(tmp_path, monkeypatch):
+def test_execute_ignores_retired_spark_history_when_current_source_is_clean(
+    tmp_path, monkeypatch
+):
     from codex_usage import integration_entrypoint
     from codex_usage.integration_entrypoint import (
         HistorySourceBinding,
@@ -466,9 +468,10 @@ def test_execute_rejects_selected_spark_history_before_publisher(tmp_path, monke
         verifier=lambda *_args: verified,
     )
 
-    assert result.exit_code == 65
-    assert result.stderr == b"integration_snapshot_invalid_source\n"
-    assert calls == []
+    assert result.exit_code == 0
+    assert result.stderr == b""
+    assert json.loads(result.stdout)["accounts"] == []
+    assert calls == ["publish"]
 
 
 def test_execute_rejects_spark_that_appears_at_final_publisher_revalidation(
